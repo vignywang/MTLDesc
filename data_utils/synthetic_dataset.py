@@ -100,28 +100,27 @@ def debug_show_image_keypoints(image, points):
 def sample_homography(height=240, width=320, perspective=True, scaling=True, rotation=True, translation=True,
                       n_scales=5, n_angles=25, scaling_amplitude=0.1, perspective_amplitude_x=0.1,
                       perspective_amplitude_y=0.1, patch_ratio=0.5, max_angle=np.pi / 2,
-                      allow_artifacts=False, translation_overflow=0.):
+                      allow_artifacts=False):
     """
-    该函数主要用来生成数据增强时所需的在一定参数范围内的单应变换
+    该函数主要用来生成数据增强时所需的随机采样的透视、尺度、平移、旋转等组合的单应变换
     Args:
-        height:
-        width:
-        perspective:
-        scaling:
-        rotation:
-        translation:
-        n_scales:
-        n_angles:
-        scaling_amplitude:
-        perspective_amplitude_x:
-        perspective_amplitude_y:
-        patch_ratio:
-        max_angle:
-        allow_artifacts:
-        translation_overflow:
+        height: int, 待采样图像的高
+        width: int, 待采样图像的宽
+        perspective: bool, 是否进行投影变换
+        scaling: bool, 是否进行尺度变换
+        rotation: bool, 是否进行旋转变换
+        translation: bool, 是否进行平移变换
+        n_scales: int, 表示随机生成的尺度数量，最终从其中再随机挑选一个
+        n_angles: int, 表示随机生成的旋转角度数量，最终从其中再随机挑选一个
+        scaling_amplitude: float, 表示尺度变换幅值
+        perspective_amplitude_x: float, 表示投影变换x方向上的变换幅值
+        perspective_amplitude_y: float, 表示投影变换y方向上的变换幅值
+        patch_ratio: float, 表示用于仿射变换的图像块占原始图像块的比例
+        max_angle: float, 表示旋转角度的最大采样值
+        allow_artifacts: bool, 表示是否允许变换超出图像范围
 
     Returns:
-        homography: 在指定范围内采样的单应变换
+        homography: 在指定范围内随机采样的单应变换
 
     """
     pts_1 = np.array(((0, 0), (0, 1), (1, 1), (1, 0)), dtype=np.float)  # 注意这里第一维是x，第二维是y
@@ -137,14 +136,59 @@ def sample_homography(height=240, width=320, perspective=True, scaling=True, rot
         x_displacement_left = np.random.uniform(-perspective_amplitude_x, perspective_amplitude_x)
         x_displacement_right = np.random.uniform(-perspective_amplitude_x, perspective_amplitude_x)
 
-        # debug use
-        # y_displacement = 0.1
-        # x_displacement_left = 0.1
-        # x_displacement_right = 0.1
         pts_2 += np.array(((x_displacement_left, y_displacement),
                            (x_displacement_left, -y_displacement),
                            (x_displacement_right, y_displacement),
                            (x_displacement_right, -y_displacement)))
+
+        x_displacement = np.random.uniform(-perspective_amplitude_x, perspective_amplitude_x)
+        y_displacement_up = np.random.uniform(-perspective_amplitude_y, perspective_amplitude_y)
+        y_displacement_bottom = np.random.uniform(-perspective_amplitude_y, perspective_amplitude_y)
+
+        pts_2 += np.array(((x_displacement, y_displacement_up),
+                           (-x_displacement, y_displacement_bottom),
+                           (x_displacement, y_displacement_bottom),
+                           (-x_displacement, y_displacement_up)))
+
+    # 进行尺度变换
+    if scaling:
+        # 得到n+1个尺度参数，其中最后一个为1，即不进行尺度化
+        scales = np.concatenate((np.random.normal(1, scaling_amplitude, (n_scales,)), np.ones((1,))), axis=0)
+        # 中心点不变的尺度缩放
+        center = np.mean(pts_2, axis=0, keepdims=True)
+        scaled = np.expand_dims(pts_2 - center, axis=0) * np.expand_dims(np.expand_dims(scales, 1), 1) + center
+        if allow_artifacts:
+            valid = np.arange(n_scales)  # all scales are valid except scale=1
+        else:
+            valid = np.where(np.all((scaled >= 0.) & (scaled < 1.), axis=(1, 2)))[0]
+        idx = valid[np.random.randint(0, valid.shape[0])]
+        # 从n_scales个随机的缩放中随机地取一个出来
+        pts_2 = scaled[idx]
+
+    # 进行平移变换
+    if translation:
+        t_min, t_max = np.min(pts_2, axis=0), np.min(1 - pts_2, axis=0)
+        pts_2 += np.expand_dims(np.stack((np.random.uniform(-t_min[0], t_max[0]),
+                                          np.random.uniform(-t_min[1], t_max[1]))), axis=0)
+
+    if rotation:
+        angles = np.linspace(-max_angle, max_angle, n_angles)
+        angles = np.concatenate((angles, np.zeros((1,))), axis=0)  # in case no rotation is valid
+        center = np.mean(pts_2, axis=0, keepdims=True)
+        rot_mat = np.reshape(np.stack((np.cos(angles), -np.sin(angles),
+                                       np.sin(angles), np.cos(angles)), axis=1), newshape=(-1, 2, 2))
+        # [x, y] * | cos -sin|
+        #          | sin  cos|
+        rotated = np.matmul(
+            np.tile(np.expand_dims(pts_2 - center, axis=0), reps=(n_angles+1, 1, 1)), rot_mat
+        ) + center
+        if allow_artifacts:
+            valid = np.arange(n_angles)  # all angles are valid, except angle=0
+        else:
+            # 得到未超边界值的idx
+            valid = np.where(np.all((rotated >= 0.) & (rotated < 1.), axis=(1, 2)))[0]
+        idx = valid[np.random.randint(0, valid.shape[0])]
+        pts_2 = rotated[idx]
 
     def mat(p, q):
         coefficient_mat = np.empty((8, 8), dtype=np.float)
