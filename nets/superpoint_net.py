@@ -28,19 +28,13 @@ class SuperPointNet(nn.Module):
         self.convDa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
         self.convDb = nn.Conv2d(c5, d1, kernel_size=1, stride=1, padding=0)
 
+        self.softmax = nn.Softmax(dim=1)
+
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
 
     def forward(self, x):
-        """ Forward pass that jointly computes unprocessed point and descriptor
-        tensors.
-        Args:
-            x: Image pytorch tensor shaped N x 1 x H x W.
-        Returns:
-            semi: Output point pytorch tensor shaped N x 65 x H/8 x W/8.
-            desc: Output descriptor pytorch tensor shaped N x 256 x H/8 x W/8.
-        """
         # Shared Encoder.
         x = self.relu(self.conv1a(x))
         x = self.relu(self.conv1b(x))
@@ -56,12 +50,13 @@ class SuperPointNet(nn.Module):
         # Detector Head.
         cPa = self.relu(self.convPa(x))
         logit = self.convPb(cPa)
+        prob = self.softmax(logit)[:, :-1, :, :]
         # Descriptor Head.
         cDa = self.relu(self.convDa(x))
         desc = self.convDb(cDa)
         dn = torch.norm(desc, p=2, dim=1, keepdim=True)  # Compute the norm.
         desc = desc.div(dn)  # Divide by norm to normalize.
-        return logit, desc
+        return logit, desc, prob
 
 
 if __name__ == "__main__":

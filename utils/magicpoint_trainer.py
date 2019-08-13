@@ -4,11 +4,13 @@
 import os
 import torch
 import time
+import numpy as np
 from torch.utils.data import DataLoader
 
 from data_utils.synthetic_dataset import SyntheticTrainDataset
 from data_utils.synthetic_dataset import SyntheticValDataset
 from nets.superpoint_net import SuperPointNet
+from utils.evaluation_tools import mAPCalculator
 
 
 class MagicPointTrainer(object):
@@ -37,7 +39,6 @@ class MagicPointTrainer(object):
 
         # 初始化验证数据的读入接口
         val_dataset = SyntheticValDataset(params)
-        val_dataloader = DataLoader(val_dataset, self.batch_size, shuffle=False, num_workers=8)
 
         # 初始化模型
         model = SuperPointNet()
@@ -51,12 +52,16 @@ class MagicPointTrainer(object):
         # 初始化loss算子
         cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
 
+        # 初始化验证算子
+        validator = mAPCalculator()
+
         self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
+        self.val_dataset = val_dataset
         self.epoch_length = len(train_dataset) / self.batch_size
         self.model = model
         self.optimizer = optimizer
         self.cross_entropy_loss = cross_entropy_loss
+        self.validator = validator
 
     def train(self):
         start_time = time.time()
@@ -65,9 +70,10 @@ class MagicPointTrainer(object):
         for i in range(self.epoch_num):
 
             # train
-            self.train_one_epoch(i)
+            # self.train_one_epoch(i)
 
             # validation
+            self.validate_one_epoch(i)
 
         end_time = time.time()
         self.logger.info("The whole training process takes %f " % (end_time - start_time))
@@ -119,6 +125,43 @@ class MagicPointTrainer(object):
 
         self.logger.info("Training epoch %2d done." % epoch_idx)
         self.logger.info("-----------------------------------------------------")
+
+    def validate_one_epoch(self, epoch_idx):
+
+        self.model.eval()
+        self.validator.reset()
+        self.logger.info("*****************************************************")
+        self.logger.info("Validating epoch %2d begin:" % epoch_idx)
+
+        start_time = time.time()
+
+        for i, data in enumerate(self.val_dataset):
+            image = data['image']
+            gt_point = data['gt_point']
+
+            image = image.to(self.device).unsqueeze(dim=0)
+            # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
+            _, _, prob = self.model(image)
+            prob = prob.detach().cpu().numpy()[0]
+            gt_point = gt_point.numpy()
+            # 将概率图展开为原始图像大小
+            prob = np.transpose(prob, (1, 2, 0))
+            prob = np.reshape(prob, (30, 40, 8, 8))
+            prob = np.transpose(prob, (0, 2, 1, 3))
+            prob = np.reshape(prob, (240, 320))
+
+            self.validator.update(prob, gt_point)
+            if i % 10 == 0:
+                print("Having validated %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                start_time = time.time()
+
+        # 计算一个epoch的mAP值
+        mAP, _, _ = self.validator.compute_mAP()
+
+        self.logger.info("[Epoch %2d] The mean Average Precision : %.4f of %d samples" % (epoch_idx, mAP,
+                                                                                          len(self.val_dataset)))
+        self.logger.info("Validating epoch %2d done." % epoch_idx)
+        self.logger.info("*****************************************************")
 
     def _compute_masked_loss(self, unmasked_loss, mask):
         total_num = torch.sum(mask, dim=(1, 2))

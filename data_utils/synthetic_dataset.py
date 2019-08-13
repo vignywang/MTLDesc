@@ -31,13 +31,18 @@ class SyntheticTrainDataset(Dataset):
 
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
         point = np.load(self.point_list[idx])
+
+        # image = cv.imread("/data/MegPoint/dataset/synthetic/gaussian_noise/images/test/0.png",
+        # flags=cv.IMREAD_GRAYSCALE)
+        # point = np.load("/data/MegPoint/dataset/synthetic/gaussian_noise/points/test/0.npy")
+
         org_mask = np.ones_like(image)
         # debug_show_image_keypoints(image, point)
         if self.params.do_augmentation:
             image, org_mask, point = self.homography_augmentation(image, point)
             # debug_show_image_keypoints(image, point)
             image = self.photometric_augmentation(image)
-            # debug_show_image_keypoints(image, point)
+            debug_show_image_keypoints(image, point)
 
         # 将亚像素精度处的点的位置四舍五入到整数
         point = np.round(point).astype(np.int)
@@ -118,17 +123,14 @@ class SyntheticValDataset(Dataset):
 
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
         point = np.load(self.point_list[idx])
-        debug_show_image_keypoints(image, point)
+        # debug_show_image_keypoints(image, point)
 
         # 将亚像素精度处的点的位置四舍五入到整数
         point = np.round(point).astype(np.int)
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
         point = torch.from_numpy(point)
 
-        # 由点的位置生成训练所需label
-        label = self.convert_points_to_label(point).to(torch.int)
-
-        sample = {"image": image, "label": label}
+        sample = {"image": image, "gt_point": point}
         return sample
 
     def convert_points_to_label(self, points):
@@ -159,7 +161,8 @@ class SyntheticValDataset(Dataset):
 
     def _format_file_list(self):
         dataset_dir = self.dataset_dir
-        subfloder_dir = os.path.join(dataset_dir, "*")
+        # 只读取有图案的数据来进行验证
+        subfloder_dir = os.path.join(dataset_dir, "draw_*")
         subfloder_list = glob.glob(subfloder_dir)
         subfloder_list = sorted(subfloder_list, key=lambda x: x.split('/')[-1])
         image_list = []
@@ -491,7 +494,8 @@ if __name__ == "__main__":
     params = Parameters()
     # synthetic_dataset = SyntheticTrainDataset(params=params)
     synthetic_dataset = SyntheticValDataset(params=params)
-    for i, data in enumerate(synthetic_dataset):
+    dataloader = DataLoader(synthetic_dataset, batch_size=16, shuffle=False, num_workers=4)
+    for i, data in enumerate(dataloader):
         if i == 3:
             break
 

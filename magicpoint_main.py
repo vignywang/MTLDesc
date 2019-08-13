@@ -54,16 +54,13 @@ def myparser():
 args = myparser()
 params = Parameters()
 
+# read some params from bash
 params.gpus = args.gpus
 params.lr = args.lr
 params.batch_size = args.batch_size
 params.prefix = args.prefix
 
-# set gpu devices
-os.environ['CUDA_VISIBLE_DEVICES'] = params.gpus
-params.gpus = [i for i in range(len(params.gpus.split(',')))]
-params.logger.info("Set CUDA_VISIBLE_DEVICES to %s" % params.gpus)
-
+# set and mkdir relative dir when necessary
 if not os.path.exists(params.ckpt_root):
     os.mkdir(params.ckpt_root)
 if not os.path.exists(params.log_root):
@@ -76,6 +73,11 @@ if not os.path.exists(params.log_dir):
     os.mkdir(params.log_dir)
 params.logger = get_logger(params.log_dir)
 
+# set gpu devices
+os.environ['CUDA_VISIBLE_DEVICES'] = params.gpus
+params.gpus = [i for i in range(len(params.gpus.split(',')))]
+params.logger.info("Set CUDA_VISIBLE_DEVICES to %s" % params.gpus)
+
 # log the parameters
 params.logger.info('batch size is %d' % params.batch_size)
 params.logger.info('training epoch is %d' % params.epoch_num)
@@ -83,6 +85,7 @@ params.logger.info('input size is [%d, %d]' % (params.height, params.width))
 params.logger.info('learning rate is %.4f' % params.lr)
 params.logger.info('prefix is %s' % params.prefix)
 
+# initialize the trainer and train
 magicpoint_trainer = MagicPointTrainer(params)
 magicpoint_trainer.train()
 
