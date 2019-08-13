@@ -41,14 +41,15 @@ class SyntheticTrainDataset(Dataset):
 
         # 将亚像素精度处的点的位置四舍五入到整数
         point = np.round(point).astype(np.int)
-        image = torch.from_numpy(image)
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
         org_mask = torch.from_numpy(org_mask)
         point = torch.from_numpy(point)
 
         # 由点的位置生成训练所需label
-        label = self.convert_points_to_label(point)
+        label = self.convert_points_to_label(point).to(torch.long)
         # 由原始的掩膜生成对应label的掩膜
-        mask = space_to_depth(org_mask)
+        mask = space_to_depth(org_mask).to(torch.bool)
+        mask = torch.all(mask, dim=0).to(torch.float)
 
         sample = {"image": image, "label": label, "mask": mask}
         return sample
@@ -90,6 +91,84 @@ class SyntheticTrainDataset(Dataset):
         for subfloder in subfloder_list:
             subimage_dir = os.path.join(subfloder, "images/training/*.png")
             subpoint_dir = os.path.join(subfloder, "points/training/*.npy")
+            subimage_list = glob.glob(subimage_dir)
+            subpoint_list = glob.glob(subpoint_dir)
+            subimage_list = sorted(subimage_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
+            subpoint_list = sorted(subpoint_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
+            image_list += subimage_list
+            point_list += subpoint_list
+
+        return image_list, point_list
+
+
+class SyntheticValDataset(Dataset):
+
+    def __init__(self, params):
+        self.params = params
+        self.height = params.height
+        self.width = params.width
+        self.dataset_dir = params.synthetic_dataset_dir
+        self.image_list, self.point_list = self._format_file_list()
+
+    def __len__(self):
+        assert len(self.image_list) == len(self.point_list)
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        point = np.load(self.point_list[idx])
+        debug_show_image_keypoints(image, point)
+
+        # 将亚像素精度处的点的位置四舍五入到整数
+        point = np.round(point).astype(np.int)
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        point = torch.from_numpy(point)
+
+        # 由点的位置生成训练所需label
+        label = self.convert_points_to_label(point).to(torch.int)
+
+        sample = {"image": image, "label": label}
+        return sample
+
+    def convert_points_to_label(self, points):
+        """
+        将关键点label从[n,2]的稀疏点表示转换为[h/8,w/8]的sparse label,其中多的一维额外表示8x8区域内有无特征点
+        Args:
+            points: [h,w]
+        Returns:
+            sparse_label: [h/8. w/8]
+
+        """
+        height = self.height
+        width = self.width
+        n_height = int(height / 8)
+        n_width = int(width / 8)
+        assert n_height * 8 == height and n_width * 8 == width
+
+        points_h, points_w = torch.split(points, 1, dim=1)
+        points_idx = points_w + points_h * width
+        label = torch.zeros((height * width))
+        label = label.scatter_(dim=0, index=points_idx[:, 0], value=1.0).reshape((height, width))
+
+        dense_label = space_to_depth(label)
+        dense_label = torch.cat((dense_label, 0.5 * torch.ones((1, n_height, n_width))), dim=0)  # [65, 30, 40]
+        sparse_label = torch.argmax(dense_label, dim=0)  # [30,40]
+
+        return sparse_label
+
+    def _format_file_list(self):
+        dataset_dir = self.dataset_dir
+        subfloder_dir = os.path.join(dataset_dir, "*")
+        subfloder_list = glob.glob(subfloder_dir)
+        subfloder_list = sorted(subfloder_list, key=lambda x: x.split('/')[-1])
+        image_list = []
+        point_list = []
+
+        for subfloder in subfloder_list:
+            # 注意此处读取的是验证数据集的列表
+            subimage_dir = os.path.join(subfloder, "images/validation/*.png")
+            subpoint_dir = os.path.join(subfloder, "points/validation/*.npy")
             subimage_list = glob.glob(subimage_dir)
             subpoint_list = glob.glob(subpoint_dir)
             subimage_list = sorted(subimage_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
@@ -410,7 +489,8 @@ if __name__ == "__main__":
         }
 
     params = Parameters()
-    synthetic_dataset = SyntheticTrainDataset(params=params)
+    # synthetic_dataset = SyntheticTrainDataset(params=params)
+    synthetic_dataset = SyntheticValDataset(params=params)
     for i, data in enumerate(synthetic_dataset):
         if i == 3:
             break
