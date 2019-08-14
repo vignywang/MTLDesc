@@ -6,6 +6,7 @@ import torch
 import time
 import numpy as np
 from torch.utils.data import DataLoader
+from tensorboardX import SummaryWriter
 
 from data_utils.synthetic_dataset import SyntheticTrainDataset
 from data_utils.synthetic_dataset import SyntheticValDataset
@@ -22,6 +23,7 @@ class MagicPointTrainer(object):
         self.epoch_num = params.epoch_num
         self.logger = params.logger
         self.ckpt_dir = params.ckpt_dir
+        self.num_workers = params.num_workers
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda !')
             self.device = torch.device('cuda:0')
@@ -30,8 +32,12 @@ class MagicPointTrainer(object):
             self.device = torch.device('cpu')
         self.multi_gpus = False
         if torch.cuda.device_count() > 1:
+            self.batch_size *= torch.cuda.device_count()
             self.multi_gpus = True
             self.logger.info("Multi gpus is available, let's use %d GPUS" % torch.cuda.device_count())
+
+        # 初始化summary writer
+        self.summary_writer = SummaryWriter(self.ckpt_dir)
 
         # 初始化训练数据的读入接口
         train_dataset = SyntheticTrainDataset(params)
@@ -70,13 +76,13 @@ class MagicPointTrainer(object):
         for i in range(self.epoch_num):
 
             # train
-            # self.train_one_epoch(i)
+            self.train_one_epoch(i)
 
             # validation
             self.validate_one_epoch(i)
 
         end_time = time.time()
-        self.logger.info("The whole training process takes %f " % (end_time - start_time))
+        self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
 
     def train_one_epoch(self, epoch_idx):
 
@@ -91,12 +97,11 @@ class MagicPointTrainer(object):
             label = data['label'].to(self.device)
             mask = data['mask'].to(self.device)
 
-            logit, _ = self.model(image)
+            logit, _, _ = self.model(image)
             unmasked_loss = self.cross_entropy_loss(logit, label)
             loss = self._compute_masked_loss(unmasked_loss, mask)
 
             # if i % self.params.sum_freq == 0:
-            #     # write histogram
             #     self.summary_writer.add_histogram("loss/positive", positive, global_step=i)
             #     self.summary_writer.add_histogram("loss/negtive", negtive, global_step=i)
 

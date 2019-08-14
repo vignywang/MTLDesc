@@ -21,8 +21,9 @@ class Parameters:
 
     lr = 0.001
     batch_size = 32
-    epoch_num = 10
-    log_freq = 1
+    epoch_num = 20
+    log_freq = 100
+    num_workers = 8
     prefix = 'exp1'
 
     height = 240
@@ -47,6 +48,7 @@ def myparser():
     parser.add_argument("--gpus", type=str, default='0')
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--prefix", type=str, default='exp1')
     return parser.parse_args()
 

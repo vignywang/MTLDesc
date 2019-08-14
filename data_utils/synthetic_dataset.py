@@ -32,17 +32,13 @@ class SyntheticTrainDataset(Dataset):
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
         point = np.load(self.point_list[idx])
 
-        # image = cv.imread("/data/MegPoint/dataset/synthetic/gaussian_noise/images/test/0.png",
-        # flags=cv.IMREAD_GRAYSCALE)
-        # point = np.load("/data/MegPoint/dataset/synthetic/gaussian_noise/points/test/0.npy")
-
         org_mask = np.ones_like(image)
         # debug_show_image_keypoints(image, point)
         if self.params.do_augmentation:
             image, org_mask, point = self.homography_augmentation(image, point)
             # debug_show_image_keypoints(image, point)
             image = self.photometric_augmentation(image)
-            debug_show_image_keypoints(image, point)
+            # debug_show_image_keypoints(image, point)
 
         # 将亚像素精度处的点的位置四舍五入到整数
         point = np.round(point).astype(np.int)
@@ -53,7 +49,7 @@ class SyntheticTrainDataset(Dataset):
         # 由点的位置生成训练所需label
         label = self.convert_points_to_label(point).to(torch.long)
         # 由原始的掩膜生成对应label的掩膜
-        mask = space_to_depth(org_mask).to(torch.bool)
+        mask = space_to_depth(org_mask).to(torch.uint8)
         mask = torch.all(mask, dim=0).to(torch.float)
 
         sample = {"image": image, "label": label, "mask": mask}
@@ -214,7 +210,7 @@ class HomographyAugmentation(object):
         org_mask = np.ones_like(image, dtype=np.float)
         warped_image = cv.warpPerspective(image, homography, dsize=dsize, flags=cv.INTER_LINEAR)
         warped_mask = cv.warpPerspective(org_mask, homography, dsize=dsize, flags=cv.INTER_LINEAR)
-        valid_mask = warped_mask.astype(np.int)
+        valid_mask = warped_mask.astype(np.uint8)
 
         return warped_image, valid_mask
 
