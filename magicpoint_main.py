@@ -95,7 +95,10 @@ magicpoint_trainer.train()
 # initialize the tester and test
 magicpoint_tester = MagicPointTester(params)
 ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/exp1_0.0010_64/model_18.pt'
+# image_dir = '/data/MegPoint/dataset/synthetic/draw_star/images/test/14.png'
+# image_dir = '/data/MegPoint/dataset/synthetic/draw_multiple_polygons/images/test/14.png'
 magicpoint_tester.test(ckpt_file)
+# magicpoint_tester.test_single_image(ckpt_file, image_dir)
 
 
 

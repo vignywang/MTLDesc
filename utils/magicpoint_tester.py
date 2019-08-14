@@ -1,7 +1,10 @@
 #
 # Created by ZhangYuyang on 2019/8/14
 #
+import os
 import time
+import cv2 as cv
+import numpy as np
 import torch
 import torch.nn.functional as f
 
@@ -88,6 +91,47 @@ class MagicPointTester(object):
         self.logger.info("The mean Average Precision : %.4f of %d samples" % (mAP, count))
         self.logger.info("Testing done.")
         self.logger.info("*****************************************************")
+
+    def test_single_image(self, ckpt_file, image_dir):
+
+        if ckpt_file == None:
+            print("Please input correct checkpoint file dir!")
+            return
+
+        # 从预训练的模型中恢复参数
+        model_dict = self.model.state_dict()
+        pretrain_dict = torch.load(ckpt_file, map_location=self.device)
+        model_dict.update(pretrain_dict)
+        self.model.load_state_dict(model_dict)
+        self.model.to(self.device)
+
+        self.model.eval()
+
+        cv_image = cv.imread(image_dir, cv.IMREAD_GRAYSCALE)
+        image = np.expand_dims(np.expand_dims(cv_image, 0), 0)
+        image = torch.from_numpy(image).to(torch.float)
+
+        _, _, prob = self.model(image)
+        prob = f.pixel_shuffle(prob, 8)
+        # 进行非极大值抑制
+        prob = spatial_nms(prob)
+        prob = prob.detach().cpu().numpy()[0, 0]
+
+        pred_pt = np.where(prob>0.1)
+
+        cv_pt_list = []
+        for i in range(len(pred_pt[0])):
+            kpt = cv.KeyPoint()
+            kpt.pt = (pred_pt[1][i], pred_pt[0][i])
+            cv_pt_list.append(kpt)
+
+        result_dir = os.path.join('/'.join(ckpt_file.split('/')[:-1]), 'test_image.jpg')
+        cv_image = cv.drawKeypoints(cv_image, cv_pt_list, None, color=(0, 0, 255))
+        # cv.imshow("image&keypoint", cv_image)
+        # cv.waitKey()
+        cv.imwrite(result_dir, cv_image)
+
+
 
 
 
