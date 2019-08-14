@@ -94,7 +94,7 @@ params.logger.info('prefix is %s' % params.prefix)
 
 # initialize the tester and test
 magicpoint_tester = MagicPointTester(params)
-ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/exp1_0.0010_64/model_19.pt'
+ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/exp1_0.0010_64/model_18.pt'
 magicpoint_tester.test(ckpt_file)
 
 

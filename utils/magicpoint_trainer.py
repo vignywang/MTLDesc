@@ -4,7 +4,7 @@
 import os
 import torch
 import time
-import numpy as np
+import torch.nn.functional as f
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
@@ -12,6 +12,7 @@ from data_utils.synthetic_dataset import SyntheticTrainDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from nets.superpoint_net import SuperPointNet
 from utils.evaluation_tools import mAPCalculator
+from utils.utils import spatial_nms
 
 
 class MagicPointTrainer(object):
@@ -101,10 +102,6 @@ class MagicPointTrainer(object):
             unmasked_loss = self.cross_entropy_loss(logit, label)
             loss = self._compute_masked_loss(unmasked_loss, mask)
 
-            # if i % self.params.sum_freq == 0:
-            #     self.summary_writer.add_histogram("loss/positive", positive, global_step=i)
-            #     self.summary_writer.add_histogram("loss/negtive", negtive, global_step=i)
-
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
 
@@ -143,18 +140,16 @@ class MagicPointTrainer(object):
         for i, data in enumerate(self.val_dataset):
             image = data['image']
             gt_point = data['gt_point']
+            gt_point = gt_point.numpy()
 
             image = image.to(self.device).unsqueeze(dim=0)
             # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
             _, _, prob = self.model(image)
-            prob = prob.detach().cpu().numpy()[0]
-            gt_point = gt_point.numpy()
             # 将概率图展开为原始图像大小
-            prob = np.transpose(prob, (1, 2, 0))
-            prob = np.reshape(prob, (30, 40, 8, 8))
-            prob = np.transpose(prob, (0, 2, 1, 3))
-            prob = np.reshape(prob, (240, 320))
-
+            prob = f.pixel_shuffle(prob, 8)
+            # 进行非极大值抑制
+            prob = spatial_nms(prob)
+            prob = prob.detach().cpu().numpy()[0, 0]
             self.validator.update(prob, gt_point)
             if i % 10 == 0:
                 print("Having validated %d samples, which takes %.3fs" % (i, (time.time()-start_time)))

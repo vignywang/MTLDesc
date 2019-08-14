@@ -3,11 +3,12 @@
 #
 import time
 import torch
-import numpy as np
+import torch.nn.functional as f
 
 from nets.superpoint_net import SuperPointNet
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from utils.evaluation_tools import mAPCalculator
+from utils.utils import spatial_nms
 
 
 class MagicPointTester(object):
@@ -58,31 +59,33 @@ class MagicPointTester(object):
         self.logger.info("Testing model %s" % ckpt_file)
 
         start_time = time.time()
+        count = 0
 
         for i, data in enumerate(self.test_dataset):
             image = data['image']
             gt_point = data['gt_point']
+            gt_point = gt_point.numpy()
 
             image = image.to(self.device).unsqueeze(dim=0)
             # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
             _, _, prob = self.model(image)
-            prob = prob.detach().cpu().numpy()[0]
-            gt_point = gt_point.numpy()
             # 将概率图展开为原始图像大小
-            prob = np.transpose(prob, (1, 2, 0))
-            prob = np.reshape(prob, (30, 40, 8, 8))
-            prob = np.transpose(prob, (0, 2, 1, 3))
-            prob = np.reshape(prob, (240, 320))
+            prob = f.pixel_shuffle(prob, 8)
+            # 进行非极大值抑制
+            prob = spatial_nms(prob)
+            prob = prob.detach().cpu().numpy()[0, 0]
 
             self.mAP_calculator.update(prob, gt_point)
             if i % 10 == 0:
                 print("Having validated %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
                 start_time = time.time()
+            count += 1
+            # if count % 1000 == 0:
+            #     break
 
-        # 计算一个epoch的mAP值
         mAP, _, _ = self.mAP_calculator.compute_mAP()
 
-        self.logger.info("The mean Average Precision : %.4f of %d samples" % (mAP, self.test_length))
+        self.logger.info("The mean Average Precision : %.4f of %d samples" % (mAP, count))
         self.logger.info("Testing done.")
         self.logger.info("*****************************************************")
 
