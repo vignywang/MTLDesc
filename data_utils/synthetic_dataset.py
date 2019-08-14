@@ -41,14 +41,14 @@ class SyntheticTrainDataset(Dataset):
             # debug_show_image_keypoints(image, point)
 
         # 将亚像素精度处的点的位置四舍五入到整数
-        point = np.round(point).astype(np.int)
+        point = np.floor(point).astype(np.int)
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
         org_mask = torch.from_numpy(org_mask)
         point = torch.from_numpy(point)
 
         # 由点的位置生成训练所需label
         label = self.convert_points_to_label(point).to(torch.long)
-        # 由原始的掩膜生成对应label的掩膜
+        # 由原始的掩膜生成对应label形状的掩膜
         mask = space_to_depth(org_mask).to(torch.uint8)
         mask = torch.all(mask, dim=0).to(torch.float)
 
@@ -104,11 +104,17 @@ class SyntheticTrainDataset(Dataset):
 
 class SyntheticValTestDataset(Dataset):
 
-    def __init__(self, params, dataset_type='validation'):
+    def __init__(self, params, dataset_type='validation', add_noise=False):
         self.params = params
         self.height = params.height
         self.width = params.width
         self.dataset_dir = params.synthetic_dataset_dir
+        if add_noise:
+            self.add_noise = True
+            self.photometric_noise = PhotometricAugmentation()
+        else:
+            self.add_noise = False
+            self.photometric_noise = None
 
         if dataset_type not in {'validation', 'test'}:
             print("The dataset type must be validation or test, please check!")
@@ -125,6 +131,8 @@ class SyntheticValTestDataset(Dataset):
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
         point = np.load(self.point_list[idx])
         # debug_show_image_keypoints(image, point)
+        if self.add_noise:
+            image = self.photometric_noise(image)
 
         # 将亚像素精度处的点的位置四舍五入到整数
         point = np.round(point).astype(np.int)

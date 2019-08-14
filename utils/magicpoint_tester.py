@@ -24,7 +24,7 @@ class MagicPointTester(object):
             self.device = torch.device('cpu')
 
         # 初始化测试数据集
-        test_dataset = SyntheticValTestDataset(params, dataset_type='validation')
+        test_dataset = SyntheticValTestDataset(params, dataset_type='validation', add_noise=True)
 
         # 初始化模型
         model = SuperPointNet()
@@ -77,7 +77,7 @@ class MagicPointTester(object):
 
             self.mAP_calculator.update(prob, gt_point)
             if i % 10 == 0:
-                print("Having validated %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
                 start_time = time.time()
             count += 1
             # if count % 1000 == 0:
