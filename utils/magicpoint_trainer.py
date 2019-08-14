@@ -56,6 +56,9 @@ class MagicPointTrainer(object):
         # 初始化优化器算子
         optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
 
+        # 初始化学习率调整算子，每20步减少为之前的1/2
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+
         # 初始化loss算子
         cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
 
@@ -67,6 +70,7 @@ class MagicPointTrainer(object):
         self.epoch_length = len(train_dataset) / self.batch_size
         self.model = model
         self.optimizer = optimizer
+        self.scheduler = scheduler
         self.cross_entropy_loss = cross_entropy_loss
         self.validator = validator
 
@@ -81,6 +85,9 @@ class MagicPointTrainer(object):
 
             # validation
             self.validate_one_epoch(i)
+
+            # adjust learning rate
+            self.scheduler.step(i)
 
         end_time = time.time()
         self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))

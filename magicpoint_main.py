@@ -22,7 +22,7 @@ class Parameters:
 
     lr = 0.001
     batch_size = 32
-    epoch_num = 20
+    epoch_num = 40
     log_freq = 100
     num_workers = 8
     prefix = 'exp1'
@@ -89,8 +89,8 @@ params.logger.info('learning rate is %.4f' % params.lr)
 params.logger.info('prefix is %s' % params.prefix)
 
 # initialize the trainer and train
-# magicpoint_trainer = MagicPointTrainer(params)
-# magicpoint_trainer.train()
+magicpoint_trainer = MagicPointTrainer(params)
+magicpoint_trainer.train()
 
 # initialize the tester and test
 magicpoint_tester = MagicPointTester(params)

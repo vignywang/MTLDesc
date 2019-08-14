@@ -42,6 +42,8 @@ class SyntheticTrainDataset(Dataset):
 
         # 将亚像素精度处的点的位置四舍五入到整数
         point = np.floor(point).astype(np.int)
+
+        # 将它们转换成tensor
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
         org_mask = torch.from_numpy(org_mask)
         point = torch.from_numpy(point)
@@ -56,14 +58,7 @@ class SyntheticTrainDataset(Dataset):
         return sample
 
     def convert_points_to_label(self, points):
-        """
-        将关键点label从[n,2]的稀疏点表示转换为[h/8,w/8]的sparse label,其中多的一维额外表示8x8区域内有无特征点
-        Args:
-            points: [h,w]
-        Returns:
-            sparse_label: [h/8. w/8]
 
-        """
         height = self.height
         width = self.width
         n_height = int(height / 8)
@@ -432,15 +427,6 @@ class PhotometricAugmentation(object):
 
 
 def space_to_depth(org_tensor, patch_height=8, patch_width=8):
-    """
-    将原始tensor中各个patch压缩到深度维
-    Args:
-        org_tensor:  [h, w]
-        patch_height: 待划分的图像块高
-        patch_width: 待划分的图像块宽
-    Returns:
-        new_tensor: None or 成功划分的Tensor
-    """
     org_height, org_width = org_tensor.shape
     n_height = int(org_height/patch_height)
     n_width = int(org_width/patch_width)

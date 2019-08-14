@@ -4,6 +4,8 @@
 import torch
 import torch.nn as nn
 
+# from torchvision.models import ResNet
+
 
 class SuperPointNet(nn.Module):
 
