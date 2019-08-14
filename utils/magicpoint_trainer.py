@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
 from data_utils.synthetic_dataset import SyntheticTrainDataset
-from data_utils.synthetic_dataset import SyntheticValDataset
+from data_utils.synthetic_dataset import SyntheticValTestDataset
 from nets.superpoint_net import SuperPointNet
 from utils.evaluation_tools import mAPCalculator
 
@@ -44,7 +44,7 @@ class MagicPointTrainer(object):
         train_dataloader = DataLoader(train_dataset, self.batch_size, shuffle=True, num_workers=8)
 
         # 初始化验证数据的读入接口
-        val_dataset = SyntheticValDataset(params)
+        val_dataset = SyntheticValTestDataset(params, 'validation')
 
         # 初始化模型
         model = SuperPointNet()

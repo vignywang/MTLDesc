@@ -6,6 +6,7 @@ import argparse
 
 from utils.logger import get_logger
 from utils.magicpoint_trainer import MagicPointTrainer
+from utils.magicpoint_tester import MagicPointTester
 
 
 class Parameters:
@@ -88,10 +89,13 @@ params.logger.info('learning rate is %.4f' % params.lr)
 params.logger.info('prefix is %s' % params.prefix)
 
 # initialize the trainer and train
-magicpoint_trainer = MagicPointTrainer(params)
-magicpoint_trainer.train()
+# magicpoint_trainer = MagicPointTrainer(params)
+# magicpoint_trainer.train()
 
-
+# initialize the tester and test
+magicpoint_tester = MagicPointTester(params)
+ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/exp1_0.0010_64/model_19.pt'
+magicpoint_tester.test(ckpt_file)
 
 
 

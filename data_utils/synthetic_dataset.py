@@ -102,13 +102,18 @@ class SyntheticTrainDataset(Dataset):
         return image_list, point_list
 
 
-class SyntheticValDataset(Dataset):
+class SyntheticValTestDataset(Dataset):
 
-    def __init__(self, params):
+    def __init__(self, params, dataset_type='validation'):
         self.params = params
         self.height = params.height
         self.width = params.width
         self.dataset_dir = params.synthetic_dataset_dir
+
+        if dataset_type not in {'validation', 'test'}:
+            print("The dataset type must be validation or test, please check!")
+            assert False
+        self.dataset_type = dataset_type
         self.image_list, self.point_list = self._format_file_list()
 
     def __len__(self):
@@ -136,7 +141,6 @@ class SyntheticValDataset(Dataset):
             points: [h,w]
         Returns:
             sparse_label: [h/8. w/8]
-
         """
         height = self.height
         width = self.width
@@ -166,8 +170,8 @@ class SyntheticValDataset(Dataset):
 
         for subfloder in subfloder_list:
             # 注意此处读取的是验证数据集的列表
-            subimage_dir = os.path.join(subfloder, "images/validation/*.png")
-            subpoint_dir = os.path.join(subfloder, "points/validation/*.npy")
+            subimage_dir = os.path.join(subfloder, "images", self.dataset_type, "*.png")
+            subpoint_dir = os.path.join(subfloder, "points", self.dataset_type, "*.npy")
             subimage_list = glob.glob(subimage_dir)
             subpoint_list = glob.glob(subpoint_dir)
             subimage_list = sorted(subimage_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
@@ -489,7 +493,7 @@ if __name__ == "__main__":
 
     params = Parameters()
     # synthetic_dataset = SyntheticTrainDataset(params=params)
-    synthetic_dataset = SyntheticValDataset(params=params)
+    synthetic_dataset = SyntheticValTestDataset(params=params)
     dataloader = DataLoader(synthetic_dataset, batch_size=16, shuffle=False, num_workers=4)
     for i, data in enumerate(dataloader):
         if i == 3:
