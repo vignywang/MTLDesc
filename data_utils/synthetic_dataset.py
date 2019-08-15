@@ -40,8 +40,8 @@ class SyntheticTrainDataset(Dataset):
             image = self.photometric_augmentation(image)
             # debug_show_image_keypoints(image, point)
 
-        # 将亚像素精度处的点的位置四舍五入到整数
-        point = np.floor(point).astype(np.int)
+        # 将亚像素精度处的点的位置去小数到整数
+        point = np.abs(np.floor(point)).astype(np.int)
 
         # 将它们转换成tensor
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
@@ -65,9 +65,11 @@ class SyntheticTrainDataset(Dataset):
         n_width = int(width / 8)
         assert n_height * 8 == height and n_width * 8 == width
 
+        # num_pt = points.shape[0]
+        label = torch.zeros((height * width))
+        # if num_pt > 0:
         points_h, points_w = torch.split(points, 1, dim=1)
         points_idx = points_w + points_h * width
-        label = torch.zeros((height * width))
         label = label.scatter_(dim=0, index=points_idx[:, 0], value=1.0).reshape((height, width))
 
         dense_label = space_to_depth(label)
