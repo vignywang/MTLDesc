@@ -2,11 +2,20 @@
 # Created by ZhangYuyang on 2019/8/9
 #
 import os
+import torch
+import numpy as np
 import argparse
+import glob
 
 from utils.logger import get_logger
 from utils.magicpoint_trainer import MagicPointTrainer
 from utils.magicpoint_tester import MagicPointTester
+
+# make the result reproducible
+torch.manual_seed(3928)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+np.random.seed(2933)
 
 
 class Parameters:
@@ -62,6 +71,7 @@ params.gpus = args.gpus
 params.lr = args.lr
 params.batch_size = args.batch_size
 params.prefix = args.prefix
+params.num_workers = args.num_workers
 
 # set and mkdir relative dir when necessary
 if not os.path.exists(params.ckpt_root):
@@ -86,6 +96,7 @@ params.logger.info('batch size is %d' % params.batch_size)
 params.logger.info('training epoch is %d' % params.epoch_num)
 params.logger.info('input size is [%d, %d]' % (params.height, params.width))
 params.logger.info('learning rate is %.4f' % params.lr)
+params.logger.info('number worker is %d' % params.num_workers)
 params.logger.info('prefix is %s' % params.prefix)
 
 # initialize the trainer and train
@@ -94,11 +105,11 @@ magicpoint_trainer.train()
 
 # initialize the tester and test
 magicpoint_tester = MagicPointTester(params)
-# ckpt_file = '/home/zhangyuyang/project/opensource/SuperPointPretrainedNetwork/superpoint_v1.pth'
-ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/exp1_0.0010_64/model_18.pt'
-# image_dir = '/data/MegPoint/dataset/synthetic/draw_star/images/test/14.png'
-# image_dir = '/data/MegPoint/dataset/synthetic/draw_multiple_polygons/images/test/14.png'
-magicpoint_tester.test(ckpt_file)
+# ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/exp1_0.0010_64/model_18.pt'
+ckpt_files = glob.glob(os.path.join(params.ckpt_dir, "model_*"))
+ckpt_files = sorted(ckpt_files)
+for ckpt_file in ckpt_files:
+    magicpoint_tester.test(ckpt_file)
 # magicpoint_tester.test_single_image(ckpt_file, image_dir)
 
 

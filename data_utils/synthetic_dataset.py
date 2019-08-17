@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
+from utils.utils import draw_image_keypoints
 
 
 class SyntheticTrainDataset(Dataset):
@@ -33,12 +34,11 @@ class SyntheticTrainDataset(Dataset):
         point = np.load(self.point_list[idx])
 
         org_mask = np.ones_like(image)
-        # debug_show_image_keypoints(image, point)
+        # cv_image_keypoint = draw_image_keypoints(image, point)
         if self.params.do_augmentation:
             image, org_mask, point = self.homography_augmentation(image, point)
-            # debug_show_image_keypoints(image, point)
             image = self.photometric_augmentation(image)
-            # debug_show_image_keypoints(image, point)
+            # cv_image_keypoint = draw_image_keypoints(image, point)
 
         # 将亚像素精度处的点的位置去小数到整数
         point = np.abs(np.floor(point)).astype(np.int)
@@ -54,6 +54,7 @@ class SyntheticTrainDataset(Dataset):
         mask = space_to_depth(org_mask).to(torch.uint8)
         mask = torch.all(mask, dim=0).to(torch.float)
 
+        # sample = {"image": image, "label": label, "mask": mask, "cv_image_keypoint": cv_image_keypoint}
         sample = {"image": image, "label": label, "mask": mask}
         return sample
 
@@ -444,26 +445,6 @@ def space_to_depth(org_tensor, patch_height=8, patch_width=8):
     new_tensor = torch.stack(all_parts, dim=1).reshape((depth_dim, n_height, n_width))
 
     return new_tensor
-
-
-def debug_show_image_keypoints(image, points):
-    """
-    将输入的关键点画到图像上并显示出来
-    Args:
-        image: 待画点的原始图像
-        points: 图像对应的关键点组合，输入为np.array，shape为（n，2）, 点的第一维代表y轴，第二维代表x轴
-    Returns:
-        None
-    """
-    n, _ = points.shape
-    cv_keypoints = []
-    for i in range(n):
-        keypt = cv.KeyPoint()
-        keypt.pt = (points[i, 1], points[i, 0])
-        cv_keypoints.append(keypt)
-    image = cv.drawKeypoints(image.astype(np.uint8), cv_keypoints, None)
-    cv.imshow("image&keypoints", image)
-    cv.waitKey()
 
 
 if __name__ == "__main__":

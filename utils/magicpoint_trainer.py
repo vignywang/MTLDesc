@@ -25,6 +25,7 @@ class MagicPointTrainer(object):
         self.logger = params.logger
         self.ckpt_dir = params.ckpt_dir
         self.num_workers = params.num_workers
+        self.log_freq = params.log_freq
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda !')
             self.device = torch.device('cuda:0')
@@ -32,9 +33,12 @@ class MagicPointTrainer(object):
             self.logger.info('gpu is not available, set device to cpu !')
             self.device = torch.device('cpu')
         self.multi_gpus = False
+        drop_last = False
         if torch.cuda.device_count() > 1:
-            self.batch_size *= torch.cuda.device_count()
+            count = torch.cuda.device_count()
+            self.batch_size *= count
             self.multi_gpus = True
+            drop_last = True
             self.logger.info("Multi gpus is available, let's use %d GPUS" % torch.cuda.device_count())
 
         # 初始化summary writer
@@ -42,7 +46,8 @@ class MagicPointTrainer(object):
 
         # 初始化训练数据的读入接口
         train_dataset = SyntheticTrainDataset(params)
-        train_dataloader = DataLoader(train_dataset, self.batch_size, shuffle=True, num_workers=8)
+        train_dataloader = DataLoader(train_dataset, self.batch_size, shuffle=True, num_workers=self.num_workers,
+                                      drop_last=drop_last)
 
         # 初始化验证数据的读入接口
         val_dataset = SyntheticValTestDataset(params, 'validation')
@@ -55,8 +60,9 @@ class MagicPointTrainer(object):
 
         # 初始化优化器算子
         optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
+        # optimizer = torch.optim.AdamW(model.parameters(), lr=self.lr)
 
-        # 初始化学习率调整算子，每20步减少为之前的1/2
+        # 初始化学习率调整算子
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
 
         # 初始化loss算子
@@ -117,8 +123,10 @@ class MagicPointTrainer(object):
 
             self.optimizer.step()
 
-            if i % self.params.log_freq == 0:
+            if i % self.log_freq == 0:
+
                 loss_val = loss.item()
+                self.summary_writer.add_scalar('loss', loss_val)
                 self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f,"
                                  " one step cost %.4fs. "
                                  % (epoch_idx, i, self.epoch_length, loss_val,
@@ -164,6 +172,7 @@ class MagicPointTrainer(object):
 
         # 计算一个epoch的mAP值
         mAP, _, _ = self.validator.compute_mAP()
+        self.summary_writer.add_scalar("mAP", mAP)
 
         self.logger.info("[Epoch %2d] The mean Average Precision : %.4f of %d samples" % (epoch_idx, mAP,
                                                                                           len(self.val_dataset)))
@@ -175,18 +184,5 @@ class MagicPointTrainer(object):
         loss = torch.sum(mask*unmasked_loss, dim=(1, 2)) / total_num
         loss = torch.mean(loss)
         return loss
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
