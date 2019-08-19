@@ -31,7 +31,7 @@ class Parameters:
 
     lr = 0.001
     batch_size = 32
-    epoch_num = 40
+    epoch_num = 60
     log_freq = 100
     num_workers = 8
     prefix = 'exp1'
@@ -39,18 +39,6 @@ class Parameters:
     height = 240
     width = 320
     do_augmentation = True
-    homography_params = {
-        'do_translation': True,
-        'do_rotation': True,
-        'do_scaling': True,
-        'do_perspective': True,
-        'scaling_amplitude': 0.2,
-        'perspective_amplitude_x': 0.2,
-        'perspective_amplitude_y': 0.2,
-        'patch_ratio': 0.8,
-        'rotation_max_angle': 1.57,  # 3.14
-        'allow_artifacts': False,
-    }
 
 
 def myparser():

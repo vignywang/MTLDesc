@@ -21,7 +21,7 @@ class SyntheticTrainDataset(Dataset):
         self.width = params.width
         self.dataset_dir = params.synthetic_dataset_dir
         self.image_list, self.point_list = self._format_file_list()
-        self.homography_augmentation = HomographyAugmentation(**params.homography_params)
+        self.homography_augmentation = HomographyAugmentation()
         self.photometric_augmentation = PhotometricAugmentation()
 
     def __len__(self):
@@ -36,9 +36,10 @@ class SyntheticTrainDataset(Dataset):
         org_mask = np.ones_like(image)
         # cv_image_keypoint = draw_image_keypoints(image, point)
         if self.params.do_augmentation:
-            image, org_mask, point = self.homography_augmentation(image, point)
-            image = self.photometric_augmentation(image)
-            # cv_image_keypoint = draw_image_keypoints(image, point)
+            if np.random.rand() >= 0.1:
+                image, org_mask, point = self.homography_augmentation(image, point)
+                image = self.photometric_augmentation(image)
+                # cv_image_keypoint = draw_image_keypoints(image, point)
 
         # 将亚像素精度处的点的位置去小数到整数
         point = np.abs(np.floor(point)).astype(np.int)
@@ -54,7 +55,7 @@ class SyntheticTrainDataset(Dataset):
         mask = space_to_depth(org_mask).to(torch.uint8)
         mask = torch.all(mask, dim=0).to(torch.float)
 
-        # sample = {"image": image, "label": label, "mask": mask, "cv_image_keypoint": cv_image_keypoint}
+        # sample = {"cv_image": cv_image_keypoint}
         sample = {"image": image, "label": label, "mask": mask}
         return sample
 
@@ -66,12 +67,14 @@ class SyntheticTrainDataset(Dataset):
         n_width = int(width / 8)
         assert n_height * 8 == height and n_width * 8 == width
 
-        # num_pt = points.shape[0]
-        label = torch.zeros((height * width))
-        # if num_pt > 0:
-        points_h, points_w = torch.split(points, 1, dim=1)
-        points_idx = points_w + points_h * width
-        label = label.scatter_(dim=0, index=points_idx[:, 0], value=1.0).reshape((height, width))
+        num_pt = points.shape[0]
+        label = torch.zeros((height*width))
+        if num_pt > 0:
+            points_h, points_w = torch.split(points, 1, dim=1)
+            points_idx = points_w + points_h * width
+            label = label.scatter_(dim=0, index=points_idx[:, 0], value=1.0).reshape((height, width))
+        else:
+            label = label.reshape((height, width))
 
         dense_label = space_to_depth(label)
         dense_label = torch.cat((dense_label, 0.5 * torch.ones((1, n_height, n_width))), dim=0)  # [65, 30, 40]
@@ -133,7 +136,8 @@ class SyntheticValTestDataset(Dataset):
             image = self.photometric_noise(image)
 
         # 将亚像素精度处的点的位置四舍五入到整数
-        point = np.round(point).astype(np.int)
+        # point = np.round(point).astype(np.int)
+        point = np.floor(point).astype(np.int)
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
         point = torch.from_numpy(point)
 
@@ -190,29 +194,27 @@ class SyntheticValTestDataset(Dataset):
 
 class HomographyAugmentation(object):
 
-    def __init__(self, height=240, width=320, do_perspective=True, do_scaling=True, do_rotation=True,
-                 do_translation=True, scaling_sample_num=5, scaling_amplitude=0.1, perspective_amplitude_x=0.1,
-                 perspective_amplitude_y=0.1, patch_ratio=0.5, rotation_sample_num=25, rotation_max_angle=np.pi / 2,
-                 allow_artifacts=False):
-        self.height = height
-        self.width = width
-        self.patch_ratio = patch_ratio
-        self.perspective_amplitude_x = perspective_amplitude_x
-        self.perspective_amplitude_y = perspective_amplitude_y
-        self.scaling_sample_num = scaling_sample_num
-        self.scaling_amplitude = scaling_amplitude
-        self.rotation_sample_num = rotation_sample_num
-        self.rotation_max_angle = rotation_max_angle
-        self.do_perspective = do_perspective
-        self.do_scaling = do_scaling
-        self.do_rotation = do_rotation
-        self.do_translation = do_translation
-        self.allow_artifacts = allow_artifacts
+    def __init__(self):
+        self.height = 240
+        self.width = 320
+        self.patch_ratio = 0.8
+        self.perspective_amplitude_x = 0.2
+        self.perspective_amplitude_y = 0.2
+        self.scaling_sample_num = 5
+        self.scaling_amplitude = 0.2
+        self.translation_overflow = 0.05
+        self.rotation_sample_num = 25
+        self.rotation_max_angle = np.pi/2
+        self.do_perspective = True
+        self.do_scaling = True
+        self.do_rotation = True
+        self.do_translation = True
+        self.allow_artifacts = True
 
     def __call__(self, image, points):
         homography = self.sample_homography()
         image, mask = self._compute_warped_image_and_mask(image, homography)
-        points = self.warp_keypoints(points, homography)
+        points = self._warp_keypoints(points, homography)
         return image, mask, points
 
     def _compute_warped_image_and_mask(self, image, homography):
@@ -224,8 +226,7 @@ class HomographyAugmentation(object):
 
         return warped_image, valid_mask
 
-    @staticmethod
-    def warp_keypoints(points, homography):
+    def _warp_keypoints(self, points, homography):
         """
         通过单应变换将原始关键点集变换到新的关键点集下
         Args:
@@ -236,12 +237,29 @@ class HomographyAugmentation(object):
             new_points: 变换后的关键点集合
         """
         n, _ = points.shape
+        if n == 0:
+            return points
         points = np.flip(points, axis=1)
         points = np.concatenate((points, np.ones((n, 1))), axis=1)[:, :, np.newaxis]
         new_points = np.matmul(homography, points)[:, :, 0]
         new_points = new_points[:, :2] / new_points[:, 2:]  # 进行归一化
         new_points = new_points[:, ::-1]
+        new_points = self._filter_keypoints(new_points)
         return new_points
+
+    def _filter_keypoints(self, points):
+        boarder = np.array((self.height-1, self.width-1), dtype=np.float32)
+        mask = (points >= 0)&(points <= boarder)
+        in_idx = np.nonzero(np.all(mask, axis=1, keepdims=False))[0]
+        in_points = []
+        for idx in in_idx:
+            in_points.append(points[idx])
+        if len(in_points) != 0:
+            in_points = np.stack(in_points, axis=0)
+        else:
+            in_points = np.empty((0, 2), np.float32)
+
+        return in_points
 
     def sample_homography(self):
 
@@ -253,6 +271,8 @@ class HomographyAugmentation(object):
 
         # 进行透视变换
         if self.do_perspective:
+            perspective_amplitude_x = self.perspective_amplitude_x
+            perspective_amplitude_y = self.perspective_amplitude_y
             if not self.allow_artifacts:
                 perspective_amplitude_x = min(self.perspective_amplitude_x, margin)
                 perspective_amplitude_y = min(self.perspective_amplitude_y, margin)
@@ -274,7 +294,7 @@ class HomographyAugmentation(object):
             center = np.mean(pts_2, axis=0, keepdims=True)
             scaled = np.expand_dims(pts_2 - center, axis=0) * np.expand_dims(np.expand_dims(scales, 1), 1) + center
             if self.allow_artifacts:
-                valid = np.arange(self.scaling_sample_num)  # all scales are valid except scale=1
+                valid = np.arange(self.scaling_sample_num + 1)
             else:
                 valid = np.where(np.all((scaled >= 0.) & (scaled < 1.), axis=(1, 2)))[0]
             idx = valid[np.random.randint(0, valid.shape[0])]
@@ -284,6 +304,9 @@ class HomographyAugmentation(object):
         # 进行平移变换
         if self.do_translation:
             t_min, t_max = np.min(pts_2, axis=0), np.min(1 - pts_2, axis=0)
+            if self.allow_artifacts:
+                t_min += self.translation_overflow
+                t_max += self.translation_overflow
             pts_2 += np.expand_dims(np.stack((np.random.uniform(-t_min[0], t_max[0]),
                                               np.random.uniform(-t_min[1], t_max[1]))), axis=0)
 
@@ -299,7 +322,7 @@ class HomographyAugmentation(object):
                 np.tile(np.expand_dims(pts_2 - center, axis=0), reps=(self.rotation_sample_num + 1, 1, 1)), rot_mat
             ) + center
             if self.allow_artifacts:
-                valid = np.arange(self.rotation_sample_num)  # all angles are valid, except angle=0
+                valid = np.arange(self.rotation_sample_num)
             else:
                 # 得到未超边界值的idx
                 valid = np.where(np.all((rotated >= 0.) & (rotated < 1.), axis=(1, 2)))[0]
@@ -334,7 +357,7 @@ class PhotometricAugmentation(object):
         self.gaussian_noise_std = 5
         self.speckle_noise_min_prob = 0
         self.speckle_noise_max_prob = 0.0035
-        self.brightness_max_abs_change = 50
+        self.brightness_max_abs_change = 25  # 50
         self.contrast_min = 0.3
         self.contrast_max = 1.5
         self.shade_transparency_range = (-0.5, 0.8)
@@ -449,32 +472,28 @@ def space_to_depth(org_tensor, patch_height=8, patch_width=8):
 
 if __name__ == "__main__":
 
+    np.random.seed(1234)
+    torch.manual_seed(2312)
+
     class Parameters:
         synthetic_dataset_dir = "/data/MegPoint/dataset/synthetic"
 
         height = 240
         width = 320
         do_augmentation = True
-        homography_params = {
-            'do_translation': True,
-            'do_rotation': True,
-            'do_scaling': True,
-            'do_perspective': True,
-            'scaling_amplitude': 0.2,
-            'perspective_amplitude_x': 0.2,
-            'perspective_amplitude_y': 0.2,
-            'patch_ratio': 0.8,
-            'rotation_max_angle': 1.57,  # 3.14
-            'allow_artifacts': False,
-        }
 
     params = Parameters()
-    # synthetic_dataset = SyntheticTrainDataset(params=params)
-    synthetic_dataset = SyntheticValTestDataset(params=params)
-    dataloader = DataLoader(synthetic_dataset, batch_size=16, shuffle=False, num_workers=4)
+    synthetic_dataset = SyntheticTrainDataset(params=params)
+    # synthetic_dataset = SyntheticValTestDataset(params=params)
+    dataloader = DataLoader(synthetic_dataset, batch_size=1, shuffle=True, num_workers=4)
     for i, data in enumerate(dataloader):
-        if i == 3:
-            break
+        image = data['image'][0, 0].numpy().astype(np.uint8)
+        label = data['label'][0].numpy()
+        mask = data['mask'][0].numpy()
+        cv.imshow('image', image)
+        a = 3
+
+
 
 
 

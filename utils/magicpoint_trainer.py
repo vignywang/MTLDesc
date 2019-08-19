@@ -63,7 +63,7 @@ class MagicPointTrainer(object):
         # optimizer = torch.optim.AdamW(model.parameters(), lr=self.lr)
 
         # 初始化学习率调整算子
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=60, gamma=0.1)
 
         # 初始化loss算子
         cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
