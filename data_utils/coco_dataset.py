@@ -17,7 +17,7 @@ class COCOAdaptionDataset(Dataset):
         self.height = params.height
         self.width = params.width
         self.dataset_dir = params.dataset_dir
-        self.image_list = self._format_file_list()
+        self.image_list, self.image_name_list = self._format_file_list()
 
     def __len__(self):
         return len(self.image_list)
@@ -25,12 +25,18 @@ class COCOAdaptionDataset(Dataset):
     def __getitem__(self, idx):
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
         image = cv.resize(image, (self.width, self.height), interpolation=cv.INTER_LINEAR)
-        return image
+        name = self.image_name_list[idx]
+        sample = {'image': image, 'name': name}
+        return sample
 
     def _format_file_list(self):
         image_list = glob.glob(os.path.join(self.dataset_dir, "*.jpg"))
         image_list = sorted(image_list)
-        return image_list
+        image_name_list = []
+        for image in image_list:
+            image_name = (image.split('/')[-1]).split('.')[0]
+            image_name_list.append(image_name)
+        return image_list, image_name_list
 
 
 if __name__ == "__main__":
@@ -41,7 +47,10 @@ if __name__ == "__main__":
 
     params = Parameters()
     COCO_adaption_dataset = COCOAdaptionDataset(params)
-    for i, image in enumerate(COCO_adaption_dataset):
+    for i, data in enumerate(COCO_adaption_dataset):
+        image = data['image']
+        name = data['name']
+        print(name)
         cv.imshow("image", image)
         cv.waitKey()
 
