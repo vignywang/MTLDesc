@@ -30,7 +30,7 @@ class Parameters:
     gpus = None
 
     lr = 0.001
-    batch_size = 32
+    batch_size = 64
     epoch_num = 60
     log_freq = 100
     num_workers = 8
@@ -39,14 +39,16 @@ class Parameters:
     height = 240
     width = 320
     do_augmentation = True
+    save_threshold_curve = True
 
 
 def myparser():
     parser = argparse.ArgumentParser(description="Pytorch MagicPoint Training")
     parser.add_argument("--gpus", type=str, default='0')
     parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument("--save_threshold_curve", type=bool, default=True)
     parser.add_argument("--prefix", type=str, default='exp1')
     return parser.parse_args()
 
@@ -60,6 +62,7 @@ params.lr = args.lr
 params.batch_size = args.batch_size
 params.prefix = args.prefix
 params.num_workers = args.num_workers
+params.save_threshold_curve = args.save_threshold_curve
 
 # set and mkdir relative dir when necessary
 if not os.path.exists(params.ckpt_root):
@@ -88,21 +91,22 @@ params.logger.info('number worker is %d' % params.num_workers)
 params.logger.info('prefix is %s' % params.prefix)
 
 # initialize the trainer and train
-magicpoint_trainer = MagicPointTrainer(params)
-magicpoint_trainer.train()
+# magicpoint_trainer = MagicPointTrainer(params)
+# magicpoint_trainer.train()
 
-# initialize the tester and test
+# initialize the tester and test all checkpoint file in the folder
 magicpoint_tester = MagicPointTester(params)
-# ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/exp1_0.0010_64/model_18.pt'
-ckpt_files = glob.glob(os.path.join(params.ckpt_dir, "model_*"))
-ckpt_files = sorted(ckpt_files)
-for ckpt_file in ckpt_files:
-    magicpoint_tester.test(ckpt_file)
+# ckpt_files = glob.glob(os.path.join(params.ckpt_dir, "model_*"))
+# ckpt_files = sorted(ckpt_files)
+# for ckpt_file in ckpt_files:
+#     magicpoint_tester.test(ckpt_file)
+
+# only to test one model
+ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
+magicpoint_tester.test(ckpt_file)
+
+# only to test one image
 # magicpoint_tester.test_single_image(ckpt_file, image_dir)
-
-
-
-
 
 
 

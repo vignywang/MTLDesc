@@ -19,6 +19,7 @@ class MagicPointTester(object):
     def __init__(self, params):
         self.params = params
         self.logger = params.logger
+        self.save_threshold_curve = self.params.save_threshold_curve
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda!')
             self.device = torch.device('cuda:0')
@@ -45,6 +46,13 @@ class MagicPointTester(object):
         if ckpt_file == None:
             print("Please input correct checkpoint file dir!")
             return
+
+        curve_name = None
+        curve_dir = None
+        if self.save_threshold_curve:
+            save_root = '/'.join(ckpt_file.split('/')[:-1])
+            curve_name = (ckpt_file.split('/')[-1]).split('.')[0]
+            curve_dir = os.path.join(save_root, curve_name + '.png')
 
         # 从预训练的模型中恢复参数
         model_dict = self.model.state_dict()
@@ -83,10 +91,12 @@ class MagicPointTester(object):
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
                 start_time = time.time()
             count += 1
-            # if count % 1000 == 0:
-            #     break
+            if count % 1000 == 0:
+                break
 
-        mAP, _, _ = self.mAP_calculator.compute_mAP()
+        mAP, test_data = self.mAP_calculator.compute_mAP()
+        if self.save_threshold_curve:
+            self.mAP_calculator.plot_threshold_curve(test_data, curve_name, curve_dir)
 
         self.logger.info("The mean Average Precision : %.4f of %d samples" % (mAP, count))
         self.logger.info("Testing done.")

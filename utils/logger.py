@@ -9,7 +9,7 @@ import time
 def get_logger(log_root):
     # create a logger
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     # create a formatter
     formatter = logging.Formatter(
         fmt='%(asctime)s [%(levelname)s]: %(message)s', datefmt='%Y-%m-%d %H:%M:%S'

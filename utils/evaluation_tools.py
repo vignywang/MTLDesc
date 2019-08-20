@@ -2,6 +2,7 @@
 # Created by ZhangYuyang on 2019/8/13
 #
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 class mAPCalculator(object):
@@ -37,16 +38,44 @@ class mAPCalculator(object):
         sort_idx = np.argsort(prob)[::-1]
         tp = tp[sort_idx]
         fp = fp[sort_idx]
+        prob = prob[sort_idx]
 
         # 进行累加计算
         tp_cum = np.cumsum(tp)
         fp_cum = np.cumsum(fp)
         recall = tp_cum / self.total_num
         precision = tp_cum / (tp_cum + fp_cum)
+        prob = np.concatenate([[1], prob, [0]])
         recall = np.concatenate([[0], recall, [1]])
         precision = np.concatenate([[0], precision, [0]])
         mAP = np.sum(precision[1:]*(recall[1:] - recall[:-1]))
-        return mAP, recall, precision
+
+        test_data = np.stack((recall, precision, prob), axis=0)
+        return mAP, test_data
+
+    def plot_threshold_curve(self, test_data, curve_name, curve_dir):
+        recall = test_data[0, 1:-1]
+        precision = test_data[1, 1:-1]
+        prob = test_data[2, 1:-1]
+
+        tmp_idx = np.where(prob <= 0.15)
+        recall = recall[tmp_idx]
+        precision = precision[tmp_idx]
+        prob = prob[tmp_idx]
+        title = curve_name
+
+        plt.figure(figsize=(10, 5))
+        x_ticks = np.arange(0, 1, 0.01)
+        y_ticks = np.arange(0, 1, 0.05)
+        plt.title(title)
+        plt.xticks(x_ticks)
+        plt.yticks(y_ticks)
+        plt.xlabel('probability threshold')
+        plt.plot(prob, recall, label='recall')
+        plt.plot(prob, precision, label='precision')
+        plt.legend(loc='lower right')
+        plt.grid()
+        plt.savefig(curve_dir)
 
     @staticmethod
     def _compute_tp_fp(prob, gt_point, remove_zero=1e-4, distance_thresh=2):

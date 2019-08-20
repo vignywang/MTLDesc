@@ -36,6 +36,7 @@ class AdaptionMaker(object):
             # self.logger.info('gpu is not available, set device to cpu!')
             print('gpu is not available, set device to cpu!')
             self.device = torch.device('cpu')
+        # self.device = torch.device('cpu')
         self.homography = HomographyAugmentation()
 
         # 初始化coco数据集
@@ -84,10 +85,11 @@ class AdaptionMaker(object):
 
             # 送入网络做统一计算
             batched_image = torch.from_numpy(np.stack(images, axis=0)).unsqueeze(dim=1).to(torch.float)
+            batched_image = batched_image.to(self.device)
             _, _, prob = self.model(batched_image)
             # 将概率图展开为原始图像大小
             prob = f.pixel_shuffle(prob, 8)
-            prob = prob.squeeze().detach().cpu().numpy()  # [n+1, h, w]
+            prob = prob.detach().cpu().numpy()[:, 0, :, :]  # [n+1, h, w]
 
             # 分别得到每个预测的概率图反变换的概率图
             count = np.ones_like(image)
@@ -114,18 +116,18 @@ class AdaptionMaker(object):
             satisfied_idx = np.where(final_probs > self.detection_threshold)
             ordered_satisfied_idx = np.argsort(final_probs[satisfied_idx])[::-1]  # 降序
             if len(ordered_satisfied_idx) < self.top_k:
-                points = (satisfied_idx[0][ordered_satisfied_idx], satisfied_idx[1][ordered_satisfied_idx])
+                points = np.stack((satisfied_idx[0][ordered_satisfied_idx],
+                                   satisfied_idx[1][ordered_satisfied_idx]), axis=1)
             else:
                 # 只取前100个点
-                points = (satisfied_idx[0][:100], satisfied_idx[1][:100])
-
+                points = np.stack((satisfied_idx[0][:100],
+                                   satisfied_idx[1][:100]), axis=1)
             # debug hyper parameters use
             draw_image_keypoints(image, points)
+            print("Having processed %dth image" % i)
 
         print("*****************************************************")
         print("Generating COCO pseudo-ground truth done. Takes %.3f h" % ((time.time()-start_time)/3600))
-
-
 
 
 
