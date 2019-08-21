@@ -12,12 +12,17 @@ from torch.utils.data import DataLoader
 
 class COCOAdaptionDataset(Dataset):
 
-    def __init__(self, params):
+    def __init__(self, params, dataset_type):
+        assert dataset_type in ['train2014', 'val2014']
         self.params = params
         self.height = params.height
         self.width = params.width
-        self.dataset_dir = params.dataset_dir
-        self.image_list, self.image_name_list = self._format_file_list()
+        self.dataset_dir = os.path.join(params.dataset_root, dataset_type, 'images')
+        if dataset_type == 'train2014':
+            num_limits = False
+        else:
+            num_limits = True
+        self.image_list, self.image_name_list = self._format_file_list(num_limits)
 
     def __len__(self):
         return len(self.image_list)
@@ -29,13 +34,19 @@ class COCOAdaptionDataset(Dataset):
         sample = {'image': image, 'name': name}
         return sample
 
-    def _format_file_list(self):
+    def _format_file_list(self, num_limits=False):
         image_list = glob.glob(os.path.join(self.dataset_dir, "*.jpg"))
         image_list = sorted(image_list)
+        if num_limits:
+            length = 1000
+        else:
+            length = len(image_list)
         image_name_list = []
         for image in image_list:
             image_name = (image.split('/')[-1]).split('.')[0]
             image_name_list.append(image_name)
+        image_list = image_list[:length]
+        image_name_list = image_name_list[:length]
         return image_list, image_name_list
 
 

@@ -20,8 +20,7 @@ class AdaptionMaker(object):
     def __init__(self, params):
         self.params = params
         self.ckpt_file = params.ckpt_file
-        self.out_dir = params.out_dir
-        self.logger = params.logger
+        self.out_root = params.out_root
         self.height = params.height
         self.width = params.width
         self.adaption_num = params.adaption_num
@@ -39,36 +38,50 @@ class AdaptionMaker(object):
         # self.device = torch.device('cpu')
         self.homography = HomographyAugmentation()
 
-        # 初始化coco数据集
-        dataset = COCOAdaptionDataset(params)
+        # 初始化coco数据集（整个训练数据集和1000个验证数据集）, dataset_type只能是train2014或者val2014
+        train_dataset = COCOAdaptionDataset(params, 'train2014')
+        val_dataset = COCOAdaptionDataset(params, 'val2014')
 
         # 初始化模型
         model = SuperPointNet()
+        # 从预训练的模型中恢复参数
+        model_dict = model.state_dict()
+        pretrain_dict = torch.load(self.ckpt_file)
+        model_dict.update(pretrain_dict)
+        model.load_state_dict(model_dict)
+        model.to(self.device)
 
-        self.dataset = dataset
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
         self.model = model
-        self.dataset_length = len(dataset)
-        if not os.path.exists(self.out_dir):
-            os.mkdir(self.out_dir)
+        self.train_out_dir = os.path.join(self.out_root, 'train2014', 'pseudo_image_points')
+        self.val_out_dir = os.path.join(self.out_root, 'val2014', 'pseudo_image_points')
+        if not os.path.exists(self.train_out_dir):
+            os.mkdir(self.train_out_dir)
+        if not os.path.exists(self.val_out_dir):
+            os.mkdir(self.val_out_dir)
 
     def run(self):
 
         start_time = time.time()
-
-        # 从预训练的模型中恢复参数
-        model_dict = self.model.state_dict()
-        pretrain_dict = torch.load(self.ckpt_file)
-        model_dict.update(pretrain_dict)
-        self.model.load_state_dict(model_dict)
-        self.model.to(self.device)
-
-        self.model.eval()
-
-        # self.logger.info("*****************************************************")
         print("*****************************************************")
         print("Generating COCO pseudo-ground truth via model %s" % self.ckpt_file)
 
-        for i, data in enumerate(self.dataset):
+        # generate train image & pseudo ground truth
+        self._generate_pseudo_ground_truth(self.train_dataset, self.train_out_dir)
+
+        # generate val image & pseudo ground truth
+        self._generate_pseudo_ground_truth(self.val_dataset, self.val_out_dir)
+
+        print("*****************************************************")
+        print("Generating COCO pseudo-ground truth done. Takes %.3f h" % ((time.time()-start_time)/3600))
+
+    def _generate_pseudo_ground_truth(self, dataset, out_dir):
+
+        self.model.eval()
+
+        dataset_length = len(dataset)
+        for i, data in enumerate(dataset):
             image = data['image']
             name = data['name']
             images = []
@@ -85,9 +98,17 @@ class AdaptionMaker(object):
 
             # 送入网络做统一计算
             batched_image = torch.from_numpy(np.stack(images, axis=0)).unsqueeze(dim=1).to(torch.float)
-            batched_image = batched_image.to(self.device)
-            _, _, prob = self.model(batched_image)
+            batched_image_list = [batched_image]
+            if self.adaption_num > 50:
+                batched_image_list = torch.split(batched_image, [50, self.adaption_num-49], dim=0)
+            prob_list = []
+            for img in batched_image_list:
+                img = img.to(self.device)
+                _, _, prob = self.model(img)
+                prob_list.append(prob)
+
             # 将概率图展开为原始图像大小
+            prob = torch.cat(prob_list, dim=0)
             prob = f.pixel_shuffle(prob, 8)
             prob = prob.detach().cpu().numpy()[:, 0, :, :]  # [n+1, h, w]
 
@@ -111,7 +132,7 @@ class AdaptionMaker(object):
             probs = probs/counts
             # todo:此处可改进为不用torch的方式，这样就不必要转换数据类型
             torch_probs = torch.from_numpy(probs).unsqueeze(dim=0).unsqueeze(dim=0)
-            final_probs = spatial_nms(torch_probs).detach().cpu().numpy()[0, 0]
+            final_probs = spatial_nms(torch_probs, self.nms_ksize).detach().cpu().numpy()[0, 0]
 
             satisfied_idx = np.where(final_probs > self.detection_threshold)
             ordered_satisfied_idx = np.argsort(final_probs[satisfied_idx])[::-1]  # 降序
@@ -123,15 +144,12 @@ class AdaptionMaker(object):
                 points = np.stack((satisfied_idx[0][:100],
                                    satisfied_idx[1][:100]), axis=1)
             # debug hyper parameters use
-            draw_image_keypoints(image, points)
-            print("Having processed %dth image" % i)
+            # draw_image_keypoints(image, points)
+            cv.imwrite(os.path.join(out_dir, name + '.jpg'), image)
+            np.save(os.path.join(out_dir, name), points)
 
-        print("*****************************************************")
-        print("Generating COCO pseudo-ground truth done. Takes %.3f h" % ((time.time()-start_time)/3600))
-
-
-
-
+            if i % 100 == 0:
+                print("Having processed %dth/%d image" % (i, dataset_length))
 
 
 

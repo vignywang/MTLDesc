@@ -28,8 +28,8 @@ plt.plot(prob, recall, label='recall')
 plt.plot(prob, precision, label='precision')
 plt.legend(loc='lower right')
 plt.grid()
-plt.savefig('./tmp.png')
-# plt.show()
+# plt.savefig('./tmp.png')
+plt.show()
 
 
 

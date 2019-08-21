@@ -91,8 +91,8 @@ class MagicPointTester(object):
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
                 start_time = time.time()
             count += 1
-            if count % 1000 == 0:
-                break
+            # if count % 1000 == 0:
+            #     break
 
         mAP, test_data = self.mAP_calculator.compute_mAP()
         if self.save_threshold_curve:
