@@ -14,7 +14,7 @@ from utils.evaluation_tools import mAPCalculator
 from utils.utils import spatial_nms
 
 
-class MagicPointTester(object):
+class MagicPointSyntheticTester(object):
 
     def __init__(self, params):
         self.params = params

@@ -148,31 +148,6 @@ class SyntheticValTestDataset(Dataset):
         sample = {"image": image, "gt_point": point}
         return sample
 
-    def convert_points_to_label(self, points):
-        """
-        将关键点label从[n,2]的稀疏点表示转换为[h/8,w/8]的sparse label,其中多的一维额外表示8x8区域内有无特征点
-        Args:
-            points: [h,w]
-        Returns:
-            sparse_label: [h/8. w/8]
-        """
-        height = self.height
-        width = self.width
-        n_height = int(height / 8)
-        n_width = int(width / 8)
-        assert n_height * 8 == height and n_width * 8 == width
-
-        points_h, points_w = torch.split(points, 1, dim=1)
-        points_idx = points_w + points_h * width
-        label = torch.zeros((height * width))
-        label = label.scatter_(dim=0, index=points_idx[:, 0], value=1.0).reshape((height, width))
-
-        dense_label = space_to_depth(label)
-        dense_label = torch.cat((dense_label, 0.5 * torch.ones((1, n_height, n_width))), dim=0)  # [65, 30, 40]
-        sparse_label = torch.argmax(dense_label, dim=0)  # [30,40]
-
-        return sparse_label
-
     def _format_file_list(self):
         dataset_dir = self.dataset_dir
         # 只读取有图案的数据来进行验证

@@ -9,22 +9,38 @@ import torch
 
 class HomographyAugmentation(object):
 
-    def __init__(self):
-        self.height = 240
-        self.width = 320
-        self.patch_ratio = 0.8
-        self.perspective_amplitude_x = 0.2
-        self.perspective_amplitude_y = 0.2
-        self.scaling_sample_num = 5
-        self.scaling_amplitude = 0.2
-        self.translation_overflow = 0.05
-        self.rotation_sample_num = 25
-        self.rotation_max_angle = np.pi/2
-        self.do_perspective = True
-        self.do_scaling = True
-        self.do_rotation = True
-        self.do_translation = True
-        self.allow_artifacts = True
+    def __init__(self,
+                 height=240,
+                 width=320,
+                 patch_ratio=0.8,
+                 perspective_amplitude_x=0.2,
+                 perspective_amplitude_y=0.2,
+                 scaling_sample_num=5,
+                 scaling_amplitude=0.2,
+                 translation_overflow=0.05,
+                 rotation_sample_num=25,
+                 rotation_max_angle=np.pi/2,
+                 do_perspective=True,
+                 do_scaling=True,
+                 do_rotation=True,
+                 do_translation=True,
+                 allow_artifacts=True
+                 ):
+        self.height = height
+        self.width = width
+        self.patch_ratio = patch_ratio
+        self.perspective_amplitude_x = perspective_amplitude_x
+        self.perspective_amplitude_y = perspective_amplitude_y
+        self.scaling_sample_num = scaling_sample_num
+        self.scaling_amplitude = scaling_amplitude
+        self.translation_overflow = translation_overflow
+        self.rotation_sample_num = rotation_sample_num
+        self.rotation_max_angle = rotation_max_angle
+        self.do_perspective = do_perspective
+        self.do_scaling = do_scaling
+        self.do_rotation = do_rotation
+        self.do_translation = do_translation
+        self.allow_artifacts = allow_artifacts
 
     def __call__(self, image, points):
         homography = self.sample_homography()
@@ -103,7 +119,10 @@ class HomographyAugmentation(object):
         # 进行尺度变换
         if self.do_scaling:
             # 得到n+1个尺度参数，其中最后一个为1，即不进行尺度化
-            scales = np.concatenate((np.random.normal(1, self.scaling_amplitude, (self.scaling_sample_num,)),
+            # scales = np.concatenate((np.random.normal(1, self.scaling_amplitude, (self.scaling_sample_num,)),
+            #                          np.ones((1,))), axis=0)
+            scales = np.concatenate((np.random.uniform(1-self.scaling_amplitude, 1+self.scaling_amplitude,
+                                                       size=(self.scaling_sample_num,)),
                                      np.ones((1,))), axis=0)
             # 中心点不变的尺度缩放
             center = np.mean(pts_2, axis=0, keepdims=True)
@@ -167,24 +186,42 @@ class HomographyAugmentation(object):
 
 class PhotometricAugmentation(object):
 
-    def __init__(self):
-        self.gaussian_noise_mean = 10
-        self.gaussian_noise_std = 5
-        self.speckle_noise_min_prob = 0
-        self.speckle_noise_max_prob = 0.0035
-        self.brightness_max_abs_change = 25  # 50
-        self.contrast_min = 0.3
-        self.contrast_max = 1.5
-        self.shade_transparency_range = (-0.5, 0.8)
-        self.shade_kernel_size_range = (50, 100)
-        self.shade_nb_ellipses = 20
-        self.motion_blur_max_kernel_size = 7
-        self.do_gaussian_noise = True  # False
-        self.do_speckle_noise = True  # False
-        self.do_random_brightness = True  # False
-        self.do_random_contrast = True  # False
-        self.do_shade = True  # False
-        self.do_motion_blur = True  # False
+    def __init__(self,
+                 gaussian_noise_mean=10,
+                 gaussian_noise_std=5,
+                 speckle_noise_min_prob=0,
+                 speckle_noise_max_prob=0.0035,
+                 brightness_max_abs_change=25,
+                 contrast_min=0.3,
+                 contrast_max=1.5,
+                 shade_transparency_range=(-0.5,0.8),
+                 shade_kernel_size_range=(50,100),
+                 shade_nb_ellipese = 20,
+                 motion_blur_max_kernel_size=7,
+                 do_gaussian_noise=True,
+                 do_speckle_noise=True,
+                 do_random_brightness=True,
+                 do_random_contrast=True,
+                 do_shade=True,
+                 do_motion_blur=True
+                 ):
+        self.gaussian_noise_mean = gaussian_noise_mean
+        self.gaussian_noise_std = gaussian_noise_std
+        self.speckle_noise_min_prob = speckle_noise_min_prob
+        self.speckle_noise_max_prob = speckle_noise_max_prob
+        self.brightness_max_abs_change = brightness_max_abs_change
+        self.contrast_min = contrast_min
+        self.contrast_max = contrast_max
+        self.shade_transparency_range = shade_transparency_range
+        self.shade_kernel_size_range = shade_kernel_size_range
+        self.shade_nb_ellipses = shade_nb_ellipese
+        self.motion_blur_max_kernel_size = motion_blur_max_kernel_size
+        self.do_gaussian_noise = do_gaussian_noise
+        self.do_speckle_noise = do_speckle_noise
+        self.do_random_brightness = do_random_brightness
+        self.do_random_contrast = do_random_contrast
+        self.do_shade = do_shade
+        self.do_motion_blur = do_motion_blur
 
     def __call__(self, image):
         if self.do_gaussian_noise:
@@ -302,6 +339,6 @@ def draw_image_keypoints(image, points, color=(0, 255, 0)):
         keypt.pt = (points[i, 1], points[i, 0])
         cv_keypoints.append(keypt)
     image = cv.drawKeypoints(image.astype(np.uint8), cv_keypoints, None, color=color)
-    # cv.imshow("image&keypoints", image)
-    # cv.waitKey()
+    cv.imshow("image&keypoints", image)
+    cv.waitKey()
     return image

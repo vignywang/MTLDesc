@@ -8,8 +8,8 @@ import argparse
 import glob
 
 from utils.logger import get_logger
-from utils.magicpoint_trainer import MagicPointTrainer
-from utils.magicpoint_tester import MagicPointTester
+from utils.magicpoint_trainer import MagicPointSyntheticTrainer
+from utils.magicpoint_tester import MagicPointSyntheticTester
 
 # make the result reproducible
 torch.manual_seed(3928)
@@ -95,7 +95,7 @@ params.logger.info('prefix is %s' % params.prefix)
 # magicpoint_trainer.train()
 
 # initialize the tester and test all checkpoint file in the folder
-magicpoint_tester = MagicPointTester(params)
+magicpoint_tester = MagicPointSyntheticTester(params)
 # ckpt_files = glob.glob(os.path.join(params.ckpt_dir, "model_*"))
 # ckpt_files = sorted(ckpt_files)
 # for ckpt_file in ckpt_files:
