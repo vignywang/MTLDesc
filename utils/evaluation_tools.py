@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 
 class RepeatabilityCalculator(object):
 
-    def __init__(self):
+    def __init__(self, epsilon):
+        self.epsilon = epsilon
         self.sum_repeatability = 0
         self.sum_sample_num = 0
 
@@ -15,30 +16,55 @@ class RepeatabilityCalculator(object):
         self.sum_repeatability = 0
         self.sum_sample_num = 0
 
-    def compute_one_sample_repeatability(self, prob_0, prob_1, threshold, epsilon, scale_0, scale_1, homography):
+    def update(self, point_0, point_1, homography):
+        self.sum_repeatability += self.compute_one_sample_repeatability(point_0, point_1, homography)
+        self.sum_sample_num += 1
+
+    def average(self):
+        average_repeatability = self.sum_repeatability/self.sum_sample_num
+        return average_repeatability, self.sum_repeatability, self.sum_sample_num
+
+    def compute_one_sample_repeatability(self, point_0, point_1, homography):
         inv_homography = np.linalg.inv(homography)
 
-        point_0 = np.where(prob_0 > threshold)
-        point_1 = np.where(prob_1 > threshold)
-        one_0 = np.ones_like(point_0[0])[:, np.newaxis]
-        one_1 = np.ones_like(point_1[0])[:, np.newaxis]
-        point_0 = np.stack(point_0, axis=1)
-        point_1 = np.stack(point_1, axis=1)
+        num_0 = np.shape(point_0)[0]
+        num_1 = np.shape(point_1)[0]
+        one_0 = np.ones((num_0, 1), dtype=np.float)
+        one_1 = np.ones((num_1, 1), dtype=np.float)
 
         # recover to the original size and flip the order (y,x) to (x,y)
-        point_0 = (point_0 * scale_0)[:, ::-1]
-        point_1 = (point_1 * scale_1)[:, ::-1]
-        point_0 = np.concatenate((point_0, one_0), axis=1)
-        point_1 = np.concatenate((point_1, one_1), axis=1)
+        point_0 = point_0[:, ::-1]
+        point_1 = point_1[:, ::-1]
+        homo_point_0 = np.concatenate((point_0, one_0), axis=1)[:, :, np.newaxis]  # [n, 3, 1]
+        homo_point_1 = np.concatenate((point_1, one_1), axis=1)[:, :, np.newaxis]
 
         # compute correctness from 0 to 1
+        project_point_0 = np.matmul(homography, homo_point_0)
+        project_point_0 = project_point_0[:, :2, 0] / project_point_0[:, 2:3, 0]
+        correctness_0_1 = self.compute_correctness(project_point_0, point_1)
 
         # compute correctness from 1 to 0
+        project_point_1 = np.matmul(inv_homography, homo_point_1)
+        project_point_1 = project_point_1[:, :2, 0] / project_point_1[:, 2:3, 0]
+        correctness_1_0 = self.compute_correctness(project_point_1, point_0)
 
-        # compute average correctness
+        # compute repeatability
+        total_point = np.shape(point_0)[0] + np.shape(point_1)[0]
+        repeatability = (correctness_0_1 + correctness_1_0) / total_point
+        return repeatability
 
-    def compute_distance(self, point_0, point_1):
-        pass
+    def compute_correctness(self, point_0, point_1):
+        # compute the distance of two set of point
+        # point_0: [n, 2], point_1: [m,2]
+        point_0 = np.expand_dims(point_0, axis=1)  # [n, 1, 2]
+        point_1 = np.expand_dims(point_1, axis=0)  # [1, m, 2]
+        dist = np.linalg.norm(point_0 - point_1, axis=2)  # [n, m]
+
+        min_dist = np.min(dist, axis=1, keepdims=False)  # [n]
+        correctness = np.less_equal(min_dist, self.epsilon).astype(np.float)
+        correctness = np.sum(correctness)
+
+        return correctness
 
 
 class mAPCalculator(object):
@@ -84,7 +110,7 @@ class mAPCalculator(object):
         prob = np.concatenate([[1], prob, [0]])
         recall = np.concatenate([[0], recall, [1]])
         precision = np.concatenate([[0], precision, [0]])
-        mAP = np.sum(precision[1:]*(recall[1:] - recall[:-1]))
+        mAP = np.sum(precision[1:] * (recall[1:] - recall[:-1]))
 
         test_data = np.stack((recall, precision, prob), axis=0)
         return mAP, test_data
@@ -150,18 +176,3 @@ class mAPCalculator(object):
         n_gt = np.shape(gt_point)[0]
 
         return tp, fp, prob, n_gt
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

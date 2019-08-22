@@ -65,6 +65,9 @@ class HPatchDataset(Dataset):
         self.dataset_dir = params.hpatch_dataset_dir
         self.data_list = self._format_file_list()
 
+    def __len__(self):
+        return len(self.data_list)
+
     def __getitem__(self, idx):
         first_image_dir = self.data_list[idx]['first']
         second_image_dir = self.data_list[idx]['second']
@@ -78,18 +81,25 @@ class HPatchDataset(Dataset):
         org_second_shape = np.shape(second_image)
         resize_shape = np.array((self.height, self.width), dtype=np.float)
         # scale is used to recover the location in original image scale
-        first_scale = org_first_shape / resize_shape
-        second_scale = org_second_shape / resize_shape
+        first_scale = resize_shape / org_first_shape
+        second_scale = resize_shape / org_second_shape
         homo = np.loadtxt(homo_dir, dtype=np.float)
+        homo = self._generate_adjust_homography(first_scale, second_scale, homo)
 
         first_image = cv.resize(first_image, (self.width, self.height), interpolation=cv.INTER_LINEAR)
         second_image = cv.resize(second_image, (self.width, self.height), interpolation=cv.INTER_LINEAR)
-        image_pair = np.stack((first_image, second_image), axis=0)
+        # image_pair = np.stack((first_image, second_image), axis=0)
 
-        sample = {'image_pair': image_pair, 'image_type': image_type,
-                  'first_scale': first_scale, 'second_scale': second_scale,
-                  'homography': homo}
+        sample = {'first_image': first_image, 'second_image': second_image,
+                  'image_type': image_type, 'homography': homo}
         return sample
+
+    @staticmethod
+    def _generate_adjust_homography(first_scale, second_scale, homography):
+        first_inv_scale_mat = np.diag((1. / first_scale[1], 1. / first_scale[0], 1))
+        second_scale_mat = np.diag((second_scale[1], second_scale[0], 1))
+        adjust_homography = np.matmul(second_scale_mat, np.matmul(homography, first_inv_scale_mat))
+        return adjust_homography
 
     def _format_file_list(self):
         data_list = []

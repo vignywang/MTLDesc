@@ -12,6 +12,8 @@ from nets.superpoint_net import SuperPointNet
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
 from utils.evaluation_tools import mAPCalculator
+from utils.evaluation_tools import RepeatabilityCalculator
+from utils.tranditional_algorithm import FAST
 from utils.utils import spatial_nms
 
 
@@ -141,11 +143,12 @@ class MagicPointSyntheticTester(object):
         cv.imwrite(result_dir, cv_image)
 
 
-class MagicPointHPatchTester(object):
+class HPatchTester(object):
 
     def __init__(self, params):
         self.params = params
         self.logger = params.logger
+        self.top_k = params.top_k
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda!')
             self.device = torch.device('cuda:0')
@@ -158,12 +161,21 @@ class MagicPointHPatchTester(object):
 
         # 初始化模型
         model = SuperPointNet()
+        model_fast = FAST(top_k=self.top_k)
 
         # 初始化测评计算子
+        self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, coorect_epsilon: %d'
+                         % (params.detection_threshold, params.correct_epsilon))
+        illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
+        viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
 
         self.test_dataset = test_dataset
         self.test_length = len(test_dataset)
+        self.detection_threshold = params.detection_threshold
+        self.illumination_repeatability = illumination_repeatability
+        self.viewpoint_repeatability = viewpoint_repeatability
         self.model = model
+        self.model_fast = model_fast
 
     def test(self, ckpt_file):
 
@@ -179,6 +191,8 @@ class MagicPointHPatchTester(object):
         self.model.to(self.device)
 
         # 重置测评算子参数
+        self.illumination_repeatability.reset()
+        self.viewpoint_repeatability.reset()
 
         self.model.eval()
 
@@ -189,22 +203,35 @@ class MagicPointHPatchTester(object):
         count = 0
 
         for i, data in enumerate(self.test_dataset):
-            image_pair = data['image_pair']
-            first_scale = data['first_scale']
-            second_scale = data['second_scale']
+            first_image = data['first_image']
+            second_image = data['second_image']
             homography = data['homography']
             image_type = data['image_type']
 
-            image_pair = image_pair.to(self.device).unsqueeze(dim=1)
+            image_pair = np.stack((first_image, second_image), axis=0)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
             # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
             _, _, prob_pair = self.model(image_pair)
             # 将概率图展开为原始图像大小
             prob_pair = f.pixel_shuffle(prob_pair, 8)
             # 进行非极大值抑制
-            prob_pair = spatial_nms(prob_pair)
+            prob_pair = spatial_nms(prob_pair, kernel_size=3)
             prob_pair = prob_pair.detach().cpu().numpy()
             first_prob = prob_pair[0, 0]
             second_prob = prob_pair[1, 0]
+            # 得到对应的预测点
+            first_point = self.generate_predict_point(first_prob)
+            second_point = self.generate_predict_point(second_prob)
+
+            # 对单样本进行测评
+            if image_type == 'illumination':
+                self.illumination_repeatability.update(first_point, second_point, homography)
+            elif image_type == 'viewpoint':
+                self.viewpoint_repeatability.update(first_point, second_point, homography)
+            else:
+                print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
+                      "Please check !")
+                assert False
 
             if i % 10 == 0:
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
@@ -213,14 +240,78 @@ class MagicPointHPatchTester(object):
             # if count % 1000 == 0:
             #     break
 
-        # self.logger.info("The mean Average Precision : %.4f of %d samples" % (mAP, count))
-        self.logger.info("Testing done.")
+        # 计算各自的重复率以及总的重复率
+        illum_repeat, illum_repeat_sum, illum_num_sum = self.illumination_repeatability.average()
+        view_repeat, view_repeat_sum, view_num_sum = self.viewpoint_repeatability.average()
+        total_repeat = (illum_repeat_sum + view_repeat_sum) / (illum_num_sum + view_num_sum)
+
+        self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_repeat, view_repeat, total_repeat))
+        self.logger.info("Testing HPatch Repeatability done.")
         self.logger.info("*****************************************************")
 
+    def generate_predict_point(self, prob, scale=None):
+        point_idx = np.where(prob > self.detection_threshold)
+        prob = prob[point_idx]
+        sorted_idx = np.argsort(prob)[::-1]
+        if sorted_idx.shape[0] >= self.top_k:
+            sorted_idx = sorted_idx[:300]
 
+        point = np.stack(point_idx, axis=1)  # [n,2]
+        top_k_point = []
+        for idx in sorted_idx:
+            top_k_point.append(point[idx])
+        point = np.stack(top_k_point, axis=0)
 
+        if scale is not None:
+            point = point*scale
+        return point
 
+    def test_fast(self):
 
+        start_time = time.time()
+        count = 0
+
+        self.illumination_repeatability.reset()
+        self.viewpoint_repeatability.reset()
+
+        self.logger.info("*****************************************************")
+        self.logger.info("Testing FAST corner detection algorithm")
+
+        for i, data in enumerate(self.test_dataset):
+            first_image = data['first_image']
+            second_image = data['second_image']
+            homography = data['homography']
+            image_type = data['image_type']
+
+            first_point = self.model_fast.detect(first_image)
+            second_point = self.model_fast.detect(second_image)
+            if first_point.shape[0] == 0 or second_point.shape[0] == 0:
+                continue
+
+            # 对单样本进行测评
+            if image_type == 'illumination':
+                self.illumination_repeatability.update(first_point, second_point, homography)
+            elif image_type == 'viewpoint':
+                self.viewpoint_repeatability.update(first_point, second_point, homography)
+            else:
+                print("The image type must be one of illumination of viewpoint ! Please check !")
+                assert False
+
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                start_time = time.time()
+            count += 1
+
+        # 计算各自的重复率以及总的重复率
+        illum_repeat, illum_repeat_sum, illum_num_sum = self.illumination_repeatability.average()
+        view_repeat, view_repeat_sum, view_num_sum = self.viewpoint_repeatability.average()
+        total_repeat = (illum_repeat_sum + view_repeat_sum) / (illum_num_sum + view_num_sum)
+
+        self.logger.info("FAST Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f, %d/%d" %
+                         (illum_repeat, view_repeat, total_repeat, count, len(self.test_dataset)))
+        self.logger.info("Testing HPatch Repeatability done.")
+        self.logger.info("*****************************************************")
 
 
 

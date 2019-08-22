@@ -9,7 +9,8 @@ import glob
 
 from utils.logger import get_logger
 from utils.magicpoint_trainer import MagicPointSyntheticTrainer
-from utils.magicpoint_tester import MagicPointSyntheticTester
+from utils.testers import MagicPointSyntheticTester
+from utils.testers import HPatchTester
 
 # make the result reproducible
 torch.manual_seed(3928)
@@ -21,6 +22,7 @@ np.random.seed(2933)
 class Parameters:
 
     synthetic_dataset_dir = '/data/MegPoint/dataset/synthetic'
+    hpatch_dataset_dir = '/data/MegPoint/dataset/hpatch'
 
     ckpt_root = './magicpoint_ckpt'
     ckpt_dir = ''
@@ -40,6 +42,9 @@ class Parameters:
     width = 320
     do_augmentation = True
     save_threshold_curve = True
+    detection_threshold = 0.005
+    correct_epsilon = 3
+    top_k = 300
 
 
 def myparser():
@@ -95,15 +100,17 @@ params.logger.info('prefix is %s' % params.prefix)
 # magicpoint_trainer.train()
 
 # initialize the tester and test all checkpoint file in the folder
-magicpoint_tester = MagicPointSyntheticTester(params)
+# magicpoint_tester = MagicPointSyntheticTester(params)
 # ckpt_files = glob.glob(os.path.join(params.ckpt_dir, "model_*"))
 # ckpt_files = sorted(ckpt_files)
 # for ckpt_file in ckpt_files:
 #     magicpoint_tester.test(ckpt_file)
 
+magicpoint_tester = HPatchTester(params)
 # only to test one model
 ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
 magicpoint_tester.test(ckpt_file)
+# magicpoint_tester.test_fast()
 
 # only to test one image
 # magicpoint_tester.test_single_image(ckpt_file, image_dir)
