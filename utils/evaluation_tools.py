@@ -5,6 +5,42 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+class RepeatabilityCalculator(object):
+
+    def __init__(self):
+        self.sum_repeatability = 0
+        self.sum_sample_num = 0
+
+    def reset(self):
+        self.sum_repeatability = 0
+        self.sum_sample_num = 0
+
+    def compute_one_sample_repeatability(self, prob_0, prob_1, threshold, epsilon, scale_0, scale_1, homography):
+        inv_homography = np.linalg.inv(homography)
+
+        point_0 = np.where(prob_0 > threshold)
+        point_1 = np.where(prob_1 > threshold)
+        one_0 = np.ones_like(point_0[0])[:, np.newaxis]
+        one_1 = np.ones_like(point_1[0])[:, np.newaxis]
+        point_0 = np.stack(point_0, axis=1)
+        point_1 = np.stack(point_1, axis=1)
+
+        # recover to the original size and flip the order (y,x) to (x,y)
+        point_0 = (point_0 * scale_0)[:, ::-1]
+        point_1 = (point_1 * scale_1)[:, ::-1]
+        point_0 = np.concatenate((point_0, one_0), axis=1)
+        point_1 = np.concatenate((point_1, one_1), axis=1)
+
+        # compute correctness from 0 to 1
+
+        # compute correctness from 1 to 0
+
+        # compute average correctness
+
+    def compute_distance(self, point_0, point_1):
+        pass
+
+
 class mAPCalculator(object):
 
     def __init__(self):
