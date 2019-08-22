@@ -31,17 +31,23 @@ class Parameters:
     logger = None
     gpus = None
 
+    # common params
+    height = 240
+    width = 320
+
+    # training relating params
     lr = 0.001
     batch_size = 64
     epoch_num = 60
     log_freq = 100
     num_workers = 8
     prefix = 'exp1'
-
-    height = 240
-    width = 320
     do_augmentation = True
+
+    # testing relating params
     save_threshold_curve = True
+
+    # HPatch tester relating params
     detection_threshold = 0.005
     correct_epsilon = 3
     top_k = 300
@@ -96,24 +102,38 @@ params.logger.info('number worker is %d' % params.num_workers)
 params.logger.info('prefix is %s' % params.prefix)
 
 # initialize the trainer and train
-# magicpoint_trainer = MagicPointTrainer(params)
-# magicpoint_trainer.train()
+magicpoint_trainer = MagicPointSyntheticTrainer(params)
+magicpoint_trainer.train()
 
 # initialize the tester and test all checkpoint file in the folder
-# magicpoint_tester = MagicPointSyntheticTester(params)
-# ckpt_files = glob.glob(os.path.join(params.ckpt_dir, "model_*"))
-# ckpt_files = sorted(ckpt_files)
-# for ckpt_file in ckpt_files:
-#     magicpoint_tester.test(ckpt_file)
+magicpoint_synthetic_tester = MagicPointSyntheticTester(params)
+magicpoint_hpatch_tester = HPatchTester(params)
 
-magicpoint_tester = HPatchTester(params)
-# only to test one model
+# # choose test mode
+# mode = 'all'
+mode = 'only_hpatch'
+# mode = 'only_synthetic'
+# mode = 'only_synthetic_one_image'
+
 ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
-magicpoint_tester.test(ckpt_file)
-# magicpoint_tester.test_fast()
 
-# only to test one image
-# magicpoint_tester.test_single_image(ckpt_file, image_dir)
+if mode == 'all':
+    ckpt_files = glob.glob(os.path.join(params.ckpt_dir, "model_*"))
+    ckpt_files = sorted(ckpt_files)
+    for ckpt_file in ckpt_files:
+        magicpoint_synthetic_tester.test(ckpt_file)
+        magicpoint_hpatch_tester.test(ckpt_file)
+
+elif mode == 'only_hpatch':
+    magicpoint_hpatch_tester.test(ckpt_file)
+    # magicpoint_hpatch_tester.test_fast()
+
+elif mode == 'only_synthetic':
+    magicpoint_synthetic_tester.test(ckpt_file)
+
+elif mode == 'only_synthetic_one_image':
+    image_dir = '/data/MegPoint/dataset/synthetic/draw_multiple_polygons/images/test/76.png'
+    magicpoint_synthetic_tester.test_single_image(ckpt_file, image_dir)
 
 
 

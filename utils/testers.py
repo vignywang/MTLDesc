@@ -148,6 +148,8 @@ class HPatchTester(object):
     def __init__(self, params):
         self.params = params
         self.logger = params.logger
+        self.detection_threshold = params.detection_threshold
+        self.correct_epsilon = params.correct_epsilon
         self.top_k = params.top_k
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda!')
@@ -165,13 +167,13 @@ class HPatchTester(object):
 
         # 初始化测评计算子
         self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, coorect_epsilon: %d'
-                         % (params.detection_threshold, params.correct_epsilon))
+                         % (self.detection_threshold, self.correct_epsilon))
+        self.logger.info('Top k: %.4f' % self.top_k)
         illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
         viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
 
         self.test_dataset = test_dataset
         self.test_length = len(test_dataset)
-        self.detection_threshold = params.detection_threshold
         self.illumination_repeatability = illumination_repeatability
         self.viewpoint_repeatability = viewpoint_repeatability
         self.model = model
