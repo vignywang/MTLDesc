@@ -10,9 +10,15 @@ np.random.seed(3242)
 
 
 class Parameters:
-    ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
+    # # first round
+    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/ \
+    # model_59.pt'
+    # # scond round
+    ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/' \
+                'model_99.pt'
+
     out_root = '/data/MegPoint/dataset/coco'
-    dataset_root = '/data/MegPoint/dataset/coco'
+    coco_dataset_root = '/data/MegPoint/dataset/coco'
 
     height = 240
     width = 320

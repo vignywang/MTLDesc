@@ -9,7 +9,7 @@ import argparse
 import glob
 
 from utils.logger import get_logger
-from utils.magicpoint_trainer import MagicPointAdaptionTrainer
+from utils.trainers import MagicPointAdaptionTrainer
 
 # make the result reproducible
 torch.manual_seed(3928)

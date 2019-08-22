@@ -56,10 +56,14 @@ class AdaptionMaker(object):
         self.model = model
         self.train_out_dir = os.path.join(self.out_root, 'train2014', 'pseudo_image_points')
         self.val_out_dir = os.path.join(self.out_root, 'val2014', 'pseudo_image_points')
-        if not os.path.exists(self.train_out_dir):
-            os.mkdir(self.train_out_dir)
-        if not os.path.exists(self.val_out_dir):
-            os.mkdir(self.val_out_dir)
+        count = 1
+        while os.path.exists(self.train_out_dir):
+            self.train_out_dir += '%d' % count
+            self.val_out_dir += '%d' % count
+        os.mkdir(self.train_out_dir)
+        os.mkdir(self.val_out_dir)
+        print('The train_out_dir is: %s' % self.train_out_dir)
+        print('The val_out_dir is: %s' % self.train_out_dir)
 
     def run(self):
 

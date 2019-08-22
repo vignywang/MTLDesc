@@ -8,7 +8,7 @@ import argparse
 import glob
 
 from utils.logger import get_logger
-from utils.magicpoint_trainer import MagicPointSyntheticTrainer
+from utils.trainers import MagicPointSyntheticTrainer
 from utils.testers import MagicPointSyntheticTester
 from utils.testers import HPatchTester
 
