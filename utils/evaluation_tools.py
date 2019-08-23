@@ -5,6 +5,43 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+class HomoAccuracyCalculator(object):
+
+    def __init__(self, epsilon, height, width):
+        self.height = height
+        self.width = width
+        self.epsilon = epsilon
+        self.sum_accuracy = 0
+        self.sum_sample_num = 0
+        self.corner = self._generate_corner()
+
+    def reset(self):
+        self.sum_accuracy = 0
+        self.sum_sample_num = 0
+
+    def average(self):
+        return self.sum_accuracy / self.sum_sample_num
+
+    def update(self, pred_homography, gt_homography):
+        warped_corner_by_pred = np.matmul(pred_homography, self.corner[:, :, np.newaxis])[:, :, 0]
+        warped_corner_by_gt = np.matmul(gt_homography, self.corner[:, :, np.newaxis])[:, :, 0]
+        warped_corner_by_pred = warped_corner_by_pred / warped_corner_by_pred[:, 2:3]
+        warped_corner_by_gt = warped_corner_by_gt / warped_corner_by_gt[:, 2:3]
+        diff = np.linalg.norm((warped_corner_by_pred-warped_corner_by_gt), axis=1, keepdims=False)
+        diff = np.mean(diff)
+        accuracy = (diff <= self.epsilon).astype(np.float)
+        self.sum_accuracy += accuracy
+        self.sum_sample_num += 1
+
+    def _generate_corner(self):
+        pt_00 = np.array((0, 0, 1), dtype=np.float)
+        pt_01 = np.array((0, self.height-1, 1), dtype=np.float)
+        pt_10 = np.array((self.width-1, 0, 1), dtype=np.float)
+        pt_11 = np.array((self.width-1, self.height-1, 1), dtype=np.float)
+        corner = np.stack((pt_00, pt_01, pt_10, pt_11), axis=0)
+        return corner
+
+
 class RepeatabilityCalculator(object):
 
     def __init__(self, epsilon):

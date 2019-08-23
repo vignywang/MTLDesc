@@ -91,7 +91,7 @@ class HPatchDataset(Dataset):
         # image_pair = np.stack((first_image, second_image), axis=0)
 
         sample = {'first_image': first_image, 'second_image': second_image,
-                  'image_type': image_type, 'homography': homo}
+                  'image_type': image_type, 'gt_homography': homo}
         return sample
 
     @staticmethod

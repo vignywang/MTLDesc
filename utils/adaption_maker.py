@@ -93,7 +93,7 @@ class AdaptionMaker(object):
             images.append(image)
             inv_homographies.append(np.eye(3))
             for j in range(self.adaption_num):
-                homography = self.homography.sample_homography()
+                homography = self.homography.sample()
                 inv_homography = np.linalg.inv(homography)
                 transformed_image = cv.warpPerspective(image, homography, (self.width, self.height),
                                                        flags=cv.INTER_LINEAR)

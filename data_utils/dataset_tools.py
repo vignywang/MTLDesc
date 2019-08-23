@@ -42,11 +42,14 @@ class HomographyAugmentation(object):
         self.do_translation = do_translation
         self.allow_artifacts = allow_artifacts
 
-    def __call__(self, image, points):
-        homography = self.sample_homography()
+    def __call__(self, image, points, return_homo=False):
+        homography = self.sample()
         image, mask = self._compute_warped_image_and_mask(image, homography)
         points = self._warp_keypoints(points, homography)
-        return image, mask, points
+        if return_homo:
+            return image, mask, points, homography
+        else:
+            return image, mask, points
 
     def _compute_warped_image_and_mask(self, image, homography):
         dsize = (self.width, self.height)
@@ -92,7 +95,7 @@ class HomographyAugmentation(object):
 
         return in_points
 
-    def sample_homography(self):
+    def sample(self):
 
         pts_1 = np.array(((0, 0), (0, 1), (1, 1), (1, 0)), dtype=np.float)  # 注意这里第一维是x，第二维是y
         margin = (1 - self.patch_ratio) / 2

@@ -7,6 +7,15 @@ import torch
 import torch.nn.functional as f
 
 
+def compute_desp_dist(desp_0, desp_1):
+    # desp_0:[n,256], desp_1:[m,256]
+    square_norm_0 = (np.linalg.norm(desp_0, axis=1, keepdims=True))**2  # [n,1]
+    square_norm_1 = (np.linalg.norm(desp_1, axis=1, keepdims=True).transpose((1, 0)))**2  # [1,m]
+    xty = np.matmul(desp_0, desp_1.transpose((1, 0)))  # [n,m]
+    dist = np.sqrt((square_norm_0+square_norm_1-2*xty+1e-4))
+    return dist
+
+
 def spatial_nms(prob, kernel_size=5):
     """
     利用max_pooling对预测的特征点的概率图进行非极大值抑制
@@ -45,8 +54,55 @@ def draw_image_keypoints(image, points, color=(0, 255, 0)):
     return image
 
 
+class DescriptorHingeLoss(object):
+    """
+    According the Paper of SuperPoint
+    """
+
+    def __init__(self, device, lambda_d=250, m_p=1, m_n=0.2, ):
+        self.device = device
+        self.lambda_d = torch.tensor(lambda_d, device=self.device)
+        self.m_p = torch.tensor(m_p, device=self.device)
+        self.m_n = torch.tensor(m_n, device=self.device)
+        self.one = torch.tensor(1, device=self.device)
+
+    def __call__(self, desp_0, desp_1, desp_mask):
+        batch_size, dim, _, _ = desp_0.shape
+        desp_0 = torch.reshape(desp_0, (batch_size, dim, -1))
+        desp_1 = torch.reshape(desp_1, (batch_size, dim, -1))
+        desp_0 = torch.unsqueeze(desp_0, dim=2)  # [bt,dim,1,h*w]
+        desp_1 = torch.unsqueeze(desp_1, dim=3)  # [bt,dim,h*w,1]
+
+        cos_similarity = torch.sum((desp_0*desp_1), dim=1, keepdim=False)  # [bt, h*w, h*w]
+        positive_term = f.relu(self.m_p - cos_similarity) * self.lambda_d
+        negative_term = f.relu(cos_similarity - self.m_n)
+
+        positive_mask = desp_mask
+        negative_mask = self.one - desp_mask
+
+        loss = positive_mask*positive_term+negative_mask*negative_term
+        loss = torch.mean(loss)
+
+        return loss
 
 
+class Matcher(object):
 
+    def __init__(self):
+        pass
 
-
+    def __call__(self, point_0, desp_0, point_1, desp_1):
+        dist_0_1 = compute_desp_dist(desp_0, desp_1)  # [n,m]
+        dist_1_0 = dist_0_1.transpose((1, 0))  # [m,n]
+        nearest_idx_0_1 = np.argmin(dist_0_1, axis=1)  # [n]
+        nearest_idx_1_0 = np.argmin(dist_1_0, axis=1)  # [m]
+        matched_src = []
+        matched_tgt = []
+        for i, idx_0_1 in enumerate(nearest_idx_0_1):
+            if i == nearest_idx_1_0[idx_0_1]:
+                matched_src.append(point_0[i])
+                matched_tgt.append(point_1[idx_0_1])
+        if len(matched_src) != 0:
+            matched_src = np.stack(matched_src, axis=0)
+            matched_tgt = np.stack(matched_tgt, axis=0)
+        return matched_src, matched_tgt

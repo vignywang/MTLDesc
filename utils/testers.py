@@ -13,8 +13,9 @@ from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
 from utils.evaluation_tools import mAPCalculator
 from utils.evaluation_tools import RepeatabilityCalculator
+from utils.evaluation_tools import HomoAccuracyCalculator
 from utils.tranditional_algorithm import FAST
-from utils.utils import spatial_nms
+from utils.utils import spatial_nms, Matcher
 
 
 class MagicPointSyntheticTester(object):
@@ -150,7 +151,8 @@ class HPatchTester(object):
         self.logger = params.logger
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
-        self.top_k = params.top_k
+        self.rep_top_k = params.rep_top_k
+        self.desp_top_k = params.desp_top_k
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda!')
             self.device = torch.device('cuda:0')
@@ -159,27 +161,24 @@ class HPatchTester(object):
             self.device = torch.device('cpu')
 
         # 初始化测试数据集
-        test_dataset = HPatchDataset(params)
+        self.test_dataset = HPatchDataset(params)
+        self.test_length = len(self.test_dataset)
 
         # 初始化模型
-        model = SuperPointNet()
-        model_fast = FAST(top_k=self.top_k)
+        self.model = SuperPointNet()
+        self.model_fast = FAST(top_k=self.rep_top_k)
 
         # 初始化测评计算子
         self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, coorect_epsilon: %d'
                          % (self.detection_threshold, self.correct_epsilon))
-        self.logger.info('Top k: %.4f' % self.top_k)
-        illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
-        viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
+        self.logger.info('Repeatability Top k: %d' % self.rep_top_k)
+        self.logger.info('Descriptor Top k: %d' % self.desp_top_k)
+        self.illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
+        self.viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
+        self.homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon, params.height, params.width)
+        self.matcher = Matcher()
 
-        self.test_dataset = test_dataset
-        self.test_length = len(test_dataset)
-        self.illumination_repeatability = illumination_repeatability
-        self.viewpoint_repeatability = viewpoint_repeatability
-        self.model = model
-        self.model_fast = model_fast
-
-    def test(self, ckpt_file):
+    def test_keypoint_repeatability(self, ckpt_file):
 
         if ckpt_file == None:
             print("Please input correct checkpoint file dir!")
@@ -207,29 +206,27 @@ class HPatchTester(object):
         for i, data in enumerate(self.test_dataset):
             first_image = data['first_image']
             second_image = data['second_image']
-            homography = data['homography']
+            gt_homography = data['gt_homography']
             image_type = data['image_type']
 
             image_pair = np.stack((first_image, second_image), axis=0)
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
-            # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
+
             _, _, prob_pair = self.model(image_pair)
-            # 将概率图展开为原始图像大小
             prob_pair = f.pixel_shuffle(prob_pair, 8)
-            # 进行非极大值抑制
             prob_pair = spatial_nms(prob_pair, kernel_size=3)
             prob_pair = prob_pair.detach().cpu().numpy()
             first_prob = prob_pair[0, 0]
             second_prob = prob_pair[1, 0]
             # 得到对应的预测点
-            first_point = self.generate_predict_point(first_prob)
-            second_point = self.generate_predict_point(second_prob)
+            first_point = self.generate_predict_point(first_prob, top_k=self.rep_top_k)  # [n,2]
+            second_point = self.generate_predict_point(second_prob, top_k=self.rep_top_k)  # [m,2]
 
             # 对单样本进行测评
             if image_type == 'illumination':
-                self.illumination_repeatability.update(first_point, second_point, homography)
+                self.illumination_repeatability.update(first_point, second_point, gt_homography)
             elif image_type == 'viewpoint':
-                self.viewpoint_repeatability.update(first_point, second_point, homography)
+                self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
             else:
                 print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
                       "Please check !")
@@ -252,11 +249,84 @@ class HPatchTester(object):
         self.logger.info("Testing HPatch Repeatability done.")
         self.logger.info("*****************************************************")
 
-    def generate_predict_point(self, prob, scale=None):
+    def test_descriptors(self, ckpt_file):
+
+        if ckpt_file == None:
+            print("Please input correct checkpoint file dir!")
+            return
+
+        # 从预训练的模型中恢复参数
+        model_dict = self.model.state_dict()
+        pretrain_dict = torch.load(ckpt_file)
+        model_dict.update(pretrain_dict)
+        self.model.load_state_dict(model_dict)
+        self.model.to(self.device)
+
+        # 重置测评算子参数
+        self.illumination_repeatability.reset()
+        self.viewpoint_repeatability.reset()
+
+        self.model.eval()
+
+        self.logger.info("*****************************************************")
+        self.logger.info("Testing model %s" % ckpt_file)
+
+        start_time = time.time()
+        count = 0
+
+        for i, data in enumerate(self.test_dataset):
+            first_image = data['first_image']
+            second_image = data['second_image']
+            gt_homography = data['gt_homography']
+
+            image_pair = np.stack((first_image, second_image), axis=0)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+
+            _, desp_pair, prob_pair = self.model(image_pair)
+            prob_pair = f.pixel_shuffle(prob_pair, 8)
+            prob_pair = spatial_nms(prob_pair, kernel_size=3)
+
+            desp_pair = desp_pair.detach().cpu().numpy()
+            first_desp = desp_pair[0]
+            second_desp = desp_pair[1]
+            prob_pair = prob_pair.detach().cpu().numpy()
+            first_prob = prob_pair[0, 0]
+            second_prob = prob_pair[1, 0]
+
+            # 得到对应的预测点
+            first_point = self.generate_predict_point(first_prob, top_k=self.desp_top_k)  # [n,2]
+            second_point = self.generate_predict_point(second_prob, top_k=self.desp_top_k)  # [m,2]
+
+            # 得到点对应的描述子
+            select_first_desp = self.generate_predict_descriptor(first_point, first_desp)
+            select_second_desp = self.generate_predict_descriptor(second_point, second_desp)
+
+            # 得到匹配点
+            matched_point = self.matcher(first_point, select_first_desp, second_point, select_second_desp)
+
+            # 计算得到单应变换
+            pred_homography, _ = cv.findHomography(matched_point[0], matched_point[1], cv.RANSAC)
+
+            # 对单样本进行测评
+            self.homo_accuracy.update(pred_homography, gt_homography)
+
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                start_time = time.time()
+            count += 1
+            # if count % 1000 == 0:
+            #     break
+
+        accuracy = self.homo_accuracy.average()
+        self.logger.info("THe average accuracy is %.4f " % accuracy)
+        self.logger.info("Testing HPatch descriptors done.")
+        self.logger.info("*****************************************************")
+
+    def generate_predict_point(self, prob, scale=None, top_k=0):
         point_idx = np.where(prob > self.detection_threshold)
         prob = prob[point_idx]
         sorted_idx = np.argsort(prob)[::-1]
-        if sorted_idx.shape[0] >= self.top_k:
+        if sorted_idx.shape[0] >= top_k:
             sorted_idx = sorted_idx[:300]
 
         point = np.stack(point_idx, axis=1)  # [n,2]
@@ -268,6 +338,59 @@ class HPatchTester(object):
         if scale is not None:
             point = point*scale
         return point
+
+    def generate_predict_descriptor(self, point, desp):
+        point = torch.from_numpy(point).to(torch.float)  # 由于只有pytorch有gather的接口，因此将点调整为pytorch的格式
+        desp = torch.from_numpy(desp)
+        dim, h, w = desp.shape
+        desp = torch.reshape(desp, (dim, -1))
+        desp = torch.transpose(desp, dim0=1, dim1=0)  # [h*w,256]
+
+        # 下采样
+        scaled_point = point / 8
+        point_y = scaled_point[:, 0:1]  # [n,1]
+        point_x = scaled_point[:, 1:2]
+
+        x0 = torch.floor(point_x)
+        x1 = x0 + 1
+        y0 = torch.floor(point_y)
+        y1 = y0 + 1
+        x_nearest = torch.round(point_x)
+        y_nearest = torch.round(point_y)
+
+        x0_safe = torch.clamp(x0, min=0, max=w-1)
+        x1_safe = torch.clamp(x1, min=0, max=w-1)
+        y0_safe = torch.clamp(y0, min=0, max=h-1)
+        y1_safe = torch.clamp(y1, min=0, max=h-1)
+
+        x_nearest_safe = torch.clamp(x_nearest, min=0, max=w-1)
+        y_nearest_safe = torch.clamp(y_nearest, min=0, max=h-1)
+
+        idx_00 = (x0_safe + y0_safe*w).to(torch.long).repeat((1, dim))
+        idx_01 = (x0_safe + y1_safe*w).to(torch.long).repeat((1, dim))
+        idx_10 = (x1_safe + y0_safe*w).to(torch.long).repeat((1, dim))
+        idx_11 = (x1_safe + y1_safe*w).to(torch.long).repeat((1, dim))
+        idx_nearest = (x_nearest_safe + y_nearest_safe*w).to(torch.long).repeat((1, dim))
+
+        d_x = point_x - x0_safe
+        d_y = point_y - y0_safe
+        d_1_x = x1_safe - point_x
+        d_1_y = y1_safe - point_y
+
+        desp_00 = torch.gather(desp, dim=0, index=idx_00)
+        desp_01 = torch.gather(desp, dim=0, index=idx_01)
+        desp_10 = torch.gather(desp, dim=0, index=idx_10)
+        desp_11 = torch.gather(desp, dim=0, index=idx_11)
+        nearest_desp = torch.gather(desp, dim=0, index=idx_nearest)
+        bilinear_desp = desp_00*d_1_x*d_1_y + desp_01*d_1_x*d_y + desp_10*d_x*d_1_y+desp_11*d_x*d_y
+
+        # todo: 插值得到的描述子不再满足模值为1，强行归一化到模值为1，这里可能有问题
+        condition = torch.eq(torch.norm(bilinear_desp, dim=1, keepdim=True), 0)
+        interpolation_desp = torch.where(condition, nearest_desp, bilinear_desp)
+        interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
+        interpolation_desp = interpolation_desp/interpolation_norm
+
+        return interpolation_desp.numpy()
 
     def test_fast(self):
 
@@ -283,7 +406,7 @@ class HPatchTester(object):
         for i, data in enumerate(self.test_dataset):
             first_image = data['first_image']
             second_image = data['second_image']
-            homography = data['homography']
+            gt_homography = data['gt_homography']
             image_type = data['image_type']
 
             first_point = self.model_fast.detect(first_image)
@@ -293,9 +416,9 @@ class HPatchTester(object):
 
             # 对单样本进行测评
             if image_type == 'illumination':
-                self.illumination_repeatability.update(first_point, second_point, homography)
+                self.illumination_repeatability.update(first_point, second_point, gt_homography)
             elif image_type == 'viewpoint':
-                self.viewpoint_repeatability.update(first_point, second_point, homography)
+                self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
             else:
                 print("The image type must be one of illumination of viewpoint ! Please check !")
                 assert False
