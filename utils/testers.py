@@ -265,6 +265,7 @@ class HPatchTester(object):
         # 重置测评算子参数
         self.illumination_repeatability.reset()
         self.viewpoint_repeatability.reset()
+        self.homo_accuracy.reset()
 
         self.model.eval()
 

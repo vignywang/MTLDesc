@@ -22,6 +22,7 @@ np.random.seed(2933)
 class Parameters:
 
     coco_dataset_dir = '/data/MegPoint/dataset/coco'
+    hpatch_dataset_dir = '/data/MegPoint/dataset/hpatch'
 
     ckpt_root = './magicpoint_ckpt'
     ckpt_dir = ''
@@ -50,7 +51,8 @@ class Parameters:
     # HPatch validate/test relating params
     detection_threshold = 0.005
     correct_epsilon = 3
-    top_k = 300
+    rep_top_k = 300
+    desp_top_k = 1000
 
     # homography & photometric relating params using in training
     homography_params = {
@@ -94,7 +96,7 @@ def myparser():
     parser = argparse.ArgumentParser(description="Pytorch SuperPoint Training")
     parser.add_argument("--gpus", type=str, default='0')
     parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--batch_size", type=int, default=2)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--save_threshold_curve", type=bool, default=True)
     parser.add_argument("--prefix", type=str, default='SuperPoint')

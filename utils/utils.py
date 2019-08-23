@@ -68,12 +68,10 @@ class DescriptorHingeLoss(object):
 
     def __call__(self, desp_0, desp_1, desp_mask):
         batch_size, dim, _, _ = desp_0.shape
-        desp_0 = torch.reshape(desp_0, (batch_size, dim, -1))
+        desp_0 = torch.reshape(desp_0, (batch_size, dim, -1)).transpose(dim0=2, dim1=1)  # [bt, h*w, dim]
         desp_1 = torch.reshape(desp_1, (batch_size, dim, -1))
-        desp_0 = torch.unsqueeze(desp_0, dim=2)  # [bt,dim,1,h*w]
-        desp_1 = torch.unsqueeze(desp_1, dim=3)  # [bt,dim,h*w,1]
 
-        cos_similarity = torch.sum((desp_0*desp_1), dim=1, keepdim=False)  # [bt, h*w, h*w]
+        cos_similarity = torch.matmul(desp_0, desp_1)
         positive_term = f.relu(self.m_p - cos_similarity) * self.lambda_d
         negative_term = f.relu(cos_similarity - self.m_n)
 

@@ -5,6 +5,8 @@ import os
 import torch
 import time
 import torch.nn.functional as f
+import numpy as np
+import cv2 as cv
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
@@ -13,9 +15,11 @@ from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.coco_dataset import COCOAdaptionTrainDataset
 from data_utils.coco_dataset import COCOAdaptionValDataset
 from data_utils.coco_dataset import COCOSuperPointTrainDataset
+from data_utils.hpatch_dataset import HPatchDataset
 from nets.superpoint_net import SuperPointNet
 from utils.evaluation_tools import mAPCalculator
-from utils.utils import spatial_nms
+from utils.evaluation_tools import HomoAccuracyCalculator
+from utils.utils import spatial_nms, Matcher
 from utils.utils import DescriptorHingeLoss
 
 
@@ -31,6 +35,10 @@ class Trainer(object):
         self.ckpt_dir = params.ckpt_dir
         self.num_workers = params.num_workers
         self.log_freq = params.log_freq
+        self.rep_top_k = params.rep_top_k
+        self.desp_top_k = params.desp_top_k
+        self.detection_threshold = params.detection_threshold
+        self.correct_epsilon = params.correct_epsilon
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda !')
             self.device = torch.device('cuda:0')
@@ -451,10 +459,12 @@ class SuperPointTrainer(Trainer):
                                            num_workers=self.num_workers, drop_last=self.drop_last)
         self.epoch_length = len(self.train_dataset) / self.batch_size
 
-        # 初始化验证数据的读入接口
-        # self.val_dataset =
+        self.test_dataset = HPatchDataset(params)
+        self.test_length = len(self.test_dataset)
 
         # 初始化验证算子
+        self.homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon, params.height, params.width)
+        self.matcher = Matcher()
 
         # 初始化loss算子
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
@@ -484,7 +494,6 @@ class SuperPointTrainer(Trainer):
             mask_pair = torch.cat((mask, warped_mask), dim=0)
             logit_pair, desp_pair, _ = self.model(image_pair)
 
-            self.summary_writer.add_histogram('descriptor', desp_pair)
 
             unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
@@ -507,6 +516,7 @@ class SuperPointTrainer(Trainer):
                 point_loss_val = point_loss.item()
                 desp_loss_val = desp_loss.item()
                 loss_val = loss.item()
+                self.summary_writer.add_histogram('descriptor', desp_pair)
                 self.summary_writer.add_scalar('loss', loss_val)
                 self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
                                  " one step cost %.4fs. "
@@ -530,7 +540,59 @@ class SuperPointTrainer(Trainer):
         self.model.eval()
         self.logger.info("*****************************************************")
         self.logger.info("Validating epoch %2d begin:" % epoch_idx)
-        self.logger.info("TODO: There has no validating step!")
+
+        # 重置测评算子参数
+        self.homo_accuracy.reset()
+
+        start_time = time.time()
+        count = 0
+
+        for i, data in enumerate(self.test_dataset):
+            first_image = data['first_image']
+            second_image = data['second_image']
+            gt_homography = data['gt_homography']
+
+            image_pair = np.stack((first_image, second_image), axis=0)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+
+            _, desp_pair, prob_pair = self.model(image_pair)
+            prob_pair = f.pixel_shuffle(prob_pair, 8)
+            prob_pair = spatial_nms(prob_pair, kernel_size=3)
+
+            desp_pair = desp_pair.detach().cpu().numpy()
+            first_desp = desp_pair[0]
+            second_desp = desp_pair[1]
+            prob_pair = prob_pair.detach().cpu().numpy()
+            first_prob = prob_pair[0, 0]
+            second_prob = prob_pair[1, 0]
+
+            # 得到对应的预测点
+            first_point = self.generate_predict_point(first_prob, top_k=self.desp_top_k)  # [n,2]
+            second_point = self.generate_predict_point(second_prob, top_k=self.desp_top_k)  # [m,2]
+
+            # 得到点对应的描述子
+            select_first_desp = self.generate_predict_descriptor(first_point, first_desp)
+            select_second_desp = self.generate_predict_descriptor(second_point, second_desp)
+
+            # 得到匹配点
+            matched_point = self.matcher(first_point, select_first_desp, second_point, select_second_desp)
+
+            # 计算得到单应变换
+            pred_homography, _ = cv.findHomography(matched_point[0], matched_point[1], cv.RANSAC)
+
+            # 对单样本进行测评
+            self.homo_accuracy.update(pred_homography, gt_homography)
+
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                start_time = time.time()
+            count += 1
+            # if count % 1000 == 0:
+            #     break
+
+        accuracy = self.homo_accuracy.average()
+        self.logger.info("THe average accuracy is %.4f " % accuracy)
+
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
 
@@ -539,6 +601,76 @@ class SuperPointTrainer(Trainer):
         loss = torch.sum(mask*unmasked_loss, dim=(1, 2)) / total_num
         loss = torch.mean(loss)
         return loss
+
+    def generate_predict_point(self, prob, scale=None, top_k=0):
+        point_idx = np.where(prob > self.detection_threshold)
+        prob = prob[point_idx]
+        sorted_idx = np.argsort(prob)[::-1]
+        if sorted_idx.shape[0] >= top_k:
+            sorted_idx = sorted_idx[:300]
+
+        point = np.stack(point_idx, axis=1)  # [n,2]
+        top_k_point = []
+        for idx in sorted_idx:
+            top_k_point.append(point[idx])
+        point = np.stack(top_k_point, axis=0)
+
+        if scale is not None:
+            point = point*scale
+        return point
+
+    def generate_predict_descriptor(self, point, desp):
+        point = torch.from_numpy(point).to(torch.float)  # 由于只有pytorch有gather的接口，因此将点调整为pytorch的格式
+        desp = torch.from_numpy(desp)
+        dim, h, w = desp.shape
+        desp = torch.reshape(desp, (dim, -1))
+        desp = torch.transpose(desp, dim0=1, dim1=0)  # [h*w,256]
+
+        # 下采样
+        scaled_point = point / 8
+        point_y = scaled_point[:, 0:1]  # [n,1]
+        point_x = scaled_point[:, 1:2]
+
+        x0 = torch.floor(point_x)
+        x1 = x0 + 1
+        y0 = torch.floor(point_y)
+        y1 = y0 + 1
+        x_nearest = torch.round(point_x)
+        y_nearest = torch.round(point_y)
+
+        x0_safe = torch.clamp(x0, min=0, max=w-1)
+        x1_safe = torch.clamp(x1, min=0, max=w-1)
+        y0_safe = torch.clamp(y0, min=0, max=h-1)
+        y1_safe = torch.clamp(y1, min=0, max=h-1)
+
+        x_nearest_safe = torch.clamp(x_nearest, min=0, max=w-1)
+        y_nearest_safe = torch.clamp(y_nearest, min=0, max=h-1)
+
+        idx_00 = (x0_safe + y0_safe*w).to(torch.long).repeat((1, dim))
+        idx_01 = (x0_safe + y1_safe*w).to(torch.long).repeat((1, dim))
+        idx_10 = (x1_safe + y0_safe*w).to(torch.long).repeat((1, dim))
+        idx_11 = (x1_safe + y1_safe*w).to(torch.long).repeat((1, dim))
+        idx_nearest = (x_nearest_safe + y_nearest_safe*w).to(torch.long).repeat((1, dim))
+
+        d_x = point_x - x0_safe
+        d_y = point_y - y0_safe
+        d_1_x = x1_safe - point_x
+        d_1_y = y1_safe - point_y
+
+        desp_00 = torch.gather(desp, dim=0, index=idx_00)
+        desp_01 = torch.gather(desp, dim=0, index=idx_01)
+        desp_10 = torch.gather(desp, dim=0, index=idx_10)
+        desp_11 = torch.gather(desp, dim=0, index=idx_11)
+        nearest_desp = torch.gather(desp, dim=0, index=idx_nearest)
+        bilinear_desp = desp_00*d_1_x*d_1_y + desp_01*d_1_x*d_y + desp_10*d_x*d_1_y+desp_11*d_x*d_y
+
+        # todo: 插值得到的描述子不再满足模值为1，强行归一化到模值为1，这里可能有问题
+        condition = torch.eq(torch.norm(bilinear_desp, dim=1, keepdim=True), 0)
+        interpolation_desp = torch.where(condition, nearest_desp, bilinear_desp)
+        interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
+        interpolation_desp = interpolation_desp/interpolation_norm
+
+        return interpolation_desp.numpy()
 
 
 
