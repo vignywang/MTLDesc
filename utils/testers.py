@@ -167,6 +167,7 @@ class HPatchTester(object):
         # 初始化模型
         self.model = SuperPointNet()
         self.model_fast = FAST(top_k=self.rep_top_k)
+        self.orb = cv.ORB_create()
 
         # 初始化测评计算子
         self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, coorect_epsilon: %d'
@@ -175,10 +176,57 @@ class HPatchTester(object):
         self.logger.info('Descriptor Top k: %d' % self.desp_top_k)
         self.illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
         self.viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
-        self.homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon, params.height, params.width)
+        self.homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon, params.hpatch_height, params.hpatch_width)
         self.matcher = Matcher()
+        self.orb_matcher = cv.BFMatcher_create(cv.NORM_HAMMING, crossCheck=True)
 
-    def test_keypoint_repeatability(self, ckpt_file):
+    def test_FAST_repeatability(self):
+
+        start_time = time.time()
+        count = 0
+
+        self.illumination_repeatability.reset()
+        self.viewpoint_repeatability.reset()
+
+        self.logger.info("*****************************************************")
+        self.logger.info("Testing FAST corner detection algorithm")
+
+        for i, data in enumerate(self.test_dataset):
+            first_image = data['first_image']
+            second_image = data['second_image']
+            gt_homography = data['gt_homography']
+            image_type = data['image_type']
+
+            first_point = self.model_fast.detect(first_image)
+            second_point = self.model_fast.detect(second_image)
+            if first_point.shape[0] == 0 or second_point.shape[0] == 0:
+                continue
+
+            # 对单样本进行测评
+            if image_type == 'illumination':
+                self.illumination_repeatability.update(first_point, second_point, gt_homography)
+            elif image_type == 'viewpoint':
+                self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
+            else:
+                print("The image type must be one of illumination of viewpoint ! Please check !")
+                assert False
+
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                start_time = time.time()
+            count += 1
+
+        # 计算各自的重复率以及总的重复率
+        illum_repeat, illum_repeat_sum, illum_num_sum = self.illumination_repeatability.average()
+        view_repeat, view_repeat_sum, view_num_sum = self.viewpoint_repeatability.average()
+        total_repeat = (illum_repeat_sum + view_repeat_sum) / (illum_num_sum + view_num_sum)
+
+        self.logger.info("FAST Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f, %d/%d" %
+                         (illum_repeat, view_repeat, total_repeat, count, len(self.test_dataset)))
+        self.logger.info("Testing HPatch Repeatability done.")
+        self.logger.info("*****************************************************")
+
+    def test_model_repeatability(self, ckpt_file):
 
         if ckpt_file == None:
             print("Please input correct checkpoint file dir!")
@@ -303,10 +351,60 @@ class HPatchTester(object):
             select_second_desp = self.generate_predict_descriptor(second_point, second_desp)
 
             # 得到匹配点
+            first_point = first_point[:, ::-1]
+            second_point = second_point[:, ::-1]
             matched_point = self.matcher(first_point, select_first_desp, second_point, select_second_desp)
 
             # 计算得到单应变换
             pred_homography, _ = cv.findHomography(matched_point[0], matched_point[1], cv.RANSAC)
+
+            # 对单样本进行测评
+            self.homo_accuracy.update(pred_homography, gt_homography)
+
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                start_time = time.time()
+            count += 1
+            # if count % 1000 == 0:
+            #     break
+
+        accuracy = self.homo_accuracy.average()
+        self.logger.info("THe average accuracy is %.4f " % accuracy)
+        self.logger.info("Testing HPatch descriptors done.")
+        self.logger.info("*****************************************************")
+
+    def test_orb_descriptors(self):
+
+        # 重置测评算子参数
+        self.illumination_repeatability.reset()
+        self.viewpoint_repeatability.reset()
+        self.homo_accuracy.reset()
+
+        self.logger.info("*****************************************************")
+        self.logger.info("Testing ORB descriptors")
+
+        start_time = time.time()
+        count = 0
+
+        for i, data in enumerate(self.test_dataset):
+            first_image = data['first_image']
+            second_image = data['second_image']
+            gt_homography = data['gt_homography']
+            image_type = data['image_type']
+
+            first_kp = self.orb.detect(first_image, None)
+            first_kp, first_desp = self.orb.compute(first_image, first_kp, None)
+
+            second_kp = self.orb.detect(second_image, None)
+            second_kp, second_desp = self.orb.compute(second_image, second_kp, None)
+
+            # 得到匹配点
+            matched = self.orb_matcher.match(first_desp, second_desp)
+            src_pts = np.float32([first_kp[m.queryIdx].pt for m in matched]).reshape(-1, 1, 2)
+            dst_pts = np.float32([second_kp[m.trainIdx].pt for m in matched]).reshape(-1, 1, 2)
+
+            # 计算得到单应变换
+            pred_homography, _ = cv.findHomography(src_pts, dst_pts, cv.RANSAC)
 
             # 对单样本进行测评
             self.homo_accuracy.update(pred_homography, gt_homography)
@@ -328,7 +426,7 @@ class HPatchTester(object):
         prob = prob[point_idx]
         sorted_idx = np.argsort(prob)[::-1]
         if sorted_idx.shape[0] >= top_k:
-            sorted_idx = sorted_idx[:300]
+            sorted_idx = sorted_idx[:top_k]
 
         point = np.stack(point_idx, axis=1)  # [n,2]
         top_k_point = []
@@ -388,56 +486,20 @@ class HPatchTester(object):
         # todo: 插值得到的描述子不再满足模值为1，强行归一化到模值为1，这里可能有问题
         condition = torch.eq(torch.norm(bilinear_desp, dim=1, keepdim=True), 0)
         interpolation_desp = torch.where(condition, nearest_desp, bilinear_desp)
-        interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
-        interpolation_desp = interpolation_desp/interpolation_norm
+        # interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
+        # interpolation_desp = interpolation_desp/interpolation_norm
 
         return interpolation_desp.numpy()
 
-    def test_fast(self):
+    def _convert_cvpt_to_array(self, cv_pt):
+        point = []
+        for pt in cv_pt:
+            point.append((pt.pt[1], pt.pt[0]))
+        point = np.stack(point, axis=0)
+        return point
 
-        start_time = time.time()
-        count = 0
 
-        self.illumination_repeatability.reset()
-        self.viewpoint_repeatability.reset()
 
-        self.logger.info("*****************************************************")
-        self.logger.info("Testing FAST corner detection algorithm")
-
-        for i, data in enumerate(self.test_dataset):
-            first_image = data['first_image']
-            second_image = data['second_image']
-            gt_homography = data['gt_homography']
-            image_type = data['image_type']
-
-            first_point = self.model_fast.detect(first_image)
-            second_point = self.model_fast.detect(second_image)
-            if first_point.shape[0] == 0 or second_point.shape[0] == 0:
-                continue
-
-            # 对单样本进行测评
-            if image_type == 'illumination':
-                self.illumination_repeatability.update(first_point, second_point, gt_homography)
-            elif image_type == 'viewpoint':
-                self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
-            else:
-                print("The image type must be one of illumination of viewpoint ! Please check !")
-                assert False
-
-            if i % 10 == 0:
-                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
-                start_time = time.time()
-            count += 1
-
-        # 计算各自的重复率以及总的重复率
-        illum_repeat, illum_repeat_sum, illum_num_sum = self.illumination_repeatability.average()
-        view_repeat, view_repeat_sum, view_num_sum = self.viewpoint_repeatability.average()
-        total_repeat = (illum_repeat_sum + view_repeat_sum) / (illum_num_sum + view_num_sum)
-
-        self.logger.info("FAST Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f, %d/%d" %
-                         (illum_repeat, view_repeat, total_repeat, count, len(self.test_dataset)))
-        self.logger.info("Testing HPatch Repeatability done.")
-        self.logger.info("*****************************************************")
 
 
 

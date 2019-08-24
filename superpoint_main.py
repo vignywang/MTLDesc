@@ -39,7 +39,7 @@ class Parameters:
     lr = 0.001
     descriptor_weight = 0.0001
     batch_size = 64
-    epoch_num = 100
+    epoch_num = 50
     log_freq = 100
     num_workers = 8
     prefix = 'exp1'

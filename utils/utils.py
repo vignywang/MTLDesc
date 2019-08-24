@@ -103,4 +103,9 @@ class Matcher(object):
         if len(matched_src) != 0:
             matched_src = np.stack(matched_src, axis=0)
             matched_tgt = np.stack(matched_tgt, axis=0)
+        matched_src = matched_src[:, np.newaxis, :]
+        matched_tgt = matched_tgt[:, np.newaxis, :]
         return matched_src, matched_tgt
+
+
+

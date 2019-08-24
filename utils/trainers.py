@@ -19,6 +19,7 @@ from data_utils.hpatch_dataset import HPatchDataset
 from nets.superpoint_net import SuperPointNet
 from utils.evaluation_tools import mAPCalculator
 from utils.evaluation_tools import HomoAccuracyCalculator
+from utils.evaluation_tools import RepeatabilityCalculator
 from utils.utils import spatial_nms, Matcher
 from utils.utils import DescriptorHingeLoss
 
@@ -89,7 +90,7 @@ class Trainer(object):
         for i in range(self.epoch_num):
 
             # train
-            self.train_one_epoch(i)
+            # self.train_one_epoch(i)
 
             # validation
             self.validate_one_epoch(i)
@@ -463,8 +464,16 @@ class SuperPointTrainer(Trainer):
         self.test_length = len(self.test_dataset)
 
         # 初始化验证算子
+        self.logger.info('Initialize the homography accuracy calculator, correct_epsilon: %d' % self.correct_epsilon)
         self.homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon, params.height, params.width)
         self.matcher = Matcher()
+
+        self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, correct_epsilon: %d'
+                         % (self.detection_threshold, self.correct_epsilon))
+        self.logger.info('Repeatability Top k: %d' % self.rep_top_k)
+        self.logger.info('Descriptor Top k: %d' % self.desp_top_k)
+        self.illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
+        self.viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
 
         # 初始化loss算子
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
@@ -493,7 +502,6 @@ class SuperPointTrainer(Trainer):
             label_pair = torch.cat((label, warped_label), dim=0)
             mask_pair = torch.cat((mask, warped_mask), dim=0)
             logit_pair, desp_pair, _ = self.model(image_pair)
-
 
             unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
@@ -551,6 +559,7 @@ class SuperPointTrainer(Trainer):
             first_image = data['first_image']
             second_image = data['second_image']
             gt_homography = data['gt_homography']
+            image_type = data['image_type']
 
             image_pair = np.stack((first_image, second_image), axis=0)
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
@@ -580,8 +589,16 @@ class SuperPointTrainer(Trainer):
             # 计算得到单应变换
             pred_homography, _ = cv.findHomography(matched_point[0], matched_point[1], cv.RANSAC)
 
-            # 对单样本进行测评
             self.homo_accuracy.update(pred_homography, gt_homography)
+
+            if image_type == 'illumination':
+                self.illumination_repeatability.update(first_point, second_point, gt_homography)
+            elif image_type == 'viewpoint':
+                self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
+            else:
+                print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
+                      "Please check !")
+                assert False
 
             if i % 10 == 0:
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
@@ -591,7 +608,13 @@ class SuperPointTrainer(Trainer):
             #     break
 
         accuracy = self.homo_accuracy.average()
-        self.logger.info("THe average accuracy is %.4f " % accuracy)
+        self.logger.info("Homography Accuracy: %.4f " % accuracy)
+
+        illum_repeat, illum_repeat_sum, illum_num_sum = self.illumination_repeatability.average()
+        view_repeat, view_repeat_sum, view_num_sum = self.viewpoint_repeatability.average()
+        total_repeat = (illum_repeat_sum + view_repeat_sum) / (illum_num_sum + view_num_sum)
+        self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_repeat, view_repeat, total_repeat))
 
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")

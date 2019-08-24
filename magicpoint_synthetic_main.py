@@ -34,6 +34,8 @@ class Parameters:
     # common params
     height = 240
     width = 320
+    hpatch_height = 480
+    hpatch_width = 640
 
     # training relating params
     lr = 0.001
@@ -97,7 +99,8 @@ params.logger.info("Set CUDA_VISIBLE_DEVICES to %s" % params.gpus)
 # log the parameters
 params.logger.info('batch size is %d' % params.batch_size)
 params.logger.info('training epoch is %d' % params.epoch_num)
-params.logger.info('input size is [%d, %d]' % (params.height, params.width))
+params.logger.info('training input size is [%d, %d]' % (params.height, params.width))
+params.logger.info('haptch testing input size is [%d, %d]' % (params.hpatch_height, params.hpatch_width))
 params.logger.info('learning rate is %.4f' % params.lr)
 params.logger.info('number worker is %d' % params.num_workers)
 params.logger.info('prefix is %s' % params.prefix)
@@ -127,9 +130,8 @@ if mode == 'all':
         magicpoint_hpatch_tester.test_keypoint_repeatability(ckpt_file)
 
 elif mode == 'only_hpatch':
-    # magicpoint_hpatch_tester.test_keypoint_repeatability(ckpt_file)
     magicpoint_hpatch_tester.test_descriptors(ckpt_file)
-    # magicpoint_hpatch_tester.test_fast()
+    # magicpoint_hpatch_tester.test_orb_descriptors()
 
 elif mode == 'only_synthetic':
     magicpoint_synthetic_tester.test(ckpt_file)

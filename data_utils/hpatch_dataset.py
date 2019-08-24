@@ -60,8 +60,8 @@ class HPatchDataset(Dataset):
 
     def __init__(self, params):
         self.params = params
-        self.height = params.height
-        self.width = params.width
+        self.hpatch_height = params.hpatch_height
+        self.hpatch_width = params.hpatch_width
         self.dataset_dir = params.hpatch_dataset_dir
         self.data_list = self._format_file_list()
 
@@ -79,15 +79,15 @@ class HPatchDataset(Dataset):
 
         org_first_shape = np.shape(first_image)
         org_second_shape = np.shape(second_image)
-        resize_shape = np.array((self.height, self.width), dtype=np.float)
+        resize_shape = np.array((self.hpatch_height, self.hpatch_width), dtype=np.float)
         # scale is used to recover the location in original image scale
         first_scale = resize_shape / org_first_shape
         second_scale = resize_shape / org_second_shape
         homo = np.loadtxt(homo_dir, dtype=np.float)
         homo = self._generate_adjust_homography(first_scale, second_scale, homo)
 
-        first_image = cv.resize(first_image, (self.width, self.height), interpolation=cv.INTER_LINEAR)
-        second_image = cv.resize(second_image, (self.width, self.height), interpolation=cv.INTER_LINEAR)
+        first_image = cv.resize(first_image, (self.hpatch_height, self.hpatch_width), interpolation=cv.INTER_LINEAR)
+        second_image = cv.resize(second_image, (self.hpatch_height, self.hpatch_width), interpolation=cv.INTER_LINEAR)
         # image_pair = np.stack((first_image, second_image), axis=0)
 
         sample = {'first_image': first_image, 'second_image': second_image,
