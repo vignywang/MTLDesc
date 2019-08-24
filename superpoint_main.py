@@ -34,10 +34,12 @@ class Parameters:
     # common params
     height = 240
     width = 320
+    hpatch_height = 480
+    hpatch_width = 640
 
     # training params
     lr = 0.001
-    descriptor_weight = 0.0001
+    descriptor_weight = 1.0
     batch_size = 64
     epoch_num = 50
     log_freq = 100

@@ -90,7 +90,7 @@ class Trainer(object):
         for i in range(self.epoch_num):
 
             # train
-            # self.train_one_epoch(i)
+            self.train_one_epoch(i)
 
             # validation
             self.validate_one_epoch(i)
@@ -584,7 +584,8 @@ class SuperPointTrainer(Trainer):
             select_second_desp = self.generate_predict_descriptor(second_point, second_desp)
 
             # 得到匹配点
-            matched_point = self.matcher(first_point, select_first_desp, second_point, select_second_desp)
+            matched_point = self.matcher(first_point[:, ::-1], select_first_desp,
+                                         second_point[:, ::-1], select_second_desp)
 
             # 计算得到单应变换
             pred_homography, _ = cv.findHomography(matched_point[0], matched_point[1], cv.RANSAC)
@@ -619,7 +620,8 @@ class SuperPointTrainer(Trainer):
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
 
-    def _compute_masked_loss(self, unmasked_loss, mask):
+    @staticmethod
+    def _compute_masked_loss(unmasked_loss, mask):
         total_num = torch.sum(mask, dim=(1, 2))
         loss = torch.sum(mask*unmasked_loss, dim=(1, 2)) / total_num
         loss = torch.mean(loss)
@@ -690,8 +692,8 @@ class SuperPointTrainer(Trainer):
         # todo: 插值得到的描述子不再满足模值为1，强行归一化到模值为1，这里可能有问题
         condition = torch.eq(torch.norm(bilinear_desp, dim=1, keepdim=True), 0)
         interpolation_desp = torch.where(condition, nearest_desp, bilinear_desp)
-        interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
-        interpolation_desp = interpolation_desp/interpolation_norm
+        # interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
+        # interpolation_desp = interpolation_desp/interpolation_norm
 
         return interpolation_desp.numpy()
 

@@ -351,9 +351,8 @@ class HPatchTester(object):
             select_second_desp = self.generate_predict_descriptor(second_point, second_desp)
 
             # 得到匹配点
-            first_point = first_point[:, ::-1]
-            second_point = second_point[:, ::-1]
-            matched_point = self.matcher(first_point, select_first_desp, second_point, select_second_desp)
+            matched_point = self.matcher(first_point[:, ::-1], select_first_desp,
+                                         second_point[:, ::-1], select_second_desp)
 
             # 计算得到单应变换
             pred_homography, _ = cv.findHomography(matched_point[0], matched_point[1], cv.RANSAC)
