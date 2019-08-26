@@ -496,6 +496,7 @@ class SuperPointTrainer(Trainer):
             warped_label = data['warped_label'].to(self.device)
             warped_mask = data['warped_mask'].to(self.device)
             descriptor_mask = data['descriptor_mask'].to(self.device)
+            valid_mask = data['valid_mask'].to(self.device)
             shape = image.shape
 
             image_pair = torch.cat((image, warped_image), dim=0)
@@ -507,7 +508,7 @@ class SuperPointTrainer(Trainer):
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
 
             desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
-            desp_loss = self.descriptor_loss(desp_0, desp_1, descriptor_mask)
+            desp_loss = self.descriptor_loss(desp_0, desp_1, descriptor_mask, valid_mask)
 
             loss = point_loss + self.descriptor_weight*desp_loss
 

@@ -66,8 +66,8 @@ class DescriptorHingeLoss(object):
         self.m_n = torch.tensor(m_n, device=self.device)
         self.one = torch.tensor(1, device=self.device)
 
-    def __call__(self, desp_0, desp_1, desp_mask):
-        batch_size, dim, _, _ = desp_0.shape
+    def __call__(self, desp_0, desp_1, desp_mask, valid_mask):
+        batch_size, dim, h, w = desp_0.shape
         desp_0 = torch.reshape(desp_0, (batch_size, dim, -1)).transpose(dim0=2, dim1=1)  # [bt, h*w, dim]
         desp_1 = torch.reshape(desp_1, (batch_size, dim, -1))
 
@@ -79,6 +79,11 @@ class DescriptorHingeLoss(object):
         negative_mask = self.one - desp_mask
 
         loss = positive_mask*positive_term+negative_mask*negative_term
+
+        # 考虑warp带来的某些区域没有图像,则其对应的描述子应当无效
+        valid_mask = torch.unsqueeze(valid_mask, dim=1)  # [bt, 1, h*w]
+        total_num = torch.sum(valid_mask, dim=(1, 2))*h*w
+        loss = torch.sum(valid_mask*loss, dim=(1, 2))/total_num
         loss = torch.mean(loss)
 
         return loss
