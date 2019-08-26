@@ -20,6 +20,7 @@ from nets.superpoint_net import SuperPointNet
 from utils.evaluation_tools import mAPCalculator
 from utils.evaluation_tools import HomoAccuracyCalculator
 from utils.evaluation_tools import RepeatabilityCalculator
+from utils.evaluation_tools import MeanMatchingAccuracy
 from utils.utils import spatial_nms, Matcher
 from utils.utils import DescriptorHingeLoss
 
@@ -36,8 +37,7 @@ class Trainer(object):
         self.ckpt_dir = params.ckpt_dir
         self.num_workers = params.num_workers
         self.log_freq = params.log_freq
-        self.rep_top_k = params.rep_top_k
-        self.desp_top_k = params.desp_top_k
+        self.top_k = params.top_k
         self.nms_threshold = params.nms_threshold
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
@@ -108,89 +108,33 @@ class Trainer(object):
     def validate_one_epoch(self, epoch_idx):
         raise NotImplementedError
 
+    @staticmethod
+    def _compute_masked_loss(unmasked_loss, mask):
+        total_num = torch.sum(mask, dim=(1, 2))
+        loss = torch.sum(mask*unmasked_loss, dim=(1, 2)) / total_num
+        loss = torch.mean(loss)
+        return loss
 
-class MagicPointSyntheticTrainer(object):
+
+class MagicPointSyntheticTrainer(Trainer):
 
     def __init__(self, params):
-        self.params = params
-        self.batch_size = params.batch_size
-        self.lr = params.lr
-        self.epoch_num = params.epoch_num
-        self.logger = params.logger
-        self.ckpt_dir = params.ckpt_dir
-        self.num_workers = params.num_workers
-        self.log_freq = params.log_freq
-        if torch.cuda.is_available():
-            self.logger.info('gpu is available, set device to cuda !')
-            self.device = torch.device('cuda:0')
-        else:
-            self.logger.info('gpu is not available, set device to cpu !')
-            self.device = torch.device('cpu')
-        self.multi_gpus = False
-        self.drop_last = False
-        if torch.cuda.device_count() > 1:
-            count = torch.cuda.device_count()
-            self.batch_size *= count
-            self.multi_gpus = True
-            self.drop_last = True
-            self.logger.info("Multi gpus is available, let's use %d GPUS" % torch.cuda.device_count())
-
-        # 初始化summary writer
-        self.summary_writer = SummaryWriter(self.ckpt_dir)
+        super(MagicPointSyntheticTrainer, self).__init__(params)
 
         # 初始化训练数据的读入接口
-        train_dataset = SyntheticTrainDataset(params)
-        train_dataloader = DataLoader(train_dataset, self.batch_size, shuffle=True, num_workers=self.num_workers,
-                                      drop_last=self.drop_last)
+        self.train_dataset = SyntheticTrainDataset(params)
+        self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True, num_workers=self.num_workers,
+                                           drop_last=self.drop_last)
+        self.epoch_length = len(self.train_dataset) / self.batch_size
 
         # 初始化验证数据的读入接口
-        val_dataset = SyntheticValTestDataset(params, 'validation')
-
-        # 初始化模型
-        model = SuperPointNet()
-        if self.multi_gpus:
-            model = torch.nn.DataParallel(model)
-        model.to(self.device)
-
-        # 初始化优化器算子
-        optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
-        # optimizer = torch.optim.AdamW(model.parameters(), lr=self.lr)
-
-        # 初始化学习率调整算子
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=60, gamma=0.1)
+        self.val_dataset = SyntheticValTestDataset(params, 'validation')
 
         # 初始化loss算子
-        cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
+        self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
 
         # 初始化验证算子
-        validator = mAPCalculator()
-
-        self.train_dataloader = train_dataloader
-        self.val_dataset = val_dataset
-        self.epoch_length = len(train_dataset) / self.batch_size
-        self.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.cross_entropy_loss = cross_entropy_loss
-        self.validator = validator
-
-    def train(self):
-        start_time = time.time()
-
-        # start training
-        for i in range(self.epoch_num):
-
-            # train
-            self.train_one_epoch(i)
-
-            # validation
-            self.validate_one_epoch(i)
-
-            # adjust learning rate
-            self.scheduler.step(i)
-
-        end_time = time.time()
-        self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
+        self.validator = mAPCalculator()
 
     def train_one_epoch(self, epoch_idx):
 
@@ -273,95 +217,26 @@ class MagicPointSyntheticTrainer(object):
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
 
-    def _compute_masked_loss(self, unmasked_loss, mask):
-        total_num = torch.sum(mask, dim=(1, 2))
-        loss = torch.sum(mask*unmasked_loss, dim=(1, 2)) / total_num
-        loss = torch.mean(loss)
-        return loss
 
-
-class MagicPointAdaptionTrainer(object):
+class MagicPointAdaptionTrainer(Trainer):
 
     def __init__(self, params):
-        self.params = params
-        self.batch_size = params.batch_size
-        self.lr = params.lr
-        self.epoch_num = params.epoch_num
-        self.logger = params.logger
-        self.ckpt_dir = params.ckpt_dir
-        self.num_workers = params.num_workers
-        self.log_freq = params.log_freq
-        if torch.cuda.is_available():
-            self.logger.info('gpu is available, set device to cuda !')
-            self.device = torch.device('cuda:0')
-        else:
-            self.logger.info('gpu is not available, set device to cpu !')
-            self.device = torch.device('cpu')
-        self.multi_gpus = False
-        self.drop_last = False
-        if torch.cuda.device_count() > 1:
-            count = torch.cuda.device_count()
-            self.batch_size *= count
-            self.multi_gpus = True
-            self.drop_last = True
-            self.logger.info("Multi gpus is available, let's use %d GPUS" % torch.cuda.device_count())
-
-        # 初始化summary writer
-        self.summary_writer = SummaryWriter(self.ckpt_dir)
+        super(MagicPointAdaptionTrainer, self).__init__(params)
 
         # 初始化训练数据的读入接口
-        train_dataset = COCOAdaptionTrainDataset(params)
-        train_dataloader = DataLoader(train_dataset, self.batch_size, shuffle=True, num_workers=self.num_workers,
-                                      drop_last=self.drop_last)
+        self.train_dataset = COCOAdaptionTrainDataset(params)
+        self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True, num_workers=self.num_workers,
+                                           drop_last=self.drop_last)
+        self.epoch_length = len(self.train_dataset) / self.batch_size
 
         # 初始化验证数据的读入接口
-        val_dataset = COCOAdaptionValDataset(params, add_noise=False)
-
-        # 初始化模型
-        model = SuperPointNet()
-        if self.multi_gpus:
-            model = torch.nn.DataParallel(model)
-        model.to(self.device)
-
-        # 初始化优化器算子
-        optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
-        # optimizer = torch.optim.AdamW(model.parameters(), lr=self.lr)
-
-        # 初始化学习率调整算子
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
+        self.val_dataset = COCOAdaptionValDataset(params, add_noise=False)
 
         # 初始化loss算子
-        cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
+        self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
 
         # 初始化验证算子
-        validator = mAPCalculator()
-
-        self.train_dataloader = train_dataloader
-        self.val_dataset = val_dataset
-        self.epoch_length = len(train_dataset) / self.batch_size
-        self.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.cross_entropy_loss = cross_entropy_loss
-        self.validator = validator
-
-    def train(self):
-        start_time = time.time()
-
-        # start training
-        for i in range(self.epoch_num):
-
-            # train
-            self.train_one_epoch(i)
-
-            # validation
-            self.validate_one_epoch(i)
-
-            # adjust learning rate
-            self.scheduler.step(i)
-
-        end_time = time.time()
-        self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
+        self.validator = mAPCalculator()
 
     def train_one_epoch(self, epoch_idx):
 
@@ -444,12 +319,6 @@ class MagicPointAdaptionTrainer(object):
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
 
-    def _compute_masked_loss(self, unmasked_loss, mask):
-        total_num = torch.sum(mask, dim=(1, 2))
-        loss = torch.sum(mask*unmasked_loss, dim=(1, 2)) / total_num
-        loss = torch.mean(loss)
-        return loss
-
 
 class SuperPointTrainer(Trainer):
 
@@ -467,6 +336,7 @@ class SuperPointTrainer(Trainer):
         # 初始化验证算子
         self.logger.info('Initialize the homography accuracy calculator, correct_epsilon: %d' % self.correct_epsilon)
         self.homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon, params.height, params.width)
+        self.mean_matching_accuracy = MeanMatchingAccuracy(self.correct_epsilon)
         self.matcher = Matcher()
 
         self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, correct_epsilon: %d'
@@ -578,8 +448,8 @@ class SuperPointTrainer(Trainer):
             second_prob = prob_pair[1, 0]
 
             # 得到对应的预测点
-            first_point = self.generate_predict_point(first_prob, top_k=self.desp_top_k)  # [n,2]
-            second_point = self.generate_predict_point(second_prob, top_k=self.desp_top_k)  # [m,2]
+            first_point = self.generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+            second_point = self.generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
 
             # 得到点对应的描述子
             select_first_desp = self.generate_predict_descriptor(first_point, first_desp)
@@ -596,8 +466,8 @@ class SuperPointTrainer(Trainer):
                 self.illumination_repeatability.update(first_point, second_point, gt_homography)
             elif image_type == 'viewpoint':
                 self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
-                # 只计算viewpoint下的单应变换的准确度
                 self.homo_accuracy.update(pred_homography, gt_homography)
+                self.mean_matching_accuracy.update(gt_homography, matched_point)
             else:
                 print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
                       "Please check !")
@@ -610,31 +480,30 @@ class SuperPointTrainer(Trainer):
             # if count % 1000 == 0:
             #     break
 
-        accuracy = self.homo_accuracy.average()
-        self.logger.info("Homography Accuracy: %.4f " % accuracy)
-
+        # 计算各自的重复率以及总的重复率
         illum_repeat, illum_repeat_sum, illum_num_sum = self.illumination_repeatability.average()
         view_repeat, view_repeat_sum, view_num_sum = self.viewpoint_repeatability.average()
         total_repeat = (illum_repeat_sum + view_repeat_sum) / (illum_num_sum + view_num_sum)
+
+        # 计算估计的单应变换准确度
+        accuracy = self.homo_accuracy.average()
+
+        # 计算匹配的准确度
+        mma = self.mean_matching_accuracy.average()
+
+        self.logger.info("Homography(viewpoint) accuracy: %.4f " % accuracy)
+        self.logger.info("MMA(viewpoint): %.4f " % mma)
         self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
                          (illum_repeat, view_repeat, total_repeat))
-
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
-
-    @staticmethod
-    def _compute_masked_loss(unmasked_loss, mask):
-        total_num = torch.sum(mask, dim=(1, 2))
-        loss = torch.sum(mask*unmasked_loss, dim=(1, 2)) / total_num
-        loss = torch.mean(loss)
-        return loss
 
     def generate_predict_point(self, prob, scale=None, top_k=0):
         point_idx = np.where(prob > self.detection_threshold)
         prob = prob[point_idx]
         sorted_idx = np.argsort(prob)[::-1]
         if sorted_idx.shape[0] >= top_k:
-            sorted_idx = sorted_idx[:300]
+            sorted_idx = sorted_idx[:top_k]
 
         point = np.stack(point_idx, axis=1)  # [n,2]
         top_k_point = []
