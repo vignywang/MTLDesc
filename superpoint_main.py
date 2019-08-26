@@ -49,6 +49,7 @@ class Parameters:
 
     # testing relating params
     save_threshold_curve = True
+    nms_threshold = 4
 
     # HPatch validate/test relating params
     detection_threshold = 0.005

@@ -38,6 +38,7 @@ class Trainer(object):
         self.log_freq = params.log_freq
         self.rep_top_k = params.rep_top_k
         self.desp_top_k = params.desp_top_k
+        self.nms_threshold = params.nms_threshold
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
         if torch.cuda.is_available():
@@ -567,7 +568,7 @@ class SuperPointTrainer(Trainer):
 
             _, desp_pair, prob_pair = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
-            prob_pair = spatial_nms(prob_pair, kernel_size=3)
+            prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold*2+1))
 
             desp_pair = desp_pair.detach().cpu().numpy()
             first_desp = desp_pair[0]

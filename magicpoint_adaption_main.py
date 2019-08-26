@@ -29,18 +29,23 @@ class Parameters:
     logger = None
     gpus = None
 
+    # common params
+    height = 240
+    width = 320
+
+    # training relating params
     lr = 0.001
     batch_size = 64
     epoch_num = 100
     log_freq = 100
     num_workers = 8
     prefix = 'exp1'
-
-    height = 240
-    width = 320
     do_augmentation = True
+
+    # testing relating params
     save_threshold_curve = True
 
+    # homography & photometric relating params using in training
     homography_params = {
         'patch_ratio': 0.9,  # 0.8,
         'perspective_amplitude_x': 0.1,  # 0.2,

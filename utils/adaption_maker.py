@@ -24,7 +24,7 @@ class AdaptionMaker(object):
         self.height = params.height
         self.width = params.width
         self.adaption_num = params.adaption_num
-        self.nms_ksize = params.nms_ksize
+        self.nms_threshold = params.nms_threshold
         self.top_k = params.top_k
         self.detection_threshold = params.detection_threshold
         if torch.cuda.is_available():
@@ -136,7 +136,7 @@ class AdaptionMaker(object):
             probs = probs/counts
             # todo:此处可改进为不用torch的方式，这样就不必要转换数据类型
             torch_probs = torch.from_numpy(probs).unsqueeze(dim=0).unsqueeze(dim=0)
-            final_probs = spatial_nms(torch_probs, self.nms_ksize).detach().cpu().numpy()[0, 0]
+            final_probs = spatial_nms(torch_probs, int(self.nms_threshold)).detach().cpu().numpy()[0, 0]
 
             satisfied_idx = np.where(final_probs > self.detection_threshold)
             ordered_satisfied_idx = np.argsort(final_probs[satisfied_idx])[::-1]  # 降序

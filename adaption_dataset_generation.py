@@ -24,7 +24,7 @@ class Parameters:
     width = 320
     adaption_num = 100
     top_k = 600
-    nms_ksize = 7
+    nms_threshold = 4  # 7
     detection_threshold = 0.005
 
 

@@ -16,7 +16,7 @@ def compute_desp_dist(desp_0, desp_1):
     return dist
 
 
-def spatial_nms(prob, kernel_size=5):
+def spatial_nms(prob, kernel_size=9):
     """
     利用max_pooling对预测的特征点的概率图进行非极大值抑制
     Args:
