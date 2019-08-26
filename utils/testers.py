@@ -11,9 +11,7 @@ import torch.nn.functional as f
 from nets.superpoint_net import SuperPointNet
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
-from utils.evaluation_tools import mAPCalculator
-from utils.evaluation_tools import RepeatabilityCalculator
-from utils.evaluation_tools import HomoAccuracyCalculator
+from utils.evaluation_tools import mAPCalculator, RepeatabilityCalculator, HomoAccuracyCalculator, MeanMatchingAccuracy
 from utils.tranditional_algorithm import FAST
 from utils.utils import spatial_nms, Matcher
 
@@ -153,6 +151,7 @@ class HPatchTester(object):
         self.correct_epsilon = params.correct_epsilon
         self.rep_top_k = params.rep_top_k
         self.desp_top_k = params.desp_top_k
+        self.nms_threshold = params.nms_threshold
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda!')
             self.device = torch.device('cuda:0')
@@ -177,6 +176,7 @@ class HPatchTester(object):
         self.illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
         self.viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
         self.homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon, params.hpatch_height, params.hpatch_width)
+        self.mean_matching_accuracy = MeanMatchingAccuracy(params.correct_epsilon)
         self.matcher = Matcher()
         self.orb_matcher = cv.BFMatcher_create(cv.NORM_HAMMING, crossCheck=True)
 
@@ -258,11 +258,12 @@ class HPatchTester(object):
             image_type = data['image_type']
 
             image_pair = np.stack((first_image, second_image), axis=0)
-            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)/255.
+            # image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
 
             _, _, prob_pair = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
-            prob_pair = spatial_nms(prob_pair, kernel_size=3)
+            prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold*2+1))
             prob_pair = prob_pair.detach().cpu().numpy()
             first_prob = prob_pair[0, 0]
             second_prob = prob_pair[1, 0]
@@ -297,7 +298,7 @@ class HPatchTester(object):
         self.logger.info("Testing HPatch Repeatability done.")
         self.logger.info("*****************************************************")
 
-    def test_descriptors(self, ckpt_file):
+    def test_model_descriptors(self, ckpt_file):
 
         if ckpt_file == None:
             print("Please input correct checkpoint file dir!")
@@ -314,6 +315,7 @@ class HPatchTester(object):
         self.illumination_repeatability.reset()
         self.viewpoint_repeatability.reset()
         self.homo_accuracy.reset()
+        self.mean_matching_accuracy.reset()
 
         self.model.eval()
 
@@ -333,11 +335,12 @@ class HPatchTester(object):
                 continue
 
             image_pair = np.stack((first_image, second_image), axis=0)
-            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)/255.
+            # image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
 
             _, desp_pair, prob_pair = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
-            prob_pair = spatial_nms(prob_pair, kernel_size=3)
+            prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold*2+1))
 
             desp_pair = desp_pair.detach().cpu().numpy()
             first_desp = desp_pair[0]
@@ -359,10 +362,12 @@ class HPatchTester(object):
                                          second_point[:, ::-1], select_second_desp)
 
             # 计算得到单应变换
-            pred_homography, _ = cv.findHomography(matched_point[0], matched_point[1], cv.RANSAC)
+            pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, :],
+                                                   matched_point[1][:, np.newaxis, :], cv.RANSAC)
 
             # 对单样本进行测评
             self.homo_accuracy.update(pred_homography, gt_homography)
+            self.mean_matching_accuracy.update(gt_homography, matched_point)
 
             if i % 10 == 0:
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
@@ -372,7 +377,9 @@ class HPatchTester(object):
             #     break
 
         accuracy = self.homo_accuracy.average()
-        self.logger.info("THe average accuracy is %.4f " % accuracy)
+        mma = self.mean_matching_accuracy.average()
+        self.logger.info("The Homography average accuracy is %.4f " % accuracy)
+        self.logger.info("The Mean average accuracy is %.4f " % mma)
         self.logger.info("Testing HPatch descriptors done.")
         self.logger.info("*****************************************************")
 
@@ -382,6 +389,7 @@ class HPatchTester(object):
         self.illumination_repeatability.reset()
         self.viewpoint_repeatability.reset()
         self.homo_accuracy.reset()
+        self.mean_matching_accuracy.reset()
 
         self.logger.info("*****************************************************")
         self.logger.info("Testing ORB descriptors")
@@ -394,6 +402,9 @@ class HPatchTester(object):
             second_image = data['second_image']
             gt_homography = data['gt_homography']
             image_type = data['image_type']
+
+            if image_type == 'illumination':
+                continue
 
             first_kp = self.orb.detect(first_image, None)
             first_kp, first_desp = self.orb.compute(first_image, first_kp, None)
@@ -411,6 +422,7 @@ class HPatchTester(object):
 
             # 对单样本进行测评
             self.homo_accuracy.update(pred_homography, gt_homography)
+            self.mean_matching_accuracy.update(gt_homography, (src_pts[:, 0, :], dst_pts[:, 0, :]))
 
             if i % 10 == 0:
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
@@ -420,7 +432,9 @@ class HPatchTester(object):
             #     break
 
         accuracy = self.homo_accuracy.average()
-        self.logger.info("THe average accuracy is %.4f " % accuracy)
+        mma = self.mean_matching_accuracy.average()
+        self.logger.info("The average accuracy is %.4f " % accuracy)
+        self.logger.info("The Mean average accuracy is %.4f " % mma)
         self.logger.info("Testing HPatch descriptors done.")
         self.logger.info("*****************************************************")
 
@@ -435,7 +449,7 @@ class HPatchTester(object):
         top_k_point = []
         for idx in sorted_idx:
             top_k_point.append(point[idx])
-        point = np.stack(top_k_point, axis=0)
+        point = np.stack(top_k_point, axis=0).astype(np.float)
 
         if scale is not None:
             point = point*scale

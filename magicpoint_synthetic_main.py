@@ -34,8 +34,8 @@ class Parameters:
     # common params
     height = 240
     width = 320
-    hpatch_height = 480
-    hpatch_width = 640
+    hpatch_height = 240  # 480
+    hpatch_width = 320  # 640
 
     # training relating params
     lr = 0.001
@@ -48,9 +48,10 @@ class Parameters:
 
     # testing relating params
     save_threshold_curve = True
+    nms_threshold = 4
 
     # HPatch tester relating params
-    detection_threshold = 0.005
+    detection_threshold = 0.015  # 0.005
     correct_epsilon = 3
     rep_top_k = 300
     desp_top_k = 1000
@@ -100,6 +101,7 @@ params.logger.info("Set CUDA_VISIBLE_DEVICES to %s" % params.gpus)
 params.logger.info('batch size is %d' % params.batch_size)
 params.logger.info('training epoch is %d' % params.epoch_num)
 params.logger.info('training input size is [%d, %d]' % (params.height, params.width))
+params.logger.info('non-maximum suppression threshold: %d' % params.nms_threshold)
 params.logger.info('haptch testing input size is [%d, %d]' % (params.hpatch_height, params.hpatch_width))
 params.logger.info('learning rate is %.4f' % params.lr)
 params.logger.info('number worker is %d' % params.num_workers)
@@ -120,20 +122,20 @@ mode = 'only_hpatch'
 # mode = 'only_synthetic_one_image'
 
 # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/model_99.pt'
-ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
-# ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth'
+# ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
+ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth'
 
 if mode == 'all':
     ckpt_files = glob.glob(os.path.join(params.ckpt_dir, "model_*"))
     ckpt_files = sorted(ckpt_files)
     for ckpt_file in ckpt_files:
         magicpoint_synthetic_tester.test(ckpt_file)
-        magicpoint_hpatch_tester.test_keypoint_repeatability(ckpt_file)
+        magicpoint_hpatch_tester.test_model_repeatability(ckpt_file)
 
 elif mode == 'only_hpatch':
     # magicpoint_hpatch_tester.test_FAST_repeatability()
-    # magicpoint_hpatch_tester.test_model_repeatability(ckpt_file)
-    magicpoint_hpatch_tester.test_descriptors(ckpt_file)
+    magicpoint_hpatch_tester.test_model_repeatability(ckpt_file)
+    # magicpoint_hpatch_tester.test_model_descriptors(ckpt_file)
     # magicpoint_hpatch_tester.test_orb_descriptors()
 
 elif mode == 'only_synthetic':

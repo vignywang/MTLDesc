@@ -42,6 +42,57 @@ class HomoAccuracyCalculator(object):
         return corner
 
 
+class MeanMatchingAccuracy(object):
+
+    def __init__(self, epsilon):
+        self.epsilon = epsilon
+        self.sum_accuracy = 0
+        self.sum_sample_num = 0
+
+    def reset(self):
+        self.sum_accuracy = 0
+        self.sum_sample_num = 0
+
+    def update(self, gt_homography, matched_point):
+        """
+        计算单个样本对的匹配准确度
+        Args:
+            gt_homography: 该样本对的单应变换真值
+            matched_point: List or Array.
+            matched_point[0]是source image上的点,顺序为(x,y)
+            matched_point[1]是target image上的点,顺序为(x,y),
+        """
+        inv_homography = np.linalg.inv(gt_homography)
+        src_point, tgt_point = matched_point[0], matched_point[1]
+        num_matched = np.shape(src_point)[0]
+        ones = np.ones((num_matched, 1), dtype=np.float)
+
+        homo_src_point = np.concatenate((src_point, ones), axis=1)
+        homo_tgt_point = np.concatenate((tgt_point, ones), axis=1)
+
+        project_src_point = np.matmul(gt_homography, homo_src_point[:, :, np.newaxis])[:, :, 0]
+        project_tgt_point = np.matmul(inv_homography, homo_tgt_point[:, :, np.newaxis])[:, :, 0]
+
+        project_src_point = project_src_point[:, :2] / project_src_point[:, 2:3]
+        project_tgt_point = project_tgt_point[:, :2] / project_tgt_point[:, 2:3]
+
+        dist_src = np.linalg.norm(tgt_point - project_src_point, axis=1)
+        dist_tgt = np.linalg.norm(src_point - project_tgt_point, axis=1)
+
+        correct_src = (dist_src <= self.epsilon)
+        correct_tgt = (dist_tgt <= self.epsilon)
+        correct = (correct_src & correct_tgt).astype(np.float)
+        correct_ratio = np.mean(correct)
+        self.sum_accuracy += correct_ratio
+        self.sum_sample_num += 1
+
+    def average(self):
+        """
+        Returns: 平均匹配准确度
+        """
+        return self.sum_accuracy/self.sum_sample_num
+
+
 class RepeatabilityCalculator(object):
 
     def __init__(self, epsilon):
