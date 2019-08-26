@@ -492,7 +492,7 @@ class SuperPointTrainer(Trainer):
         mma = self.mean_matching_accuracy.average()
 
         self.logger.info("Homography(viewpoint) accuracy: %.4f " % accuracy)
-        self.logger.info("MMA(viewpoint): %.4f " % mma)
+        self.logger.info("Mean Matching Accuracy(viewpoint): %.4f " % mma)
         self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
                          (illum_repeat, view_repeat, total_repeat))
         self.logger.info("Validating epoch %2d done." % epoch_idx)

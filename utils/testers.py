@@ -149,8 +149,7 @@ class HPatchTester(object):
         self.logger = params.logger
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
-        self.rep_top_k = params.rep_top_k
-        self.desp_top_k = params.desp_top_k
+        self.top_k = params.top_k
         self.nms_threshold = params.nms_threshold
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda!')
@@ -165,14 +164,13 @@ class HPatchTester(object):
 
         # 初始化模型
         self.model = SuperPointNet()
-        self.model_fast = FAST(top_k=self.rep_top_k)
-        self.orb = cv.ORB_create()
+        self.model_fast = FAST(top_k=self.top_k)
+        self.orb = cv.ORB_create(nfeatures=self.top_k)
 
         # 初始化测评计算子
         self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, coorect_epsilon: %d'
                          % (self.detection_threshold, self.correct_epsilon))
-        self.logger.info('Repeatability Top k: %d' % self.rep_top_k)
-        self.logger.info('Descriptor Top k: %d' % self.desp_top_k)
+        self.logger.info('Top k: %d' % self.top_k)
         self.illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
         self.viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
         self.homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon, params.hpatch_height, params.hpatch_width)
@@ -226,79 +224,7 @@ class HPatchTester(object):
         self.logger.info("Testing HPatch Repeatability done.")
         self.logger.info("*****************************************************")
 
-    def test_model_repeatability(self, ckpt_file):
-
-        if ckpt_file == None:
-            print("Please input correct checkpoint file dir!")
-            return
-
-        # 从预训练的模型中恢复参数
-        model_dict = self.model.state_dict()
-        pretrain_dict = torch.load(ckpt_file)
-        model_dict.update(pretrain_dict)
-        self.model.load_state_dict(model_dict)
-        self.model.to(self.device)
-
-        # 重置测评算子参数
-        self.illumination_repeatability.reset()
-        self.viewpoint_repeatability.reset()
-
-        self.model.eval()
-
-        self.logger.info("*****************************************************")
-        self.logger.info("Testing model %s" % ckpt_file)
-
-        start_time = time.time()
-        count = 0
-
-        for i, data in enumerate(self.test_dataset):
-            first_image = data['first_image']
-            second_image = data['second_image']
-            gt_homography = data['gt_homography']
-            image_type = data['image_type']
-
-            image_pair = np.stack((first_image, second_image), axis=0)
-            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)/255.
-            # image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
-
-            _, _, prob_pair = self.model(image_pair)
-            prob_pair = f.pixel_shuffle(prob_pair, 8)
-            prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold*2+1))
-            prob_pair = prob_pair.detach().cpu().numpy()
-            first_prob = prob_pair[0, 0]
-            second_prob = prob_pair[1, 0]
-            # 得到对应的预测点
-            first_point = self.generate_predict_point(first_prob, top_k=self.rep_top_k)  # [n,2]
-            second_point = self.generate_predict_point(second_prob, top_k=self.rep_top_k)  # [m,2]
-
-            # 对单样本进行测评
-            if image_type == 'illumination':
-                self.illumination_repeatability.update(first_point, second_point, gt_homography)
-            elif image_type == 'viewpoint':
-                self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
-            else:
-                print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
-                      "Please check !")
-                assert False
-
-            if i % 10 == 0:
-                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
-                start_time = time.time()
-            count += 1
-            # if count % 1000 == 0:
-            #     break
-
-        # 计算各自的重复率以及总的重复率
-        illum_repeat, illum_repeat_sum, illum_num_sum = self.illumination_repeatability.average()
-        view_repeat, view_repeat_sum, view_num_sum = self.viewpoint_repeatability.average()
-        total_repeat = (illum_repeat_sum + view_repeat_sum) / (illum_num_sum + view_num_sum)
-
-        self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
-                         (illum_repeat, view_repeat, total_repeat))
-        self.logger.info("Testing HPatch Repeatability done.")
-        self.logger.info("*****************************************************")
-
-    def test_model_descriptors(self, ckpt_file):
+    def test_model(self, ckpt_file):
 
         if ckpt_file == None:
             print("Please input correct checkpoint file dir!")
@@ -331,9 +257,6 @@ class HPatchTester(object):
             gt_homography = data['gt_homography']
             image_type = data['image_type']
 
-            if image_type == 'illumination':
-                continue
-
             image_pair = np.stack((first_image, second_image), axis=0)
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)/255.
             # image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
@@ -350,8 +273,8 @@ class HPatchTester(object):
             second_prob = prob_pair[1, 0]
 
             # 得到对应的预测点
-            first_point = self.generate_predict_point(first_prob, top_k=self.desp_top_k)  # [n,2]
-            second_point = self.generate_predict_point(second_prob, top_k=self.desp_top_k)  # [m,2]
+            first_point = self.generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+            second_point = self.generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
 
             # 得到点对应的描述子
             select_first_desp = self.generate_predict_descriptor(first_point, first_desp)
@@ -366,8 +289,16 @@ class HPatchTester(object):
                                                    matched_point[1][:, np.newaxis, :], cv.RANSAC)
 
             # 对单样本进行测评
-            self.homo_accuracy.update(pred_homography, gt_homography)
-            self.mean_matching_accuracy.update(gt_homography, matched_point)
+            if image_type == 'illumination':
+                self.illumination_repeatability.update(first_point, second_point, gt_homography)
+            elif image_type == 'viewpoint':
+                self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
+                self.homo_accuracy.update(pred_homography, gt_homography)
+                self.mean_matching_accuracy.update(gt_homography, matched_point)
+            else:
+                print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
+                      "Please check !")
+                assert False
 
             if i % 10 == 0:
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
@@ -376,11 +307,22 @@ class HPatchTester(object):
             # if count % 1000 == 0:
             #     break
 
+        # 计算各自的重复率以及总的重复率
+        illum_repeat, illum_repeat_sum, illum_num_sum = self.illumination_repeatability.average()
+        view_repeat, view_repeat_sum, view_num_sum = self.viewpoint_repeatability.average()
+        total_repeat = (illum_repeat_sum + view_repeat_sum) / (illum_num_sum + view_num_sum)
+
+        # 计算估计的单应变换准确度
         accuracy = self.homo_accuracy.average()
+
+        # 计算匹配的准确度
         mma = self.mean_matching_accuracy.average()
-        self.logger.info("The Homography average accuracy is %.4f " % accuracy)
-        self.logger.info("The Mean average accuracy is %.4f " % mma)
-        self.logger.info("Testing HPatch descriptors done.")
+
+        self.logger.info("Homography(viewpoint) accuracy: %.4f " % accuracy)
+        self.logger.info("MMA(viewpoint): %.4f " % mma)
+        self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_repeat, view_repeat, total_repeat))
+        self.logger.info("Testing HPatch Repeatability done.")
         self.logger.info("*****************************************************")
 
     def test_orb_descriptors(self):
@@ -433,8 +375,9 @@ class HPatchTester(object):
 
         accuracy = self.homo_accuracy.average()
         mma = self.mean_matching_accuracy.average()
-        self.logger.info("The average accuracy is %.4f " % accuracy)
-        self.logger.info("The Mean average accuracy is %.4f " % mma)
+
+        self.logger.info("Homography(viewpoint) accuracy: %.4f " % accuracy)
+        self.logger.info("Mean Matching Accuracy(viewpoint): %.4f " % mma)
         self.logger.info("Testing HPatch descriptors done.")
         self.logger.info("*****************************************************")
 
