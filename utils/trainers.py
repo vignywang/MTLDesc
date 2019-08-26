@@ -590,12 +590,12 @@ class SuperPointTrainer(Trainer):
             # 计算得到单应变换
             pred_homography, _ = cv.findHomography(matched_point[0], matched_point[1], cv.RANSAC)
 
-            self.homo_accuracy.update(pred_homography, gt_homography)
-
             if image_type == 'illumination':
                 self.illumination_repeatability.update(first_point, second_point, gt_homography)
             elif image_type == 'viewpoint':
                 self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
+                # 只计算viewpoint下的单应变换的准确度
+                self.homo_accuracy.update(pred_homography, gt_homography)
             else:
                 print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
                       "Please check !")

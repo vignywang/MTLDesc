@@ -24,9 +24,9 @@ class Parameters:
     coco_dataset_dir = '/data/MegPoint/dataset/coco'
     hpatch_dataset_dir = '/data/MegPoint/dataset/hpatch'
 
-    ckpt_root = './magicpoint_ckpt'
+    ckpt_root = './superpoint_ckpt'
     ckpt_dir = ''
-    log_root = './magicpoint_log'
+    log_root = './superpoint_log'
     log_dir = ''
     logger = None
     gpus = None
@@ -39,7 +39,7 @@ class Parameters:
 
     # training params
     lr = 0.001
-    descriptor_weight = 10.0  # 1.0
+    descriptor_weight = 1.0
     batch_size = 64
     epoch_num = 100
     log_freq = 100

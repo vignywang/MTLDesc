@@ -327,6 +327,10 @@ class HPatchTester(object):
             first_image = data['first_image']
             second_image = data['second_image']
             gt_homography = data['gt_homography']
+            image_type = data['image_type']
+
+            if image_type == 'illumination':
+                continue
 
             image_pair = np.stack((first_image, second_image), axis=0)
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
