@@ -34,8 +34,8 @@ class Parameters:
     # common params
     height = 240
     width = 320
-    hpatch_height = 480
-    hpatch_width = 640
+    hpatch_height = 240  # 480
+    hpatch_width = 320  # 640
 
     # training relating params
     lr = 0.001
@@ -119,7 +119,8 @@ mode = 'only_hpatch'
 # mode = 'only_synthetic'
 # mode = 'only_synthetic_one_image'
 
-ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
+ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/model_99.pt'
+# ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
 # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth'
 
 if mode == 'all':
@@ -130,7 +131,9 @@ if mode == 'all':
         magicpoint_hpatch_tester.test_keypoint_repeatability(ckpt_file)
 
 elif mode == 'only_hpatch':
-    magicpoint_hpatch_tester.test_descriptors(ckpt_file)
+    # magicpoint_hpatch_tester.test_FAST_repeatability()
+    magicpoint_hpatch_tester.test_model_repeatability(ckpt_file)
+    # magicpoint_hpatch_tester.test_descriptors(ckpt_file)
     # magicpoint_hpatch_tester.test_orb_descriptors()
 
 elif mode == 'only_synthetic':

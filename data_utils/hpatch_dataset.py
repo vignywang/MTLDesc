@@ -86,8 +86,8 @@ class HPatchDataset(Dataset):
         homo = np.loadtxt(homo_dir, dtype=np.float)
         homo = self._generate_adjust_homography(first_scale, second_scale, homo)
 
-        first_image = cv.resize(first_image, (self.hpatch_height, self.hpatch_width), interpolation=cv.INTER_LINEAR)
-        second_image = cv.resize(second_image, (self.hpatch_height, self.hpatch_width), interpolation=cv.INTER_LINEAR)
+        first_image = cv.resize(first_image, (self.hpatch_width, self.hpatch_height), interpolation=cv.INTER_LINEAR)
+        second_image = cv.resize(second_image, (self.hpatch_width, self.hpatch_height), interpolation=cv.INTER_LINEAR)
         # image_pair = np.stack((first_image, second_image), axis=0)
 
         sample = {'first_image': first_image, 'second_image': second_image,

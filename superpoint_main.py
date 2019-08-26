@@ -39,9 +39,9 @@ class Parameters:
 
     # training params
     lr = 0.001
-    descriptor_weight = 1.0
+    descriptor_weight = 10.0  # 1.0
     batch_size = 64
-    epoch_num = 50
+    epoch_num = 100
     log_freq = 100
     num_workers = 8
     prefix = 'exp1'
