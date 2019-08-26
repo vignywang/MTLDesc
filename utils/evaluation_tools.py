@@ -25,8 +25,8 @@ class HomoAccuracyCalculator(object):
     def update(self, pred_homography, gt_homography):
         warped_corner_by_pred = np.matmul(pred_homography, self.corner[:, :, np.newaxis])[:, :, 0]
         warped_corner_by_gt = np.matmul(gt_homography, self.corner[:, :, np.newaxis])[:, :, 0]
-        warped_corner_by_pred = warped_corner_by_pred / warped_corner_by_pred[:, 2:3]
-        warped_corner_by_gt = warped_corner_by_gt / warped_corner_by_gt[:, 2:3]
+        warped_corner_by_pred = warped_corner_by_pred[:, :2] / warped_corner_by_pred[:, 2:3]
+        warped_corner_by_gt = warped_corner_by_gt[:, :2] / warped_corner_by_gt[:, 2:3]
         diff = np.linalg.norm((warped_corner_by_pred-warped_corner_by_gt), axis=1, keepdims=False)
         diff = np.mean(diff)
         accuracy = (diff <= self.epsilon).astype(np.float)
