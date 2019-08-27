@@ -91,7 +91,6 @@ class BasicParameters(object):
         self.batch_size = args.batch_size
         self.prefix = args.prefix
         self.num_workers = args.num_workers
-        self.save_threshold_curve = args.save_threshold_curve
 
         # set and mkdir relative dir when necessary
         if not os.path.exists(self.ckpt_root):
