@@ -172,13 +172,14 @@ class HPatchTester(object):
                          % (self.detection_threshold, self.correct_epsilon))
         self.logger.info('Top k: %d' % self.top_k)
         self.illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
+        self.illumination_homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon,
+                                                                 params.hpatch_height, params.hpatch_width)
+        self.illumination_mma = MeanMatchingAccuracy(params.correct_epsilon)
         self.viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
         self.viewpoint_homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon,
                                                               params.hpatch_height, params.hpatch_width)
-        self.illumination_homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon,
-                                                                 params.hpatch_height, params.hpatch_width)
         self.viewpoint_mma = MeanMatchingAccuracy(params.correct_epsilon)
-        self.illumination_mma = MeanMatchingAccuracy(params.correct_epsilon)
+
         self.matcher = Matcher()
         self.orb_matcher = cv.BFMatcher_create(cv.NORM_HAMMING, crossCheck=True)
 

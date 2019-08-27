@@ -335,15 +335,20 @@ class SuperPointTrainer(Trainer):
 
         # 初始化验证算子
         self.logger.info('Initialize the homography accuracy calculator, correct_epsilon: %d' % self.correct_epsilon)
-        self.homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon, params.height, params.width)
-        self.mean_matching_accuracy = MeanMatchingAccuracy(self.correct_epsilon)
-        self.matcher = Matcher()
-
         self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, correct_epsilon: %d'
                          % (self.detection_threshold, self.correct_epsilon))
         self.logger.info('Top k: %d' % self.top_k)
+
         self.illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
+        self.illumination_homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon,
+                                                                 params.hpatch_height, params.hpatch_width)
+        self.illumination_mma = MeanMatchingAccuracy(params.correct_epsilon)
         self.viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
+        self.viewpoint_homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon,
+                                                              params.hpatch_height, params.hpatch_width)
+        self.viewpoint_mma = MeanMatchingAccuracy(params.correct_epsilon)
+
+        self.matcher = Matcher()
 
         # 初始化loss算子
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
@@ -421,7 +426,12 @@ class SuperPointTrainer(Trainer):
         self.logger.info("Validating epoch %2d begin:" % epoch_idx)
 
         # 重置测评算子参数
-        self.homo_accuracy.reset()
+        self.illumination_repeatability.reset()
+        self.illumination_homo_accuracy.reset()
+        self.illumination_mma.reset()
+        self.viewpoint_repeatability.reset()
+        self.viewpoint_homo_accuracy.reset()
+        self.viewpoint_mma.reset()
 
         start_time = time.time()
         count = 0
@@ -433,7 +443,8 @@ class SuperPointTrainer(Trainer):
             image_type = data['image_type']
 
             image_pair = np.stack((first_image, second_image), axis=0)
-            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1) / 255.
+            # image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
 
             _, desp_pair, prob_pair = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
@@ -455,25 +466,29 @@ class SuperPointTrainer(Trainer):
             select_second_desp = self.generate_predict_descriptor(second_point, second_desp)
 
             # 得到匹配点
-            matched_point = self.matcher(first_point[:, ::-1], select_first_desp,
-                                         second_point[:, ::-1], select_second_desp)
+            matched_point = self.matcher(first_point, select_first_desp,
+                                         second_point, select_second_desp)
 
             # 计算得到单应变换
-            pred_homography, _ = cv.findHomography(matched_point[0], matched_point[1], cv.RANSAC)
+            pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                   matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
 
+            # 对单样本进行测评
             if image_type == 'illumination':
                 self.illumination_repeatability.update(first_point, second_point, gt_homography)
+                self.illumination_homo_accuracy.update(pred_homography, gt_homography)
+                self.illumination_mma.update(gt_homography, matched_point)
             elif image_type == 'viewpoint':
                 self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
-                self.homo_accuracy.update(pred_homography, gt_homography)
-                self.mean_matching_accuracy.update(gt_homography, matched_point)
+                self.viewpoint_homo_accuracy.update(pred_homography, gt_homography)
+                self.viewpoint_mma.update(gt_homography, matched_point)
             else:
                 print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
                       "Please check !")
                 assert False
 
             if i % 10 == 0:
-                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time() - start_time)))
                 start_time = time.time()
             count += 1
             # if count % 1000 == 0:
@@ -485,13 +500,19 @@ class SuperPointTrainer(Trainer):
         total_repeat = (illum_repeat_sum + view_repeat_sum) / (illum_num_sum + view_num_sum)
 
         # 计算估计的单应变换准确度
-        accuracy = self.homo_accuracy.average()
+        illum_homo_acc, illum_homo_sum, illum_homo_num = self.illumination_homo_accuracy.average()
+        view_homo_acc, view_homo_sum, view_homo_num = self.viewpoint_homo_accuracy.average()
+        total_homo_acc = (illum_homo_sum + view_homo_sum) / (illum_homo_num + view_homo_num)
 
         # 计算匹配的准确度
-        mma = self.mean_matching_accuracy.average()
+        illum_match_acc, illum_match_sum, illum_match_num = self.illumination_mma.average()
+        view_match_acc, view_match_sum, view_match_num = self.viewpoint_mma.average()
+        total_match_acc = (illum_match_sum + view_match_sum) / (illum_match_num + view_match_num)
 
-        self.logger.info("Homography(viewpoint) accuracy: %.4f " % accuracy)
-        self.logger.info("Mean Matching Accuracy(viewpoint): %.4f " % mma)
+        self.logger.info("Homography accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_homo_acc, view_homo_acc, total_homo_acc))
+        self.logger.info("Mean Matching Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f " %
+                         (illum_match_acc, view_match_acc, total_match_acc))
         self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
                          (illum_repeat, view_repeat, total_repeat))
         self.logger.info("Validating epoch %2d done." % epoch_idx)
