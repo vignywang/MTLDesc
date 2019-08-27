@@ -20,7 +20,7 @@ class HomoAccuracyCalculator(object):
         self.sum_sample_num = 0
 
     def average(self):
-        return self.sum_accuracy / self.sum_sample_num
+        return self.sum_accuracy / self.sum_sample_num, self.sum_accuracy, self.sum_sample_num
 
     def update(self, pred_homography, gt_homography):
         warped_corner_by_pred = np.matmul(pred_homography, self.corner[:, :, np.newaxis])[:, :, 0]
@@ -59,11 +59,14 @@ class MeanMatchingAccuracy(object):
         Args:
             gt_homography: 该样本对的单应变换真值
             matched_point: List or Array.
-            matched_point[0]是source image上的点,顺序为(x,y)
-            matched_point[1]是target image上的点,顺序为(x,y),
+            matched_point[0]是source image上的点,顺序为(y,x)
+            matched_point[1]是target image上的点,顺序为(y,x),
+            计算要先颠倒顺序为(x,y)
         """
         inv_homography = np.linalg.inv(gt_homography)
         src_point, tgt_point = matched_point[0], matched_point[1]
+        src_point = src_point[:, ::-1]
+        tgt_point = tgt_point[:, ::-1]
         num_matched = np.shape(src_point)[0]
         ones = np.ones((num_matched, 1), dtype=np.float)
 
@@ -90,7 +93,7 @@ class MeanMatchingAccuracy(object):
         """
         Returns: 平均匹配准确度
         """
-        return self.sum_accuracy/self.sum_sample_num
+        return self.sum_accuracy/self.sum_sample_num, self.sum_accuracy, self.sum_sample_num
 
 
 class RepeatabilityCalculator(object):
