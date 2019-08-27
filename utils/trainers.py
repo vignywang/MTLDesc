@@ -341,8 +341,7 @@ class SuperPointTrainer(Trainer):
 
         self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, correct_epsilon: %d'
                          % (self.detection_threshold, self.correct_epsilon))
-        self.logger.info('Repeatability Top k: %d' % self.rep_top_k)
-        self.logger.info('Descriptor Top k: %d' % self.desp_top_k)
+        self.logger.info('Top k: %d' % self.top_k)
         self.illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
         self.viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
 
