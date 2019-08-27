@@ -304,7 +304,7 @@ class COCOSuperPointTrainDataset(Dataset):
             for j in range(n_width):
                 h = (patch_height-1.)/2. + i*patch_height
                 w = (patch_width-1.)/2. + j*patch_width
-                center_grid.append((h, w))
+                center_grid.append((w, h))
         center_grid = np.stack(center_grid, axis=0)
         return center_grid
 
