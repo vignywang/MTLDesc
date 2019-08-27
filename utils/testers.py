@@ -265,8 +265,8 @@ class HPatchTester(object):
             image_type = data['image_type']
 
             image_pair = np.stack((first_image, second_image), axis=0)
-            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)/255.
-            # image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            # image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)/255.
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
 
             _, desp_pair, prob_pair = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
