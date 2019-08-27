@@ -23,6 +23,8 @@ class MagicPointParameters(BasicParameters):
         super(MagicPointParameters, self).__init__()
         self.ckpt_root = './magicpoint_ckpt'
         self.log_root = './magicpoint_log'
+        self.nms_threshold = 4
+        self.epoch_num = 60
 
 
 if __name__ == '__main__':
@@ -43,9 +45,9 @@ if __name__ == '__main__':
     # mode = 'only_synthetic'
     # mode = 'only_synthetic_one_image'
 
-    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/model_99.pt'
+    ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/model_99.pt'
     # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
-    ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth'
+    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth'
 
     if mode == 'all':
         ckpt_files = glob.glob(os.path.join(params.ckpt_dir, "model_*"))
