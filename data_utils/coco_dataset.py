@@ -309,7 +309,7 @@ class COCOSuperPointTrainDataset(Dataset):
         return center_grid
 
     def _generate_descriptor_mask(self, homography):
-        # homography = np.eye(3)
+
         center_grid = self.center_grid.copy()  # [n,2]
         num = center_grid.shape[0]
         ones = np.ones((num, 1), dtype=np.float)
@@ -317,8 +317,8 @@ class COCOSuperPointTrainDataset(Dataset):
         warped_homo_center_grid = np.matmul(homography, homo_center_grid)
         warped_center_grid = warped_homo_center_grid[:, :2, 0] / warped_homo_center_grid[:, 2:, 0]  # [n,2]
 
-        center_grid = np.expand_dims(center_grid, axis=1)  # [n,1,2]
-        warped_center_grid = np.expand_dims(warped_center_grid, axis=0)  # [1,n,2]
+        center_grid = np.expand_dims(center_grid, axis=0)  # [1,n,2]
+        warped_center_grid = np.expand_dims(warped_center_grid, axis=1)  # [n,1,2]
 
         dist = np.linalg.norm((warped_center_grid-center_grid), axis=2)  # [n,n]
         mask = (dist < 8.).astype(np.float32)
