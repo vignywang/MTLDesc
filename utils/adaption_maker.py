@@ -137,7 +137,7 @@ class AdaptionMaker(object):
             probs = probs/counts
             # todo:此处可改进为不用torch的方式，这样就不必要转换数据类型
             torch_probs = torch.from_numpy(probs).unsqueeze(dim=0).unsqueeze(dim=0)
-            final_probs = spatial_nms(torch_probs, int(self.nms_threshold)).detach().cpu().numpy()[0, 0]
+            final_probs = spatial_nms(torch_probs, int(self.nms_threshold*2+1)).detach().cpu().numpy()[0, 0]
 
             satisfied_idx = np.where(final_probs > self.detection_threshold)
             ordered_satisfied_idx = np.argsort(final_probs[satisfied_idx])[::-1]  # 降序
