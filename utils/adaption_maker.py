@@ -60,6 +60,7 @@ class AdaptionMaker(object):
         while os.path.exists(self.train_out_dir):
             self.train_out_dir += '%d' % count
             self.val_out_dir += '%d' % count
+            count += 1
         os.mkdir(self.train_out_dir)
         os.mkdir(self.val_out_dir)
         print('The train_out_dir is: %s' % self.train_out_dir)
