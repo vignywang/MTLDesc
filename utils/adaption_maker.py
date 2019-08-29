@@ -56,13 +56,19 @@ class AdaptionMaker(object):
         self.model = model
         self.train_out_dir = os.path.join(self.out_root, 'train2014', 'pseudo_image_points')
         self.val_out_dir = os.path.join(self.out_root, 'val2014', 'pseudo_image_points')
+
         count = 1
         while os.path.exists(self.train_out_dir):
             self.train_out_dir += '%d' % count
             self.val_out_dir += '%d' % count
             count += 1
-        os.mkdir(self.train_out_dir)
-        os.mkdir(self.val_out_dir)
+
+        # self.train_out_dir += '_debug'
+        # self.val_out_dir += '_debug'
+
+        if not os.path.exists(self.train_out_dir):
+            os.mkdir(self.train_out_dir)
+            os.mkdir(self.val_out_dir)
         print('The train_out_dir is: %s' % self.train_out_dir)
         print('The val_out_dir is: %s' % self.train_out_dir)
 
@@ -145,7 +151,6 @@ class AdaptionMaker(object):
                 points = np.stack((satisfied_idx[0][ordered_satisfied_idx],
                                    satisfied_idx[1][ordered_satisfied_idx]), axis=1)
             else:
-                # 只取前100个点
                 points = np.stack((satisfied_idx[0][:self.top_k],
                                    satisfied_idx[1][:self.top_k]), axis=1)
             # debug hyper parameters use

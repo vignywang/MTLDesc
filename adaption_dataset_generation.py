@@ -9,13 +9,13 @@ from utils.adaption_maker import AdaptionMaker
 np.random.seed(3242)
 
 
-class Parameters:
+class AdaptionParameters:
     # # first round
-    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/ \
-    # model_59.pt'
+    ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/' \
+                'model_59.pt'
     # # scond round
-    ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/' \
-                'model_99.pt'
+    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/' \
+    #             'model_99.pt'
 
     out_root = '/data/MegPoint/dataset/coco'
     coco_dataset_root = '/data/MegPoint/dataset/coco'
@@ -23,12 +23,13 @@ class Parameters:
     height = 240
     width = 320
     adaption_num = 100
-    top_k = 600
-    nms_threshold = 4  # 7
+    top_k = 300
+    # nms_threshold = 4  # 7
+    nms_threshold = 8  # 7
     detection_threshold = 0.005
 
 
-params = Parameters()
+params = AdaptionParameters()
 adaption_maker = AdaptionMaker(params=params)
 adaption_maker.run()
 
