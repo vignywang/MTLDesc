@@ -45,8 +45,8 @@ if __name__ == '__main__':
     # mode = 'only_synthetic'
     # mode = 'only_synthetic_one_image'
 
-    ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/model_99.pt'
-    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
+    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/model_99.pt'
+    ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
     # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth'
 
     if mode == 'all':

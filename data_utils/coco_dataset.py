@@ -251,11 +251,12 @@ class COCOSuperPointTrainDataset(Dataset):
         warped_mask = space_to_depth(warped_org_mask).to(torch.uint8)
         warped_mask = torch.all(warped_mask, dim=0).to(torch.float)
 
+        # valid mask imply the valid descriptor in the warped image
         valid_mask = warped_mask.reshape((-1,))
 
         sample = {'image': image, 'mask': mask, 'label': label,
                   'warped_image': warped_image, 'warped_mask': warped_mask, 'warped_label': warped_label,
-                  'homography': homography, 'descriptor_mask': descriptor_mask, 'valid_mask': valid_mask}
+                  'descriptor_mask': descriptor_mask, 'valid_mask': valid_mask}
 
         return sample
 

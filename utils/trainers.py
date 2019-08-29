@@ -364,14 +364,18 @@ class SuperPointTrainer(Trainer):
 
         stime = time.time()
         for i, data in enumerate(self.train_dataloader):
+
             image = data['image'].to(self.device)
             label = data['label'].to(self.device)
             mask = data['mask'].to(self.device)
+
             warped_image = data['warped_image'].to(self.device)
             warped_label = data['warped_label'].to(self.device)
             warped_mask = data['warped_mask'].to(self.device)
+
             descriptor_mask = data['descriptor_mask'].to(self.device)
             valid_mask = data['valid_mask'].to(self.device)
+
             shape = image.shape
 
             image_pair = torch.cat((image, warped_image), dim=0)
