@@ -146,8 +146,8 @@ class AdaptionMaker(object):
                                    satisfied_idx[1][ordered_satisfied_idx]), axis=1)
             else:
                 # 只取前100个点
-                points = np.stack((satisfied_idx[0][:100],
-                                   satisfied_idx[1][:100]), axis=1)
+                points = np.stack((satisfied_idx[0][:self.top_k],
+                                   satisfied_idx[1][:self.top_k]), axis=1)
             # debug hyper parameters use
             # draw_image_keypoints(image, points)
             cv.imwrite(os.path.join(out_dir, name + '.jpg'), image)
