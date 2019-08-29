@@ -58,11 +58,15 @@ class AdaptionMaker(object):
         self.val_out_dir = os.path.join(self.out_root, 'val2014', 'pseudo_image_points')
 
         count = 1
-        while os.path.exists(self.train_out_dir):
-            self.train_out_dir += '%d' % count
-            self.val_out_dir += '%d' % count
+        train_out_dir = self.train_out_dir
+        val_out_dir = self.val_out_dir
+        while os.path.exists(train_out_dir):
+            train_out_dir = self.train_out_dir + '%d' % count
+            val_out_dir = self.val_out_dir + '%d' % count
             count += 1
 
+        self.train_out_dir = train_out_dir
+        self.val_out_dir = val_out_dir
         # self.train_out_dir += '_debug'
         # self.val_out_dir += '_debug'
 
