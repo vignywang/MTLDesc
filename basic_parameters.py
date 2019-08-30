@@ -98,7 +98,7 @@ class BasicParameters(object):
         if not os.path.exists(self.log_root):
             os.mkdir(self.log_root)
         self.ckpt_dir = os.path.join(self.ckpt_root,
-                                       self.prefix + '_%.4f' % self.lr + '_%d' % self.batch_size)
+                                     self.prefix + '_%.4f' % self.lr + '_%d' % self.batch_size)
         self.log_dir = os.path.join(self.log_root, self.prefix + '_%.4f' % self.lr + '_%d' % self.batch_size)
         if not os.path.exists(self.ckpt_dir):
             os.mkdir(self.ckpt_dir)
