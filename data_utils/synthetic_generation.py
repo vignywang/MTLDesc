@@ -102,9 +102,10 @@ def dump_primitive_data(primitive, config, project_data_root):  # 其中primitiv
         tf.logging.info('Tarfile dumped to {}.'.format(tar_path))
 """
 
-for i in drawing_primitives:
-    project_data_root = '/data/MegPoint'
-    dump_primitive_data(i, default_config, project_data_root)
+if __name__ == "__main__":
+    for i in drawing_primitives:
+        project_data_root = '/data/MegPoint'
+        dump_primitive_data(i, default_config, project_data_root)
 
 
 
