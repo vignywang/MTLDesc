@@ -62,7 +62,7 @@ class COCOAdaptionTrainDataset(Dataset):
         self.params = params
         self.height = params.height
         self.width = params.width
-        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014/pseudo_image_points')
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014/pseudo_image_points2')
         self.image_list, self.point_list = self._format_file_list()
         self.homography_augmentation = HomographyAugmentation(**params.homography_params)
         self.photometric_augmentation = PhotometricAugmentation(**params.photometric_params)
@@ -78,7 +78,7 @@ class COCOAdaptionTrainDataset(Dataset):
 
         org_mask = np.ones_like(image)
         if self.params.do_augmentation:
-            if np.random.rand() >= 0.5:
+            if np.random.rand() >= 0.1:
                 image, org_mask, point = self.homography_augmentation(image, point)
                 image = self.photometric_augmentation(image)
 
@@ -145,7 +145,7 @@ class COCOAdaptionValDataset(Dataset):
         self.params = params
         self.height = params.height
         self.width = params.width
-        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'val2014/pseudo_image_points')
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'val2014/pseudo_image_points2')
         if add_noise:
             self.add_noise = True
             self.photometric_noise = PhotometricAugmentation(**params.photometric_params)
@@ -338,14 +338,14 @@ if __name__ == "__main__":
         do_augmentation = True
 
         homography_params = {
-            'patch_ratio': 0.9,  # 0.8,
-            'perspective_amplitude_x': 0.1,  # 0.2,
-            'perspective_amplitude_y': 0.1,  # 0.2,
+            'patch_ratio': 0.8,  # 0.8,
+            'perspective_amplitude_x': 0.2,  # 0.2,
+            'perspective_amplitude_y': 0.2,  # 0.2,
             'scaling_sample_num': 5,
             'scaling_amplitude': 0.2,
             'translation_overflow': 0.05,
             'rotation_sample_num': 25,
-            'rotation_max_angle': np.pi / 3,  # np.pi / 2,
+            'rotation_max_angle': np.pi / 2,  # np.pi / 2,
             'do_perspective': True,
             'do_scaling': True,
             'do_rotation': True,
@@ -358,11 +358,11 @@ if __name__ == "__main__":
             'gaussian_noise_std': 5,
             'speckle_noise_min_prob': 0,
             'speckle_noise_max_prob': 0.0035,
-            'brightness_max_abs_change': 15,  # 25,
-            'contrast_min': 0.7,  # 0.3,
-            'contrast_max': 1.3,  # 1.5,
+            'brightness_max_abs_change': 25,  # 25,
+            'contrast_min': 0.5,  # 0.3,
+            'contrast_max': 1.5,  # 1.5,
             'shade_transparency_range': (-0.5, 0.5),  # (-0.5, 0.8),
-            'shade_kernel_size_range': (50, 100),
+            'shade_kernel_size_range': (100, 150),  # (50, 100),
             'shade_nb_ellipese': 20,
             'motion_blur_max_kernel_size': 7,
             'do_gaussian_noise': True,
@@ -375,8 +375,10 @@ if __name__ == "__main__":
 
 
     params = Parameters()
-    superpoint_train_dataset = COCOSuperPointTrainDataset(params)
-    for i, data in enumerate(superpoint_train_dataset):
+    # superpoint_train_dataset = COCOSuperPointTrainDataset(params)
+    magicpoint_adaption_dataset = COCOAdaptionTrainDataset(params)
+    # for i, data in enumerate(superpoint_train_dataset):
+    for i, data in enumerate(magicpoint_adaption_dataset):
         image = data['image']
         label = data['label']
         mask = data['mask']
