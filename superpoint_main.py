@@ -66,7 +66,7 @@ class SuperPointParameters(BasicParameters):
         parser = argparse.ArgumentParser(description="Pytorch Training")
         parser.add_argument("--gpus", type=str, default='0')
         parser.add_argument("--prefix", type=str, default='superpoint')
-        parser.add_argument("--coco_pseudo_idx", type=str, default='2')
+        parser.add_argument("--coco_pseudo_idx", type=str, default='0')
         return parser.parse_args()
 
 

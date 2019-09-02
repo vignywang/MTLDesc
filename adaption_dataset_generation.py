@@ -28,7 +28,7 @@ class AdaptionParameters:
     # first round
     # detection_threshold = 0.005
     # second round
-    detection_threshold = 0.075
+    detection_threshold = 0.04
 
 
 params = AdaptionParameters()
