@@ -86,11 +86,7 @@ class BasicParameters(object):
     def initialize(self):
         # read some params from bash
         args = self.my_parser()
-        self.gpus = args.gpus
-        self.lr = args.lr
-        self.batch_size = args.batch_size
-        self.prefix = args.prefix
-        self.num_workers = args.num_workers
+        self.__convert_args_params(args)
 
         # set and mkdir relative dir when necessary
         if not os.path.exists(self.ckpt_root):
@@ -123,13 +119,16 @@ class BasicParameters(object):
 
     @staticmethod
     def my_parser():
-        parser = argparse.ArgumentParser(description="Pytorch Training")
-        parser.add_argument("--gpus", type=str, default='0')
-        parser.add_argument("--lr", type=float, default=0.001)
-        parser.add_argument("--batch_size", type=int, default=64)
-        parser.add_argument("--num_workers", type=int, default=8)
-        parser.add_argument("--prefix", type=str, default='exp1')
-        return parser.parse_args()
+        return NotImplementedError
+
+    def __convert_args_params(self, args):
+        args_dict = args.__dict__
+        self_dict = self.__dict__
+        for arg in args_dict:
+            if arg in self_dict:
+                self_dict[arg] = args_dict[arg]
+            else:
+                print('The argument %s is invalid' % arg)
 
 
 
