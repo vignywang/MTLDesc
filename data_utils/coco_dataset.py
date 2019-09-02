@@ -62,7 +62,8 @@ class COCOAdaptionTrainDataset(Dataset):
         self.params = params
         self.height = params.height
         self.width = params.width
-        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014/pseudo_image_points2')
+        self.coco_pseudo_idx = params.coco_pseudo_idx
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014/pseudo_image_points_'+self.coco_pseudo_idx)
         self.image_list, self.point_list = self._format_file_list()
         self.homography_augmentation = HomographyAugmentation(**params.homography_params)
         self.photometric_augmentation = PhotometricAugmentation(**params.photometric_params)
@@ -145,7 +146,8 @@ class COCOAdaptionValDataset(Dataset):
         self.params = params
         self.height = params.height
         self.width = params.width
-        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'val2014/pseudo_image_points2')
+        self.coco_pseudo_idx = params.coco_pseudo_idx
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'val2014/pseudo_image_points_'+self.coco_pseudo_idx)
         if add_noise:
             self.add_noise = True
             self.photometric_noise = PhotometricAugmentation(**params.photometric_params)
@@ -197,7 +199,8 @@ class COCOSuperPointTrainDataset(Dataset):
         self.params = params
         self.height = params.height
         self.width = params.width
-        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014/pseudo_image_points1')
+        self.coco_pseudo_idx = params.coco_pseudo_idx
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014/pseudo_image_points_'+self.coco_pseudo_idx)
         self.image_list, self.point_list = self._format_file_list()
         self.homography = HomographyAugmentation(**params.homography_params)
         self.photometric = PhotometricAugmentation(**params.photometric_params)
@@ -375,10 +378,10 @@ if __name__ == "__main__":
 
 
     params = Parameters()
-    # superpoint_train_dataset = COCOSuperPointTrainDataset(params)
-    magicpoint_adaption_dataset = COCOAdaptionTrainDataset(params)
-    # for i, data in enumerate(superpoint_train_dataset):
-    for i, data in enumerate(magicpoint_adaption_dataset):
+    superpoint_train_dataset = COCOSuperPointTrainDataset(params)
+    # magicpoint_adaption_dataset = COCOAdaptionTrainDataset(params)
+    for i, data in enumerate(superpoint_train_dataset):
+    # for i, data in enumerate(magicpoint_adaption_dataset):
         image = data['image']
         label = data['label']
         mask = data['mask']
