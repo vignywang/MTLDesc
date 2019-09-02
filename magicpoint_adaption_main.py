@@ -2,6 +2,7 @@
 # Created by ZhangYuyang on 2019/8/21
 #
 import torch
+import argparse
 import numpy as np
 
 from basic_parameters import BasicParameters
@@ -57,6 +58,16 @@ class MagicPointAdaptionParameters(BasicParameters):
             'do_shade': True,
             'do_motion_blur': True
         }
+
+    @staticmethod
+    def my_parser():
+        parser = argparse.ArgumentParser(description="Pytorch Training")
+        parser.add_argument("--gpus", type=str, default='0')
+        parser.add_argument("--lr", type=float, default=0.001)
+        parser.add_argument("--batch_size", type=int, default=64)
+        parser.add_argument("--num_workers", type=int, default=8)
+        parser.add_argument("--prefix", type=str, default='exp1')
+        return parser.parse_args()
 
 
 if __name__ == '__main__':
