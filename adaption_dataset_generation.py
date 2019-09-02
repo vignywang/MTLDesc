@@ -23,9 +23,12 @@ class AdaptionParameters:
     width = 320
     adaption_num = 100
     top_k = 300
-    # nms_threshold = 4  # 7
     nms_threshold = 8  # 7
-    detection_threshold = 0.005
+
+    # first round
+    # detection_threshold = 0.005
+    # second round
+    detection_threshold = 0.075
 
 
 params = AdaptionParameters()
