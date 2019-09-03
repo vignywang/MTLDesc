@@ -199,12 +199,18 @@ class COCOSuperPointTrainDataset(Dataset):
         self.params = params
         self.height = params.height
         self.width = params.width
+        self.n_height = int(self.height/8)
+        self.n_width = int(self.width/8)
         self.coco_pseudo_idx = params.coco_pseudo_idx
         self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014/pseudo_image_points_'+self.coco_pseudo_idx)
+        # self.params.logger.info("Initialize SuperPoint Train Dataset: %s" % self.dataset_dir)
         self.image_list, self.point_list = self._format_file_list()
         self.homography = HomographyAugmentation(**params.homography_params)
         self.photometric = PhotometricAugmentation(**params.photometric_params)
         self.center_grid = self._generate_center_grid()
+
+        self.loss_type = params.loss_type
+        assert self.loss_type in ['triplet', 'pairwise']
 
     def __len__(self):
         assert len(self.image_list) == len(self.point_list)
@@ -217,51 +223,78 @@ class COCOSuperPointTrainDataset(Dataset):
         org_mask = np.ones_like(image)
         # cv_image_keypoint = draw_image_keypoints(image, point)
 
-        # random sample homography
-        warped_image, warped_org_mask, warped_point, homography = self.homography(image, point, return_homo=True)
+        # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        if np.random.rand() < 0.5:
+            warped_image, warped_org_mask, warped_point, homography = \
+                image.copy(), org_mask.copy(), point.copy(), np.eye(3)
+        else:
+            warped_image, warped_org_mask, warped_point, homography = self.homography(image, point, return_homo=True)
         # cv_image_keypoint = draw_image_keypoints(warped_image, warped_point)
-        descriptor_mask = self._generate_descriptor_mask(homography)
 
-        # augmentation
+        # 1、对图像的相关处理
         if np.random.rand() < 0.5:
             image = self.photometric(image)
         if np.random.rand() < 0.5:
             warped_image = self.photometric(warped_image)
 
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
+
+        # 2、对点和标签的相关处理
+        # 2.1 输入的点标签和掩膜的预处理
         point = np.abs(np.floor(point)).astype(np.int)
         warped_point = np.abs(np.floor(warped_point)).astype(np.int)
-
-        # original image related
-        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
-        org_mask = torch.from_numpy(org_mask)
         point = torch.from_numpy(point)
-        homography = torch.from_numpy(homography)
-
-        # warped image related
-        warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
-        warped_org_mask = torch.from_numpy(warped_org_mask)
         warped_point = torch.from_numpy(warped_point)
+        org_mask = torch.from_numpy(org_mask)
+        warped_org_mask = torch.from_numpy(warped_org_mask)
 
-        descriptor_mask = torch.from_numpy(descriptor_mask)
-
-        # original image related
+        # 2.2 得到第一副图点和标签的最终输出
         label = self._convert_points_to_label(point).to(torch.long)
         mask = space_to_depth(org_mask).to(torch.uint8)
         mask = torch.all(mask, dim=0).to(torch.float)
 
-        # warped image related
+        # 2.3 得到第二副图点和标签的最终输出
         warped_label = self._convert_points_to_label(warped_point).to(torch.long)
         warped_mask = space_to_depth(warped_org_mask).to(torch.uint8)
         warped_mask = torch.all(warped_mask, dim=0).to(torch.float)
 
-        # valid mask imply the valid descriptor in the warped image
+        # 3、对构造描述子loss有关关系的计算
+        # 3.1 得到第二副图中有效描述子的掩膜
         valid_mask = warped_mask.reshape((-1,))
 
-        sample = {'image': image, 'mask': mask, 'label': label,
-                  'warped_image': warped_image, 'warped_mask': warped_mask, 'warped_label': warped_label,
-                  'descriptor_mask': descriptor_mask, 'valid_mask': valid_mask}
+        # 3.2 根据指定的loss类型计算不同的关系，
+        #     pairwise要计算两两之间的对应关系，
+        #     triplet要计算匹配对应关系，匹配有效掩膜，匹配点与其他点的近邻关系
+        descriptor_mask = None
+        matched_idx = None
+        matched_valid = None
+        not_search_mask = None
+        warped_grid = None
+        matched_grid = None
+        if self.loss_type == 'pairwise':
+            descriptor_mask = self._generate_descriptor_mask(homography)
+            descriptor_mask = torch.from_numpy(descriptor_mask)
+        else:
+            matched_idx, matched_valid, not_search_mask, warped_grid, matched_grid = \
+                self.generate_corresponding_relationship(homography, valid_mask)
+            matched_idx = torch.from_numpy(matched_idx)
+            matched_valid = torch.from_numpy(matched_valid).to(torch.float)
+            not_search_mask = torch.from_numpy(not_search_mask)
+            warped_grid = torch.from_numpy(warped_grid)
+            matched_grid = torch.from_numpy(matched_grid)
 
-        return sample
+        # 4、返回样本
+        if self.loss_type == 'pairwise':
+            return {'image': image, 'mask': mask, 'label': label,
+                    'warped_image': warped_image, 'warped_mask': warped_mask, 'warped_label': warped_label,
+                    'descriptor_mask': descriptor_mask, 'valid_mask': valid_mask}
+        else:
+            return {'image': image, 'mask': mask, 'label': label,
+                    'warped_image': warped_image, 'warped_mask': warped_mask, 'warped_label': warped_label,
+                    'matched_idx': matched_idx, 'matched_valid': matched_valid,
+                    'not_search_mask': not_search_mask,
+                    'warped_grid': warped_grid, 'matched_grid': matched_grid}
 
     def _convert_points_to_label(self, points):
 
@@ -314,12 +347,7 @@ class COCOSuperPointTrainDataset(Dataset):
 
     def _generate_descriptor_mask(self, homography):
 
-        center_grid = self.center_grid.copy()  # [n,2]
-        num = center_grid.shape[0]
-        ones = np.ones((num, 1), dtype=np.float)
-        homo_center_grid = np.concatenate((center_grid, ones), axis=1)[:, :, np.newaxis]  # [n,3,1]
-        warped_homo_center_grid = np.matmul(homography, homo_center_grid)
-        warped_center_grid = warped_homo_center_grid[:, :2, 0] / warped_homo_center_grid[:, 2:, 0]  # [n,2]
+        center_grid, warped_center_grid = self.__compute_warped_center_grid(homography)
 
         center_grid = np.expand_dims(center_grid, axis=0)  # [1,n,2]
         warped_center_grid = np.expand_dims(warped_center_grid, axis=1)  # [n,1,2]
@@ -328,6 +356,43 @@ class COCOSuperPointTrainDataset(Dataset):
         mask = (dist < 8.).astype(np.float32)
 
         return mask
+
+    def generate_corresponding_relationship(self, homography, valid_mask):
+
+        center_grid, warped_center_grid = self.__compute_warped_center_grid(homography)
+
+        dist = np.linalg.norm(warped_center_grid[:, np.newaxis, :]-center_grid[np.newaxis, :, :], axis=2)
+        nearest_idx = np.argmin(dist, axis=1)
+        nearest_dist = np.min(dist, axis=1)
+        matched_valid = nearest_dist < 8.
+
+        matched_grid = center_grid[nearest_idx, :]
+        diff = np.linalg.norm(matched_grid[:, np.newaxis, :] - matched_grid[np.newaxis, :, :], axis=2)
+
+        # nearest = diff < 8.
+        nearest = diff < 16.
+        valid_mask = valid_mask.numpy().astype(np.bool)
+        valid_mask = valid_mask[nearest_idx]
+        invalid = ~valid_mask[np.newaxis, :]
+
+        not_search_mask = (nearest | invalid).astype(np.float32)
+        matched_valid = matched_valid & valid_mask
+
+        return nearest_idx, matched_valid, not_search_mask, warped_center_grid, matched_grid
+
+    def __compute_warped_center_grid(self, homography, return_org_center_grid=True):
+
+        center_grid = self.center_grid.copy()  # [n,2]
+        num = center_grid.shape[0]
+        ones = np.ones((num, 1), dtype=np.float)
+        homo_center_grid = np.concatenate((center_grid, ones), axis=1)[:, :, np.newaxis]  # [n,3,1]
+        warped_homo_center_grid = np.matmul(homography, homo_center_grid)
+        warped_center_grid = warped_homo_center_grid[:, :2, 0] / warped_homo_center_grid[:, 2:, 0]  # [n,2]
+
+        if return_org_center_grid:
+            return center_grid, warped_center_grid
+        else:
+            return warped_center_grid
 
 
 if __name__ == "__main__":
@@ -339,6 +404,8 @@ if __name__ == "__main__":
         height = 240
         width = 320
         do_augmentation = True
+        coco_pseudo_idx = '0'
+        loss_type = 'triplet'  # 'binary'
 
         homography_params = {
             'patch_ratio': 0.8,  # 0.8,

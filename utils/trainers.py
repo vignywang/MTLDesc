@@ -23,6 +23,7 @@ from utils.evaluation_tools import RepeatabilityCalculator
 from utils.evaluation_tools import MeanMatchingAccuracy
 from utils.utils import spatial_nms, Matcher
 from utils.utils import DescriptorHingeLoss
+from utils.utils import DescriptorTripletLoss
 
 
 # 训练算子基类
@@ -123,8 +124,8 @@ class MagicPointSyntheticTrainer(Trainer):
 
         # 初始化训练数据的读入接口
         self.train_dataset = SyntheticTrainDataset(params)
-        self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True, num_workers=self.num_workers,
-                                           drop_last=self.drop_last)
+        self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True,
+                                           num_workers=self.num_workers, drop_last=self.drop_last)
         self.epoch_length = len(self.train_dataset) / self.batch_size
 
         # 初始化验证数据的读入接口
@@ -225,8 +226,8 @@ class MagicPointAdaptionTrainer(Trainer):
 
         # 初始化训练数据的读入接口
         self.train_dataset = COCOAdaptionTrainDataset(params)
-        self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True, num_workers=self.num_workers,
-                                           drop_last=self.drop_last)
+        self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True,
+                                           num_workers=self.num_workers, drop_last=self.drop_last)
         self.epoch_length = len(self.train_dataset) / self.batch_size
 
         # 初始化验证数据的读入接口
@@ -350,12 +351,101 @@ class SuperPointTrainer(Trainer):
 
         self.matcher = Matcher()
 
+        # 得到指定的loss构造类型
+        self.loss_type = params.loss_type
+        assert self.loss_type in ['triplet', 'pairwise']
+        self.logger.info('The loss type is %s' % self.loss_type)
+
         # 初始化loss算子
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
-        self.descriptor_loss = DescriptorHingeLoss(device=self.device)
         self.descriptor_weight = params.descriptor_weight
+        if self.loss_type == 'pairwise':
+            self.descriptor_loss = DescriptorHingeLoss(device=self.device)
+        else:
+            self.descriptor_loss = DescriptorTripletLoss(device=self.device)
 
     def train_one_epoch(self, epoch_idx):
+
+        if self.loss_type == 'pairwise':
+            self.train_one_epoch_use_pairwise_loss(epoch_idx)
+        else:
+            self.train_one_epoch_use_triplet_loss(epoch_idx)
+
+    def train_one_epoch_use_triplet_loss(self, epoch_idx):
+
+        self.model.train()
+
+        self.logger.info("-----------------------------------------------------")
+        self.logger.info("Training epoch %2d begin:" % epoch_idx)
+
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data['image'].to(self.device)
+            label = data['label'].to(self.device)
+            mask = data['mask'].to(self.device)
+
+            warped_image = data['warped_image'].to(self.device)
+            warped_label = data['warped_label'].to(self.device)
+            warped_mask = data['warped_mask'].to(self.device)
+
+            matched_idx = data['matched_idx'].to(self.device)
+            matched_valid = data['matched_valid'].to(self.device)
+            not_search_mask = data['not_search_mask'].to(self.device)
+
+            # debug use
+            warped_grid = data['warped_grid'].to(self.device)
+            matched_grid = data['matched_grid'].to(self.device)
+
+            shape = image.shape
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            label_pair = torch.cat((label, warped_label), dim=0)
+            mask_pair = torch.cat((mask, warped_mask), dim=0)
+            logit_pair, desp_pair, _ = self.model(image_pair)
+
+            unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
+            point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
+
+            desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
+            desp_loss = self.descriptor_loss(desp_0, desp_1, matched_idx, matched_valid, not_search_mask, warped_grid,
+                                             matched_grid)
+
+            loss = point_loss + self.descriptor_weight*desp_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                point_loss_val = point_loss.item()
+                desp_loss_val = desp_loss.item()
+                loss_val = loss.item()
+                self.summary_writer.add_histogram('descriptor', desp_pair)
+                self.summary_writer.add_scalar('loss', loss_val)
+                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
+                                 " one step cost %.4fs. "
+                                 % (epoch_idx, i, self.epoch_length, loss_val,
+                                    point_loss_val, desp_loss_val,
+                                    (time.time() - stime) / self.params.log_freq,
+                                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
+        self.logger.info("Training epoch %2d done." % epoch_idx)
+        self.logger.info("-----------------------------------------------------")
+
+    def train_one_epoch_use_pairwise_loss(self, epoch_idx):
 
         self.model.train()
 

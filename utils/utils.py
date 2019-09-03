@@ -89,6 +89,50 @@ class DescriptorHingeLoss(object):
         return loss
 
 
+class DescriptorTripletLoss(object):
+
+    def __init__(self, device):
+        self.device = device
+
+    def __call__(self, desp_0, desp_1, matched_idx, matched_valid, not_search_mask,
+                 warped_grid=None, matched_grid=None):
+
+        bt, dim, h, w = desp_0.shape
+        desp_0 = torch.reshape(desp_0, (bt, dim, h*w)).transpose(1, 2)  # [bt,h*w,dim]
+        desp_1 = torch.reshape(desp_1, (bt, dim, h*w))
+
+        matched_idx = torch.unsqueeze(matched_idx, dim=1).repeat(1, dim, 1)  # [bt,dim,h*w]
+        desp_1 = torch.gather(desp_1, dim=2, index=matched_idx)  # [bt,dim,h*w]
+
+        cos_similarity = torch.matmul(desp_0, desp_1)
+        dist = torch.sqrt(2.*(1.-cos_similarity)+1e-4)  # [bt,h*w,h*w]
+
+        positive_pair = torch.diagonal(dist, dim1=1, dim2=2)  # [bt,h*w]
+        dist = dist + 10*not_search_mask
+
+        hardest_negative_pair, hardest_negative_idx = torch.min(dist, dim=2)  # [bt,h*w]
+
+        zeros = torch.zeros_like(positive_pair)
+        loss_total, _ = torch.max(torch.stack((zeros, 1.+positive_pair-hardest_negative_pair), dim=2), dim=2)
+        loss_total *= matched_valid
+
+        valid_num = torch.sum(matched_valid, dim=1)
+
+        # debug use
+        # matched_dist = torch.norm((warped_grid-matched_grid), dim=2).detach().cpu().numpy()
+        # negative_grid = torch.gather(matched_grid, dim=1, index=hardest_negative_idx.unsqueeze(dim=2).repeat(1, 1, 2))
+        # negative_dist = torch.norm((warped_grid-negative_grid), dim=2).detach().cpu().numpy()
+        # valid = matched_valid.detach().cpu().numpy()
+        # debug_positive_pair = positive_pair.detach().cpu().numpy()
+        # debug_negative_pair = hardest_negative_pair.detach().cpu().numpy()
+        # debug_dist = (torch.sum((positive_pair-hardest_negative_pair)*matched_valid, dim=1)/valid_num)\
+        #     .detach().cpu().numpy()
+
+        loss = torch.mean(torch.sum(loss_total, dim=1)/valid_num)
+
+        return loss
+
+
 class Matcher(object):
 
     def __init__(self):

@@ -23,6 +23,7 @@ class SuperPointParameters(BasicParameters):
         self.ckpt_root = './superpoint_ckpt'
         self.log_root = './superpoint_log'
         self.coco_pseudo_idx = '0'
+        self.loss_type = 'triplet'  # 'pairwise'
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -64,9 +65,14 @@ class SuperPointParameters(BasicParameters):
     @staticmethod
     def my_parser():
         parser = argparse.ArgumentParser(description="Pytorch Training")
+        parser.add_argument("--lr", type=float, default=0.001)
+        parser.add_argument("--batch_size", type=int, default=32)
         parser.add_argument("--gpus", type=str, default='0')
         parser.add_argument("--prefix", type=str, default='superpoint')
+        parser.add_argument("--num_workers", type=int, default=8)
         parser.add_argument("--coco_pseudo_idx", type=str, default='0')
+        parser.add_argument("--loss_type", type=str, default='triplet')
+
         return parser.parse_args()
 
 
