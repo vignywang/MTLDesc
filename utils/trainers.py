@@ -97,6 +97,18 @@ class TrainerTester(object):
     def validate_one_epoch(self, epoch_idx):
         raise NotImplementedError
 
+    def load_model_params(self, ckpt_file):
+        if ckpt_file is None:
+            print("Please input correct checkpoint file dir!")
+            return False
+
+        model_dict = self.model.state_dict()
+        pretrain_dict = torch.load(ckpt_file, map_location=self.device)
+        model_dict.update(pretrain_dict)
+        self.model.load_state_dict(model_dict)
+
+        return True
+
     @staticmethod
     def _compute_masked_loss(unmasked_loss, mask):
         total_num = torch.sum(mask, dim=(1, 2))
@@ -189,8 +201,9 @@ class MagicPointSynthetic(TrainerTester):
         self.logger.info("*****************************************************")
         self.logger.info("Testing model %s" % ckpt_file)
 
-        if ckpt_file is None:
-            print("Please input correct checkpoint file dir!")
+        # 从预训练的模型中恢复参数
+        if not self.load_model_params(ckpt_file):
+            self.logger.error('Can not load model!')
             return
 
         curve_name = None
@@ -200,13 +213,6 @@ class MagicPointSynthetic(TrainerTester):
             curve_name = (ckpt_file.split('/')[-1]).split('.')[0]
             curve_dir = os.path.join(save_root, curve_name + '.png')
 
-        # 从预训练的模型中恢复参数
-        model_dict = self.model.state_dict()
-        pretrain_dict = torch.load(ckpt_file)
-        model_dict.update(pretrain_dict)
-        self.model.load_state_dict(model_dict)
-        self.model.to(self.device)
-
         mAP, test_data, count = self.val_or_test_synthetic_data(self.test_dataset)
 
         if self.save_threshold_curve:
@@ -215,6 +221,36 @@ class MagicPointSynthetic(TrainerTester):
         self.logger.info("The mean Average Precision : %.4f of %d samples" % (mAP, count))
         self.logger.info("Testing done.")
         self.logger.info("*****************************************************")
+
+    def test_single_image(self, ckpt_file, image_dir):
+        # 从预训练的模型中恢复参数
+        if not self.load_model_params(ckpt_file):
+            self.logger.error('Can not load model!')
+            return
+
+        self.model.eval()
+
+        cv_image = cv.imread(image_dir, cv.IMREAD_GRAYSCALE)
+        image = np.expand_dims(np.expand_dims(cv_image, 0), 0)
+        image = torch.from_numpy(image).to(torch.float)
+
+        _, _, prob = self.model(image)
+        prob = f.pixel_shuffle(prob, 8)
+        # 进行非极大值抑制
+        prob = spatial_nms(prob)
+        prob = prob.detach().cpu().numpy()[0, 0]
+
+        pred_pt = np.where(prob>0.1)
+
+        cv_pt_list = []
+        for i in range(len(pred_pt[0])):
+            kpt = cv.KeyPoint()
+            kpt.pt = (pred_pt[1][i], pred_pt[0][i])
+            cv_pt_list.append(kpt)
+
+        result_dir = os.path.join('/'.join(ckpt_file.split('/')[:-1]), 'test_image.jpg')
+        cv_image = cv.drawKeypoints(cv_image, cv_pt_list, None, color=(0, 0, 255))
+        cv.imwrite(result_dir, cv_image)
 
     def val_or_test_synthetic_data(self, dataset):
         self.model.eval()
