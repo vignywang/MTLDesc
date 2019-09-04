@@ -223,6 +223,9 @@ class MagicPointSynthetic(TrainerTester):
         self.logger.info("*****************************************************")
 
     def test_single_image(self, ckpt_file, image_dir):
+        self.logger.info("*****************************************************")
+        self.logger.info("Testing image %s" % image_dir)
+        self.logger.info("From model %s" % ckpt_file)
         # 从预训练的模型中恢复参数
         if not self.load_model_params(ckpt_file):
             self.logger.error('Can not load model!')
@@ -232,7 +235,7 @@ class MagicPointSynthetic(TrainerTester):
 
         cv_image = cv.imread(image_dir, cv.IMREAD_GRAYSCALE)
         image = np.expand_dims(np.expand_dims(cv_image, 0), 0)
-        image = torch.from_numpy(image).to(torch.float)
+        image = torch.from_numpy(image).to(torch.float).to(self.device)
 
         _, _, prob = self.model(image)
         prob = f.pixel_shuffle(prob, 8)
@@ -251,6 +254,8 @@ class MagicPointSynthetic(TrainerTester):
         result_dir = os.path.join('/'.join(ckpt_file.split('/')[:-1]), 'test_image.jpg')
         cv_image = cv.drawKeypoints(cv_image, cv_pt_list, None, color=(0, 0, 255))
         cv.imwrite(result_dir, cv_image)
+        self.logger.info("Result dir: %s" % result_dir)
+        self.logger.info("*****************************************************")
 
     def val_or_test_synthetic_data(self, dataset):
         self.model.eval()
