@@ -2,8 +2,8 @@
 # Created by ZhangYuyang on 2019/8/12
 #
 import os
-import torch
 import time
+import torch
 import torch.nn.functional as f
 import numpy as np
 import cv2 as cv
@@ -27,7 +27,7 @@ from utils.utils import DescriptorTripletLoss
 
 
 # 训练算子基类
-class Trainer(object):
+class TrainerTester(object):
 
     def __init__(self, params):
         self.params = params
@@ -73,18 +73,6 @@ class Trainer(object):
         # 初始化学习率调整算子
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.1)
 
-        # 以下是需要在子类中初始化的类
-
-        # 初始化训练数据的读入接口
-        self.train_dataset = None
-        self.train_dataloader = None
-
-        # 初始化验证数据的读入接口
-        self.val_dataset = None
-
-        # 初始化验证算子
-        self.validator = None
-
     def train(self):
         start_time = time.time()
 
@@ -117,10 +105,12 @@ class Trainer(object):
         return loss
 
 
-class MagicPointSyntheticTrainer(Trainer):
+class MagicPointSynthetic(TrainerTester):
 
     def __init__(self, params):
-        super(MagicPointSyntheticTrainer, self).__init__(params)
+        super(MagicPointSynthetic, self).__init__(params)
+
+        self.save_threshold_curve = True
 
         # 初始化训练数据的读入接口
         self.train_dataset = SyntheticTrainDataset(params)
@@ -128,17 +118,17 @@ class MagicPointSyntheticTrainer(Trainer):
                                            num_workers=self.num_workers, drop_last=self.drop_last)
         self.epoch_length = len(self.train_dataset) / self.batch_size
 
-        # 初始化验证数据的读入接口
+        # 初始化验证数据和测试数据，区别仅仅是一个有噪声一个没有噪声
         self.val_dataset = SyntheticValTestDataset(params, 'validation')
+        self.test_dataset = SyntheticValTestDataset(params, dataset_type='validation', add_noise=True)
 
         # 初始化loss算子
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
 
         # 初始化验证算子
-        self.validator = mAPCalculator()
+        self.mAP_calculator = mAPCalculator()
 
     def train_one_epoch(self, epoch_idx):
-
         self.model.train()
 
         self.logger.info("-----------------------------------------------------")
@@ -183,15 +173,64 @@ class MagicPointSyntheticTrainer(Trainer):
         self.logger.info("-----------------------------------------------------")
 
     def validate_one_epoch(self, epoch_idx):
-
-        self.model.eval()
-        self.validator.reset()
         self.logger.info("*****************************************************")
         self.logger.info("Validating epoch %2d begin:" % epoch_idx)
 
-        start_time = time.time()
+        mAP, _, count = self.val_or_test_synthetic_data('validate')
+        self.summary_writer.add_scalar("mAP", mAP)
 
-        for i, data in enumerate(self.val_dataset):
+        self.logger.info("[Epoch %2d] The mean Average Precision : %.4f of %d samples" % (epoch_idx, mAP,
+                                                                                          count))
+        self.logger.info("Validating epoch %2d done." % epoch_idx)
+        self.logger.info("*****************************************************")
+
+    def test(self, ckpt_file):
+        self.logger.info("*****************************************************")
+        self.logger.info("Testing model %s" % ckpt_file)
+
+        if ckpt_file is None:
+            print("Please input correct checkpoint file dir!")
+            return
+
+        curve_name = None
+        curve_dir = None
+        if self.save_threshold_curve:
+            save_root = '/'.join(ckpt_file.split('/')[:-1])
+            curve_name = (ckpt_file.split('/')[-1]).split('.')[0]
+            curve_dir = os.path.join(save_root, curve_name + '.png')
+
+        # 从预训练的模型中恢复参数
+        model_dict = self.model.state_dict()
+        pretrain_dict = torch.load(ckpt_file)
+        model_dict.update(pretrain_dict)
+        self.model.load_state_dict(model_dict)
+        self.model.to(self.device)
+
+        mAP, test_data, count = self.val_or_test_synthetic_data('test')
+
+        if self.save_threshold_curve:
+            self.mAP_calculator.plot_threshold_curve(test_data, curve_name, curve_dir)
+
+        self.logger.info("The mean Average Precision : %.4f of %d samples" % (mAP, count))
+        self.logger.info("Testing done.")
+        self.logger.info("*****************************************************")
+
+    def val_or_test_synthetic_data(self, mode):
+        self.model.eval()
+        self.mAP_calculator.reset()
+
+        start_time = time.time()
+        count = 0
+
+        if mode == 'validate':
+            dataset = self.val_dataset
+        elif mode == 'test':
+            dataset = self.test_dataset
+        else:
+            self.logger.error('Please input correct dataset mode! (validate pr test)')
+            return
+
+        for i, data in enumerate(dataset):
             image = data['image']
             gt_point = data['gt_point']
             gt_point = gt_point.numpy()
@@ -204,22 +243,20 @@ class MagicPointSyntheticTrainer(Trainer):
             # 进行非极大值抑制
             prob = spatial_nms(prob)
             prob = prob.detach().cpu().numpy()[0, 0]
-            self.validator.update(prob, gt_point)
+            self.mAP_calculator.update(prob, gt_point)
             if i % 10 == 0:
-                print("Having validated %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
                 start_time = time.time()
+            count += 1
+            # if count % 1000 == 0:
+            #     break
 
-        # 计算一个epoch的mAP值
-        mAP, _, _ = self.validator.compute_mAP()
-        self.summary_writer.add_scalar("mAP", mAP)
+        mAP, test_data = self.mAP_calculator.compute_mAP()
 
-        self.logger.info("[Epoch %2d] The mean Average Precision : %.4f of %d samples" % (epoch_idx, mAP,
-                                                                                          len(self.val_dataset)))
-        self.logger.info("Validating epoch %2d done." % epoch_idx)
-        self.logger.info("*****************************************************")
+        return mAP, test_data, count
 
 
-class MagicPointAdaptionTrainer(Trainer):
+class MagicPointAdaptionTrainer(TrainerTester):
 
     def __init__(self, params):
         super(MagicPointAdaptionTrainer, self).__init__(params)
@@ -321,7 +358,7 @@ class MagicPointAdaptionTrainer(Trainer):
         self.logger.info("*****************************************************")
 
 
-class SuperPointTrainer(Trainer):
+class SuperPointTrainer(TrainerTester):
 
     def __init__(self, params):
         super(SuperPointTrainer, self).__init__(params)
