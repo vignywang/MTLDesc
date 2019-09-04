@@ -22,14 +22,15 @@ class SuperPointParameters(BasicParameters):
 
         self.ckpt_root = './superpoint_ckpt'
         self.log_root = './superpoint_log'
+        self.epoch_num = 50
         self.coco_pseudo_idx = '0'
         self.loss_type = 'triplet'  # 'pairwise'
 
         # homography & photometric relating params using in training
         self.homography_params = {
-            'patch_ratio': 0.9,
-            'perspective_amplitude_x': 0.1,
-            'perspective_amplitude_y': 0.1,
+            'patch_ratio': 0.8,  # 0.9,
+            'perspective_amplitude_x': 0.2,  # 0.1,
+            'perspective_amplitude_y': 0.2,  # 0.1,
             'scaling_sample_num': 5,
             'scaling_amplitude': 0.2,
             'translation_overflow': 0.05,
@@ -48,8 +49,8 @@ class SuperPointParameters(BasicParameters):
             'speckle_noise_min_prob': 0,
             'speckle_noise_max_prob': 0.0035,
             'brightness_max_abs_change': 15,
-            'contrast_min': 0.7,
-            'contrast_max': 1.3,
+            'contrast_min': 0.5,  # 0.7,
+            'contrast_max': 1.5,  # 1.3,
             'shade_transparency_range': (-0.5, 0.5),
             'shade_kernel_size_range': (100, 150),
             'shade_nb_ellipese': 20,
