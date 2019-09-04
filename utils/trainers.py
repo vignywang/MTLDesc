@@ -112,21 +112,22 @@ class MagicPointSynthetic(TrainerTester):
 
         self.save_threshold_curve = True
 
-        # 初始化训练数据的读入接口
-        self.train_dataset = SyntheticTrainDataset(params)
+        self.train_dataset, self.val_dataset, self.test_dataset = self.initialize_dataset()
         self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True,
                                            num_workers=self.num_workers, drop_last=self.drop_last)
         self.epoch_length = len(self.train_dataset) / self.batch_size
-
-        # 初始化验证数据和测试数据，区别仅仅是一个有噪声一个没有噪声
-        self.val_dataset = SyntheticValTestDataset(params, 'validation')
-        self.test_dataset = SyntheticValTestDataset(params, dataset_type='validation', add_noise=True)
 
         # 初始化loss算子
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
 
         # 初始化验证算子
         self.mAP_calculator = mAPCalculator()
+
+    def initialize_dataset(self):
+        train_dataset = SyntheticTrainDataset(self.params)
+        val_dataset = SyntheticValTestDataset(self.params, 'validation')
+        test_dataset = SyntheticValTestDataset(self.params, 'validation', add_noise=True)
+        return train_dataset, val_dataset, test_dataset
 
     def train_one_epoch(self, epoch_idx):
         self.model.train()
@@ -176,7 +177,7 @@ class MagicPointSynthetic(TrainerTester):
         self.logger.info("*****************************************************")
         self.logger.info("Validating epoch %2d begin:" % epoch_idx)
 
-        mAP, _, count = self.val_or_test_synthetic_data('validate')
+        mAP, _, count = self.val_or_test_synthetic_data(self.val_dataset)
         self.summary_writer.add_scalar("mAP", mAP)
 
         self.logger.info("[Epoch %2d] The mean Average Precision : %.4f of %d samples" % (epoch_idx, mAP,
@@ -206,7 +207,7 @@ class MagicPointSynthetic(TrainerTester):
         self.model.load_state_dict(model_dict)
         self.model.to(self.device)
 
-        mAP, test_data, count = self.val_or_test_synthetic_data('test')
+        mAP, test_data, count = self.val_or_test_synthetic_data(self.test_dataset)
 
         if self.save_threshold_curve:
             self.mAP_calculator.plot_threshold_curve(test_data, curve_name, curve_dir)
@@ -215,20 +216,12 @@ class MagicPointSynthetic(TrainerTester):
         self.logger.info("Testing done.")
         self.logger.info("*****************************************************")
 
-    def val_or_test_synthetic_data(self, mode):
+    def val_or_test_synthetic_data(self, dataset):
         self.model.eval()
         self.mAP_calculator.reset()
 
         start_time = time.time()
         count = 0
-
-        if mode == 'validate':
-            dataset = self.val_dataset
-        elif mode == 'test':
-            dataset = self.test_dataset
-        else:
-            self.logger.error('Please input correct dataset mode! (validate pr test)')
-            return
 
         for i, data in enumerate(dataset):
             image = data['image']
@@ -256,106 +249,16 @@ class MagicPointSynthetic(TrainerTester):
         return mAP, test_data, count
 
 
-class MagicPointAdaptionTrainer(TrainerTester):
+class MagicPointAdaption(MagicPointSynthetic):
 
     def __init__(self, params):
-        super(MagicPointAdaptionTrainer, self).__init__(params)
+        super(MagicPointAdaption, self).__init__(params)
 
-        # 初始化训练数据的读入接口
-        self.train_dataset = COCOAdaptionTrainDataset(params)
-        self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True,
-                                           num_workers=self.num_workers, drop_last=self.drop_last)
-        self.epoch_length = len(self.train_dataset) / self.batch_size
-
-        # 初始化验证数据的读入接口
-        self.val_dataset = COCOAdaptionValDataset(params, add_noise=False)
-
-        # 初始化loss算子
-        self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
-
-        # 初始化验证算子
-        self.validator = mAPCalculator()
-
-    def train_one_epoch(self, epoch_idx):
-
-        self.model.train()
-
-        self.logger.info("-----------------------------------------------------")
-        self.logger.info("Training epoch %2d begin:" % epoch_idx)
-
-        stime = time.time()
-        for i, data in enumerate(self.train_dataloader):
-            image = data['image'].to(self.device)
-            label = data['label'].to(self.device)
-            mask = data['mask'].to(self.device)
-
-            logit, _, _ = self.model(image)
-            unmasked_loss = self.cross_entropy_loss(logit, label)
-            loss = self._compute_masked_loss(unmasked_loss, mask)
-
-            if torch.isnan(loss):
-                self.logger.error('loss is nan!')
-
-            self.optimizer.zero_grad()
-            loss.backward()
-
-            self.optimizer.step()
-
-            if i % self.log_freq == 0:
-
-                loss_val = loss.item()
-                self.summary_writer.add_scalar('loss', loss_val)
-                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f,"
-                                 " one step cost %.4fs. "
-                                 % (epoch_idx, i, self.epoch_length, loss_val,
-                                    (time.time() - stime) / self.params.log_freq,
-                                    ))
-                stime = time.time()
-
-        # save the model
-        if self.multi_gpus:
-            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
-        else:
-            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
-
-        self.logger.info("Training epoch %2d done." % epoch_idx)
-        self.logger.info("-----------------------------------------------------")
-
-    def validate_one_epoch(self, epoch_idx):
-
-        self.model.eval()
-        self.validator.reset()
-        self.logger.info("*****************************************************")
-        self.logger.info("Validating epoch %2d begin:" % epoch_idx)
-
-        start_time = time.time()
-
-        for i, data in enumerate(self.val_dataset):
-            image = data['image']
-            gt_point = data['gt_point']
-            gt_point = gt_point.numpy()
-
-            image = image.to(self.device).unsqueeze(dim=0)
-            # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
-            _, _, prob = self.model(image)
-            # 将概率图展开为原始图像大小
-            prob = f.pixel_shuffle(prob, 8)
-            # 进行非极大值抑制
-            prob = spatial_nms(prob)
-            prob = prob.detach().cpu().numpy()[0, 0]
-            self.validator.update(prob, gt_point)
-            if i % 10 == 0:
-                print("Having validated %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
-                start_time = time.time()
-
-        # 计算一个epoch的mAP值
-        mAP, _ = self.validator.compute_mAP()
-        self.summary_writer.add_scalar("mAP", mAP)
-
-        self.logger.info("[Epoch %2d] The mean Average Precision : %.4f of %d samples" % (epoch_idx, mAP,
-                                                                                          len(self.val_dataset)))
-        self.logger.info("Validating epoch %2d done." % epoch_idx)
-        self.logger.info("*****************************************************")
+    def initialize_dataset(self):
+        self.logger.info('Initialize COCO Adaption Dataset %s' % self.params.coco_pseudo_idx)
+        train_dataset = COCOAdaptionTrainDataset(self.params)
+        val_dataset = COCOAdaptionValDataset(self.params, add_noise=False)
+        return train_dataset, val_dataset, None
 
 
 class SuperPointTrainer(TrainerTester):

@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 
 from basic_parameters import BasicParameters
-from utils.trainers import MagicPointAdaptionTrainer
+from utils.trainers import MagicPointAdaption
 
 # make the result reproducible
 torch.manual_seed(3928)
@@ -74,7 +74,7 @@ if __name__ == '__main__':
     params.initialize()
 
     # initialize the trainer and train
-    magicpoint_trainer = MagicPointAdaptionTrainer(params)
+    magicpoint_trainer = MagicPointAdaption(params)
     magicpoint_trainer.train()
 
 
