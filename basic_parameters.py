@@ -46,6 +46,10 @@ class BasicParameters(object):
         self.correct_epsilon = 3
         self.top_k = 1000
 
+        # Running relating params
+        self.run_mode = 'train'
+        self.ckpt_file = None
+
         # homography & photometric relating params using in training
         self.homography_params = {
             'patch_ratio': 0.8,
