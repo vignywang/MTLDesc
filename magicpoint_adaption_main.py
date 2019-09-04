@@ -69,13 +69,18 @@ class MagicPointAdaptionParameters(BasicParameters):
         return parser.parse_args()
 
 
-if __name__ == '__main__':
+def main():
     params = MagicPointAdaptionParameters()
     params.initialize()
 
     # initialize the trainer and train
     magicpoint_trainer = MagicPointAdaption(params)
     magicpoint_trainer.train()
+
+
+if __name__ == '__main__':
+    main()
+
 
 
 

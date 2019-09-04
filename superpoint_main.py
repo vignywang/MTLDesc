@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 
 from basic_parameters import BasicParameters
-from utils.trainers import SuperPointTrainer
+from utils.trainers import SuperPoint
 
 # make the result reproducible
 torch.manual_seed(3928)
@@ -77,10 +77,15 @@ class SuperPointParameters(BasicParameters):
         return parser.parse_args()
 
 
-if __name__ == '__main__':
+def main():
     params = SuperPointParameters()
     params.initialize()
 
-    trainer = SuperPointTrainer(params)
+    trainer = SuperPoint(params)
     trainer.train()
+
+
+if __name__ == '__main__':
+    main()
+
 
