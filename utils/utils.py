@@ -108,7 +108,7 @@ class DescriptorTripletLoss(object):
         dist = torch.sqrt(2.*(1.-cos_similarity)+1e-4)  # [bt,h*w,h*w]
 
         positive_pair = torch.diagonal(dist, dim1=1, dim2=2)  # [bt,h*w]
-        dist = dist + 10*not_search_mask
+        dist = dist + not_search_mask
 
         hardest_negative_pair, hardest_negative_idx = torch.min(dist, dim=2)  # [bt,h*w]
 

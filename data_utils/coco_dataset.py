@@ -375,7 +375,7 @@ class COCOSuperPointTrainDataset(Dataset):
         valid_mask = valid_mask[nearest_idx]
         invalid = ~valid_mask[np.newaxis, :]
 
-        not_search_mask = (nearest | invalid).astype(np.float32)
+        not_search_mask = (nearest | invalid).astype(np.float32)*10.
         matched_valid = matched_valid & valid_mask
 
         return nearest_idx, matched_valid, not_search_mask, warped_center_grid, matched_grid
