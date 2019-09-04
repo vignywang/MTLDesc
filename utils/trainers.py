@@ -80,10 +80,10 @@ class TrainerTester(object):
         for i in range(self.epoch_num):
 
             # train
-            self.train_one_epoch(i)
+            self._train_one_epoch(i)
 
             # validation
-            self.validate_one_epoch(i)
+            self._validate_one_epoch(i)
 
             # adjust learning rate
             self.scheduler.step(i)
@@ -91,13 +91,13 @@ class TrainerTester(object):
         end_time = time.time()
         self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
 
-    def train_one_epoch(self, epoch_idx):
+    def _train_one_epoch(self, epoch_idx):
         raise NotImplementedError
 
-    def validate_one_epoch(self, epoch_idx):
+    def _validate_one_epoch(self, epoch_idx):
         raise NotImplementedError
 
-    def load_model_params(self, ckpt_file):
+    def _load_model_params(self, ckpt_file):
         if ckpt_file is None:
             print("Please input correct checkpoint file dir!")
             return False
@@ -124,7 +124,7 @@ class MagicPointSynthetic(TrainerTester):
 
         self.save_threshold_curve = True
 
-        self.train_dataset, self.val_dataset, self.test_dataset = self.initialize_dataset()
+        self.train_dataset, self.val_dataset, self.test_dataset = self._initialize_dataset()
         self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True,
                                            num_workers=self.num_workers, drop_last=self.drop_last)
         self.epoch_length = len(self.train_dataset) / self.batch_size
@@ -135,13 +135,73 @@ class MagicPointSynthetic(TrainerTester):
         # 初始化验证算子
         self.mAP_calculator = mAPCalculator()
 
-    def initialize_dataset(self):
+    def test(self, ckpt_file):
+        self.logger.info("*****************************************************")
+        self.logger.info("Testing model %s" % ckpt_file)
+
+        # 从预训练的模型中恢复参数
+        if not self._load_model_params(ckpt_file):
+            self.logger.error('Can not load model!')
+            return
+
+        curve_name = None
+        curve_dir = None
+        if self.save_threshold_curve:
+            save_root = '/'.join(ckpt_file.split('/')[:-1])
+            curve_name = (ckpt_file.split('/')[-1]).split('.')[0]
+            curve_dir = os.path.join(save_root, curve_name + '.png')
+
+        mAP, test_data, count = self._test_func(self.test_dataset)
+
+        if self.save_threshold_curve:
+            self.mAP_calculator.plot_threshold_curve(test_data, curve_name, curve_dir)
+
+        self.logger.info("The mean Average Precision : %.4f of %d samples" % (mAP, count))
+        self.logger.info("Testing done.")
+        self.logger.info("*****************************************************")
+
+    def test_single_image(self, ckpt_file, image_dir):
+        self.logger.info("*****************************************************")
+        self.logger.info("Testing image %s" % image_dir)
+        self.logger.info("From model %s" % ckpt_file)
+        # 从预训练的模型中恢复参数
+        if not self._load_model_params(ckpt_file):
+            self.logger.error('Can not load model!')
+            return
+
+        self.model.eval()
+
+        cv_image = cv.imread(image_dir, cv.IMREAD_GRAYSCALE)
+        image = np.expand_dims(np.expand_dims(cv_image, 0), 0)
+        image = torch.from_numpy(image).to(torch.float).to(self.device)
+
+        _, _, prob = self.model(image)
+        prob = f.pixel_shuffle(prob, 8)
+        # 进行非极大值抑制
+        prob = spatial_nms(prob)
+        prob = prob.detach().cpu().numpy()[0, 0]
+
+        pred_pt = np.where(prob>0.1)
+
+        cv_pt_list = []
+        for i in range(len(pred_pt[0])):
+            kpt = cv.KeyPoint()
+            kpt.pt = (pred_pt[1][i], pred_pt[0][i])
+            cv_pt_list.append(kpt)
+
+        result_dir = os.path.join('/'.join(ckpt_file.split('/')[:-1]), 'test_image.jpg')
+        cv_image = cv.drawKeypoints(cv_image, cv_pt_list, None, color=(0, 0, 255))
+        cv.imwrite(result_dir, cv_image)
+        self.logger.info("Result dir: %s" % result_dir)
+        self.logger.info("*****************************************************")
+
+    def _initialize_dataset(self):
         train_dataset = SyntheticTrainDataset(self.params)
         val_dataset = SyntheticValTestDataset(self.params, 'validation')
         test_dataset = SyntheticValTestDataset(self.params, 'validation', add_noise=True)
         return train_dataset, val_dataset, test_dataset
 
-    def train_one_epoch(self, epoch_idx):
+    def _train_one_epoch(self, epoch_idx):
         self.model.train()
 
         self.logger.info("-----------------------------------------------------")
@@ -185,11 +245,11 @@ class MagicPointSynthetic(TrainerTester):
         self.logger.info("Training epoch %2d done." % epoch_idx)
         self.logger.info("-----------------------------------------------------")
 
-    def validate_one_epoch(self, epoch_idx):
+    def _validate_one_epoch(self, epoch_idx):
         self.logger.info("*****************************************************")
         self.logger.info("Validating epoch %2d begin:" % epoch_idx)
 
-        mAP, _, count = self.val_or_test_synthetic_data(self.val_dataset)
+        mAP, _, count = self._test_func(self.val_dataset)
         self.summary_writer.add_scalar("mAP", mAP)
 
         self.logger.info("[Epoch %2d] The mean Average Precision : %.4f of %d samples" % (epoch_idx, mAP,
@@ -197,67 +257,7 @@ class MagicPointSynthetic(TrainerTester):
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
 
-    def test(self, ckpt_file):
-        self.logger.info("*****************************************************")
-        self.logger.info("Testing model %s" % ckpt_file)
-
-        # 从预训练的模型中恢复参数
-        if not self.load_model_params(ckpt_file):
-            self.logger.error('Can not load model!')
-            return
-
-        curve_name = None
-        curve_dir = None
-        if self.save_threshold_curve:
-            save_root = '/'.join(ckpt_file.split('/')[:-1])
-            curve_name = (ckpt_file.split('/')[-1]).split('.')[0]
-            curve_dir = os.path.join(save_root, curve_name + '.png')
-
-        mAP, test_data, count = self.val_or_test_synthetic_data(self.test_dataset)
-
-        if self.save_threshold_curve:
-            self.mAP_calculator.plot_threshold_curve(test_data, curve_name, curve_dir)
-
-        self.logger.info("The mean Average Precision : %.4f of %d samples" % (mAP, count))
-        self.logger.info("Testing done.")
-        self.logger.info("*****************************************************")
-
-    def test_single_image(self, ckpt_file, image_dir):
-        self.logger.info("*****************************************************")
-        self.logger.info("Testing image %s" % image_dir)
-        self.logger.info("From model %s" % ckpt_file)
-        # 从预训练的模型中恢复参数
-        if not self.load_model_params(ckpt_file):
-            self.logger.error('Can not load model!')
-            return
-
-        self.model.eval()
-
-        cv_image = cv.imread(image_dir, cv.IMREAD_GRAYSCALE)
-        image = np.expand_dims(np.expand_dims(cv_image, 0), 0)
-        image = torch.from_numpy(image).to(torch.float).to(self.device)
-
-        _, _, prob = self.model(image)
-        prob = f.pixel_shuffle(prob, 8)
-        # 进行非极大值抑制
-        prob = spatial_nms(prob)
-        prob = prob.detach().cpu().numpy()[0, 0]
-
-        pred_pt = np.where(prob>0.1)
-
-        cv_pt_list = []
-        for i in range(len(pred_pt[0])):
-            kpt = cv.KeyPoint()
-            kpt.pt = (pred_pt[1][i], pred_pt[0][i])
-            cv_pt_list.append(kpt)
-
-        result_dir = os.path.join('/'.join(ckpt_file.split('/')[:-1]), 'test_image.jpg')
-        cv_image = cv.drawKeypoints(cv_image, cv_pt_list, None, color=(0, 0, 255))
-        cv.imwrite(result_dir, cv_image)
-        self.logger.info("Result dir: %s" % result_dir)
-        self.logger.info("*****************************************************")
-
-    def val_or_test_synthetic_data(self, dataset):
+    def _test_func(self, dataset):
         self.model.eval()
         self.mAP_calculator.reset()
 
@@ -295,17 +295,17 @@ class MagicPointAdaption(MagicPointSynthetic):
     def __init__(self, params):
         super(MagicPointAdaption, self).__init__(params)
 
-    def initialize_dataset(self):
+    def _initialize_dataset(self):
         self.logger.info('Initialize COCO Adaption Dataset %s' % self.params.coco_pseudo_idx)
         train_dataset = COCOAdaptionTrainDataset(self.params)
         val_dataset = COCOAdaptionValDataset(self.params, add_noise=False)
         return train_dataset, val_dataset, None
 
 
-class SuperPointTrainer(TrainerTester):
+class SuperPoint(TrainerTester):
 
     def __init__(self, params):
-        super(SuperPointTrainer, self).__init__(params)
+        super(SuperPoint, self).__init__(params)
         # 初始化训练数据的读入接口
         self.train_dataset = COCOSuperPointTrainDataset(params)
         self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True,
@@ -345,14 +345,24 @@ class SuperPointTrainer(TrainerTester):
         else:
             self.descriptor_loss = DescriptorTripletLoss(device=self.device)
 
-    def train_one_epoch(self, epoch_idx):
+    def test_HPatch(self, ckpt_file):
+        self.logger.info("*****************************************************")
+        self.logger.info("Testing model %s in HPatch" % ckpt_file)
+
+        self._load_model_params(ckpt_file)
+        self._test_model()
+
+        self.logger.info("Testing HPatch done.")
+        self.logger.info("*****************************************************")
+
+    def _train_one_epoch(self, epoch_idx):
 
         if self.loss_type == 'pairwise':
-            self.train_one_epoch_use_pairwise_loss(epoch_idx)
+            self._train_one_epoch_use_pairwise_loss(epoch_idx)
         else:
-            self.train_one_epoch_use_triplet_loss(epoch_idx)
+            self._train_one_epoch_use_triplet_loss(epoch_idx)
 
-    def train_one_epoch_use_triplet_loss(self, epoch_idx):
+    def _train_one_epoch_use_triplet_loss(self, epoch_idx):
 
         self.model.train()
 
@@ -426,7 +436,7 @@ class SuperPointTrainer(TrainerTester):
         self.logger.info("Training epoch %2d done." % epoch_idx)
         self.logger.info("-----------------------------------------------------")
 
-    def train_one_epoch_use_pairwise_loss(self, epoch_idx):
+    def _train_one_epoch_use_pairwise_loss(self, epoch_idx):
 
         self.model.train()
 
@@ -494,12 +504,18 @@ class SuperPointTrainer(TrainerTester):
         self.logger.info("Training epoch %2d done." % epoch_idx)
         self.logger.info("-----------------------------------------------------")
 
-    def validate_one_epoch(self, epoch_idx):
-
-        self.model.eval()
+    def _validate_one_epoch(self, epoch_idx):
         self.logger.info("*****************************************************")
         self.logger.info("Validating epoch %2d begin:" % epoch_idx)
 
+        self._test_model()
+
+        self.logger.info("Validating epoch %2d done." % epoch_idx)
+        self.logger.info("*****************************************************")
+
+    def _test_model(self):
+
+        self.model.eval()
         # 重置测评算子参数
         self.illumination_repeatability.reset()
         self.illumination_homo_accuracy.reset()
@@ -532,12 +548,12 @@ class SuperPointTrainer(TrainerTester):
             second_prob = prob_pair[1, 0]
 
             # 得到对应的预测点
-            first_point = self.generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
-            second_point = self.generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+            first_point = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+            second_point = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
 
             # 得到点对应的描述子
-            select_first_desp = self.generate_predict_descriptor(first_point, first_desp)
-            select_second_desp = self.generate_predict_descriptor(second_point, second_desp)
+            select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
+            select_second_desp = self._generate_predict_descriptor(second_point, second_desp)
 
             # 得到匹配点
             matched_point = self.matcher(first_point, select_first_desp,
@@ -589,10 +605,8 @@ class SuperPointTrainer(TrainerTester):
                          (illum_match_acc, view_match_acc, total_match_acc))
         self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
                          (illum_repeat, view_repeat, total_repeat))
-        self.logger.info("Validating epoch %2d done." % epoch_idx)
-        self.logger.info("*****************************************************")
 
-    def generate_predict_point(self, prob, scale=None, top_k=0):
+    def _generate_predict_point(self, prob, scale=None, top_k=0):
         point_idx = np.where(prob > self.detection_threshold)
         prob = prob[point_idx]
         sorted_idx = np.argsort(prob)[::-1]
@@ -609,7 +623,7 @@ class SuperPointTrainer(TrainerTester):
             point = point*scale
         return point
 
-    def generate_predict_descriptor(self, point, desp):
+    def _generate_predict_descriptor(self, point, desp):
         point = torch.from_numpy(point).to(torch.float)  # 由于只有pytorch有gather的接口，因此将点调整为pytorch的格式
         desp = torch.from_numpy(desp)
         dim, h, w = desp.shape
