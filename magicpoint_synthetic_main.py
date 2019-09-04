@@ -1,15 +1,12 @@
 #
 # Created by ZhangYuyang on 2019/8/9
 #
-import os
 import argparse
 import torch
 import numpy as np
-import glob
 
 from basic_parameters import BasicParameters
-from utils.testers import MagicPointSyntheticTester
-from utils.testers import HPatchTester
+from utils.trainers import MagicPointSynthetic
 
 # make the result reproducible
 torch.manual_seed(3928)
@@ -35,50 +32,34 @@ class MagicPointParameters(BasicParameters):
         parser.add_argument("--batch_size", type=int, default=64)
         parser.add_argument("--num_workers", type=int, default=8)
         parser.add_argument("--prefix", type=str, default='exp1')
+        parser.add_argument("--run_mode", type=str, default='train')
+        parser.add_argument("--ckpt_file", type=str, default=None)
         return parser.parse_args()
 
 
-if __name__ == '__main__':
+def main():
+
     params = MagicPointParameters()
     params.initialize()
 
-    # initialize the trainer and train
-    # magicpoint_trainer = MagicPointSyntheticTrainer(params)
-    # magicpoint_trainer.train()
+    magicpoint_synthetic = MagicPointSynthetic(params)
+    if params.run_mode == 'train':
+        magicpoint_synthetic.train()
+    elif params.run_mode == 'test':
+        if params.ckpt_file is None:
+            params.logger.error("Please input the ckpt_file in bash like: --ckpt_file=/*****")
+            return
+        else:
+            magicpoint_synthetic.test(params.ckpt_file)
 
-    # initialize the tester and test all checkpoint file in the folder
-    magicpoint_synthetic_tester = MagicPointSyntheticTester(params)
-    magicpoint_hpatch_tester = HPatchTester(params)
 
-    # # choose test mode
-    # mode = 'all'
-    # mode = 'only_hpatch'
-    mode = 'only_synthetic'
-    # mode = 'only_synthetic_one_image'
+if __name__ == '__main__':
+    main()
 
     # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/model_99.pt'
     # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
-    ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adaption_0/model_99.pt'
+    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adaption_0/model_99.pt'
     # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth'
-
-    if mode == 'all':
-        ckpt_files = glob.glob(os.path.join(params.ckpt_dir, "model_*"))
-        ckpt_files = sorted(ckpt_files)
-        for ckpt_file in ckpt_files:
-            magicpoint_synthetic_tester.test(ckpt_file)
-            magicpoint_hpatch_tester.test_model(ckpt_file)
-
-    elif mode == 'only_hpatch':
-        # magicpoint_hpatch_tester.test_FAST_repeatability()
-        magicpoint_hpatch_tester.test_model(ckpt_file)
-        # magicpoint_hpatch_tester.test_orb_descriptors()
-
-    elif mode == 'only_synthetic':
-        magicpoint_synthetic_tester.test(ckpt_file)
-
-    elif mode == 'only_synthetic_one_image':
-        image_dir = '/data/MegPoint/dataset/synthetic/draw_multiple_polygons/images/test/76.png'
-        magicpoint_synthetic_tester.test_single_image(ckpt_file, image_dir)
 
 
 
