@@ -229,6 +229,7 @@ class COCOSuperPointTrainDataset(Dataset):
                 image.copy(), org_mask.copy(), point.copy(), np.eye(3)
         else:
             warped_image, warped_org_mask, warped_point, homography = self.homography(image, point, return_homo=True)
+        # warped_image, warped_org_mask, warped_point, homography = self.homography(image, point, return_homo=True)
         # cv_image_keypoint = draw_image_keypoints(warped_image, warped_point)
 
         # 1、对图像的相关处理

@@ -125,8 +125,7 @@ class DescriptorTripletLoss(object):
         # valid = matched_valid.detach().cpu().numpy()
         # debug_positive_pair = positive_pair.detach().cpu().numpy()
         # debug_negative_pair = hardest_negative_pair.detach().cpu().numpy()
-        # debug_dist = (torch.sum((positive_pair-hardest_negative_pair)*matched_valid, dim=1)/valid_num)\
-        #     .detach().cpu().numpy()
+        # debug_dist = (torch.sum((positive_pair-hardest_negative_pair)*matched_valid, dim=1)/valid_num).detach().cpu().numpy()
 
         loss = torch.mean(torch.sum(loss_total, dim=1)/valid_num)
 

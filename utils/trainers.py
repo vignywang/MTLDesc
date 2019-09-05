@@ -345,6 +345,10 @@ class SuperPoint(TrainerTester):
         else:
             self.descriptor_loss = DescriptorTripletLoss(device=self.device)
 
+        # debug use
+        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24/model_49.pt"
+        # self._load_model_params(ckpt_file)
+
     def test_HPatch(self, ckpt_file):
         self.logger.info("*****************************************************")
         self.logger.info("Testing model %s in HPatch" % ckpt_file)
