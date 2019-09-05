@@ -35,7 +35,7 @@ class SuperPointParameters(BasicParameters):
             'scaling_amplitude': 0.2,
             'translation_overflow': 0.05,
             'rotation_sample_num': 25,
-            'rotation_max_angle': np.pi/3,
+            'rotation_max_angle': np.pi/2.,  # np.pi/3,
             'do_perspective': True,
             'do_scaling': True,
             'do_rotation': True,
