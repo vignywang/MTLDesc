@@ -9,7 +9,7 @@ import torch.nn as nn
 
 class SuperPointNet(nn.Module):
 
-    def __init__(self):
+    def __init__(self, output_type='float'):
         super(SuperPointNet, self).__init__()
         self.relu = torch.nn.ReLU(inplace=True)
         self.pool = torch.nn.MaxPool2d(kernel_size=2, stride=2)
@@ -31,6 +31,9 @@ class SuperPointNet(nn.Module):
         self.convDb = nn.Conv2d(c5, d1, kernel_size=1, stride=1, padding=0)
 
         self.softmax = nn.Softmax(dim=1)
+
+        self.tanh = nn.Tanh()
+        self.output_type = output_type
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -56,8 +59,13 @@ class SuperPointNet(nn.Module):
         # Descriptor Head.
         cDa = self.relu(self.convDa(x))
         desc = self.convDb(cDa)
-        dn = torch.norm(desc, p=2, dim=1, keepdim=True)  # Compute the norm.
-        desc = desc.div(dn)  # Divide by norm to normalize.
+
+        if self.output_type == 'float':
+            dn = torch.norm(desc, p=2, dim=1, keepdim=True)  # Compute the norm.
+            desc = desc.div(dn)  # Divide by norm to normalize.
+        elif self.output_type == 'binary':
+            desc = self.tanh(desc)
+
         return logit, desc, prob
 
 
