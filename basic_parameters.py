@@ -29,7 +29,6 @@ class BasicParameters(object):
 
         # training params
         self.lr = 0.001
-        self.descriptor_weight = 1.0
         self.batch_size = 64
         self.epoch_num = 100
         self.log_freq = 100
@@ -49,6 +48,9 @@ class BasicParameters(object):
         # Running relating params
         self.run_mode = 'train'
         self.ckpt_file = None
+
+        # model params
+        self.output_type = 'float'
 
         # homography & photometric relating params using in training
         self.homography_params = {

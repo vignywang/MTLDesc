@@ -26,6 +26,10 @@ class SuperPointParameters(BasicParameters):
         self.coco_pseudo_idx = '0'
         self.loss_type = 'triplet'  # 'pairwise'
 
+        # training param
+        self.descriptor_weight = 1.0
+        self.quantization_weight = 0.1
+
         # homography & photometric relating params using in training
         self.homography_params = {
             'patch_ratio': 0.8,  # 0.9,
@@ -73,6 +77,7 @@ class SuperPointParameters(BasicParameters):
         parser.add_argument("--num_workers", type=int, default=8)
         parser.add_argument("--coco_pseudo_idx", type=str, default='0')
         parser.add_argument("--loss_type", type=str, default='triplet')
+        parser.add_argument("--output_type", type=str, default='float')
 
         return parser.parse_args()
 
