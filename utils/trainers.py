@@ -24,6 +24,7 @@ from utils.evaluation_tools import MeanMatchingAccuracy
 from utils.utils import spatial_nms, Matcher
 from utils.utils import DescriptorHingeLoss
 from utils.utils import DescriptorTripletLoss
+from utils.utils import BinaryDescriptorTripletLoss
 
 
 # 训练算子基类
@@ -61,7 +62,14 @@ class TrainerTester(object):
         self.summary_writer = SummaryWriter(self.ckpt_dir)
 
         # 初始化模型
-        self.model = SuperPointNet()
+        self.output_type = params.output_type
+        if self.output_type == 'float':
+            self.model = SuperPointNet()
+        elif self.output_type == 'binary':
+            self.model = SuperPointNet('binary')
+        else:
+            self.logger.error('Incorrect output_type: %s' % self.output_type)
+
         if self.multi_gpus:
             self.model = torch.nn.DataParallel(self.model)
         self.model.to(self.device)
@@ -102,6 +110,7 @@ class TrainerTester(object):
             print("Please input correct checkpoint file dir!")
             return False
 
+        self.logger.info("Load pretrained model %s " % ckpt_file)
         model_dict = self.model.state_dict()
         pretrain_dict = torch.load(ckpt_file, map_location=self.device)
         model_dict.update(pretrain_dict)
@@ -334,16 +343,32 @@ class SuperPoint(TrainerTester):
 
         # 得到指定的loss构造类型
         self.loss_type = params.loss_type
-        assert self.loss_type in ['triplet', 'pairwise']
-        self.logger.info('The loss type is %s' % self.loss_type)
+        self.logger.info('The loss type: %s' % self.loss_type)
 
-        # 初始化loss算子
+        self.output_type = params.output_type
+        self.logger.info('The outout type: %s' % self.output_type)
+
+        # 根据输出类型和loss类型初始化相应算子和函数
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
         self.descriptor_weight = params.descriptor_weight
-        if self.loss_type == 'pairwise':
-            self.descriptor_loss = DescriptorHingeLoss(device=self.device)
+        self.quantization_weight = params.quantization_weight
+        # self.descriptor_weight = 0.
+        if self.output_type == 'float':
+            if self.loss_type == 'pairwise':
+                self.descriptor_loss = DescriptorHingeLoss(device=self.device)
+                self._train_func = self._train_use_pairwise_loss
+            elif self.loss_type == 'triplet':
+                self.descriptor_loss = DescriptorTripletLoss(device=self.device)
+                self._train_func = self._train_use_triplet_loss
+            else:
+                self.logger.error('incorrect loss type: %s' % self.loss_type)
+                assert False
+        elif self.output_type == 'binary':
+            self.descriptor_loss = BinaryDescriptorTripletLoss()
+            self._train_func = self._train_use_triplet_loss_binary
         else:
-            self.descriptor_loss = DescriptorTripletLoss(device=self.device)
+            self.logger.error('incorrect output type: %s' % self.output_type)
+            assert False
 
         # debug use
         # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24/model_49.pt"
@@ -360,13 +385,98 @@ class SuperPoint(TrainerTester):
         self.logger.info("*****************************************************")
 
     def _train_one_epoch(self, epoch_idx):
+        self._train_func(epoch_idx)
 
-        if self.loss_type == 'pairwise':
-            self._train_one_epoch_use_pairwise_loss(epoch_idx)
+    def _train_use_triplet_loss_binary(self, epoch_idx):
+        self.model.train()
+
+        self.logger.info("-----------------------------------------------------")
+        self.logger.info("Training epoch %2d begin:" % epoch_idx)
+
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data['image'].to(self.device)
+            label = data['label'].to(self.device)
+            mask = data['mask'].to(self.device)
+
+            warped_image = data['warped_image'].to(self.device)
+            warped_label = data['warped_label'].to(self.device)
+            warped_mask = data['warped_mask'].to(self.device)
+
+            matched_idx = data['matched_idx'].to(self.device)
+            matched_valid = data['matched_valid'].to(self.device)
+            not_search_mask = data['not_search_mask'].to(self.device)
+            desp_1_valid_mask = data['warped_valid_mask'].to(self.device)
+
+            shape = image.shape
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            label_pair = torch.cat((label, warped_label), dim=0)
+            mask_pair = torch.cat((mask, warped_mask), dim=0)
+            logit_pair, desp_pair, _ = self.model(image_pair)
+
+            unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
+            point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
+
+            desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
+            desp_loss, quantization_loss = self.descriptor_loss(
+                desp_0, desp_1, matched_idx, matched_valid, not_search_mask, desp_1_valid_mask)
+
+            loss = point_loss + self.descriptor_weight*desp_loss + self.quantization_weight*quantization_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            loss_val = loss.item()
+            point_loss_val = point_loss.item()
+            desp_loss_val = desp_loss.item()
+            quantization_loss_val = quantization_loss.item()
+
+            self.summary_writer.add_scalar('loss/total_loss', loss_val,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/point_loss', point_loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/desp_loss', desp_loss_val,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/quantization_loss', quantization_loss_val,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+
+            if i % self.log_freq == 0:
+
+                self.summary_writer.add_histogram('descriptor', desp_pair,
+                                                  global_step=int(i+epoch_idx*self.epoch_length))
+
+                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: "
+                                 "loss = %.4f, "
+                                 "point_loss = %.4f, "
+                                 "desp_loss = %.4f, "
+                                 "quantization_loss = %.4f, "
+                                 " one step cost %.4fs. "
+                                 % (epoch_idx, i, self.epoch_length,
+                                    loss_val,
+                                    point_loss_val,
+                                    desp_loss_val,
+                                    quantization_loss_val,
+                                    (time.time() - stime) / self.params.log_freq,
+                                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
         else:
-            self._train_one_epoch_use_triplet_loss(epoch_idx)
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
 
-    def _train_one_epoch_use_triplet_loss(self, epoch_idx):
+        self.logger.info("Training epoch %2d done." % epoch_idx)
+        self.logger.info("-----------------------------------------------------")
+
+    def _train_use_triplet_loss(self, epoch_idx):
 
         self.model.train()
 
@@ -440,7 +550,7 @@ class SuperPoint(TrainerTester):
         self.logger.info("Training epoch %2d done." % epoch_idx)
         self.logger.info("-----------------------------------------------------")
 
-    def _train_one_epoch_use_pairwise_loss(self, epoch_idx):
+    def _train_use_pairwise_loss(self, epoch_idx):
 
         self.model.train()
 

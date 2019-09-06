@@ -108,7 +108,7 @@ class DescriptorTripletLoss(object):
         dist = torch.sqrt(2.*(1.-cos_similarity)+1e-4)  # [bt,h*w,h*w]
 
         positive_pair = torch.diagonal(dist, dim1=1, dim2=2)  # [bt,h*w]
-        dist = dist + not_search_mask
+        dist = dist + 10*not_search_mask
 
         hardest_negative_pair, hardest_negative_idx = torch.min(dist, dim=2)  # [bt,h*w]
 
@@ -117,6 +117,7 @@ class DescriptorTripletLoss(object):
         loss_total *= matched_valid
 
         valid_num = torch.sum(matched_valid, dim=1)
+        loss = torch.mean(torch.sum(loss_total, dim=1)/valid_num)
 
         # debug use
         # matched_dist = torch.norm((warped_grid-matched_grid), dim=2).detach().cpu().numpy()
@@ -127,9 +128,51 @@ class DescriptorTripletLoss(object):
         # debug_negative_pair = hardest_negative_pair.detach().cpu().numpy()
         # debug_dist = (torch.sum((positive_pair-hardest_negative_pair)*matched_valid, dim=1)/valid_num).detach().cpu().numpy()
 
-        loss = torch.mean(torch.sum(loss_total, dim=1)/valid_num)
-
         return loss
+
+
+class BinaryDescriptorTripletLoss(object):
+
+    def __init__(self):
+        self.gamma = 10
+        self.threshold = 1.0
+        self.quantization_weight = 1.0
+
+    def __call__(self, desp_0, desp_1, matched_idx, matched_valid, not_search_mask, valid_mask):
+        bt, dim, h, w = desp_0.shape
+        desp_0 = torch.reshape(desp_0, (bt, dim, h*w))  # [bt,dim,h*w]
+        desp_1 = torch.reshape(desp_1, (bt, dim, h*w))
+
+        matched_idx = torch.unsqueeze(matched_idx, dim=1).repeat(1, dim, 1)  # [bt,dim,h*w]
+        desp_1 = torch.gather(desp_1, dim=2, index=matched_idx)  # [bt,dim,h*w]
+
+        cos_similarity = torch.matmul(desp_0.transpose(1, 2), desp_1)
+        dist = torch.sqrt(2.*(1.-cos_similarity)+1e-4)
+
+        positive_pair = torch.diagonal(dist, dim1=1, dim2=2)  # [bt,h*w]
+        dist = dist + not_search_mask*10.
+
+        hardest_negative_pair, hardest_negative_idx = torch.min(dist, dim=2)  # [bt,h*w]
+
+        triplet_metric = f.relu(self.threshold+positive_pair-hardest_negative_pair)
+
+        triplet_loss = triplet_metric*matched_valid
+        match_valid_num = torch.sum(matched_valid, dim=1)
+        triplet_loss = torch.mean(torch.sum(triplet_loss, dim=1)/match_valid_num)
+
+        sqrt_1_k = 1./np.sqrt(dim)
+        desp_1_valid_num = torch.sum(valid_mask, dim=1)
+
+        dist_0 = torch.sqrt(2*(1-sqrt_1_k*torch.sum(torch.abs(desp_0), dim=1))+1e-4)
+        dist_1 = torch.sqrt(2*(1-sqrt_1_k*torch.sum(torch.abs(desp_1), dim=1))+1e-4)*valid_mask
+
+        quantization_loss_0 = torch.mean(dist_0, dim=1)
+        quantization_loss_1 = torch.sum(dist_1, dim=1)/desp_1_valid_num
+        quantization_loss = torch.mean(torch.cat((quantization_loss_0, quantization_loss_1)))
+
+        # loss = triplet_loss
+        # return loss, cauchy_loss
+        return triplet_loss, quantization_loss
 
 
 class Matcher(object):

@@ -262,7 +262,7 @@ class COCOSuperPointTrainDataset(Dataset):
 
         # 3、对构造描述子loss有关关系的计算
         # 3.1 得到第二副图中有效描述子的掩膜
-        valid_mask = warped_mask.reshape((-1,))
+        warped_valid_mask = warped_mask.reshape((-1,))
 
         # 3.2 根据指定的loss类型计算不同的关系，
         #     pairwise要计算两两之间的对应关系，
@@ -277,25 +277,26 @@ class COCOSuperPointTrainDataset(Dataset):
             descriptor_mask = self._generate_descriptor_mask(homography)
             descriptor_mask = torch.from_numpy(descriptor_mask)
         else:
-            matched_idx, matched_valid, not_search_mask, warped_grid, matched_grid = \
-                self.generate_corresponding_relationship(homography, valid_mask)
+            matched_idx, matched_valid, not_search_mask, warped_grid, matched_grid, warped_valid_mask = \
+                self.generate_corresponding_relationship(homography, warped_valid_mask)
             matched_idx = torch.from_numpy(matched_idx)
             matched_valid = torch.from_numpy(matched_valid).to(torch.float)
             not_search_mask = torch.from_numpy(not_search_mask)
             warped_grid = torch.from_numpy(warped_grid)
             matched_grid = torch.from_numpy(matched_grid)
+            warped_valid_mask = torch.from_numpy(warped_valid_mask)
 
         # 4、返回样本
         if self.loss_type == 'pairwise':
             return {'image': image, 'mask': mask, 'label': label,
                     'warped_image': warped_image, 'warped_mask': warped_mask, 'warped_label': warped_label,
-                    'descriptor_mask': descriptor_mask, 'valid_mask': valid_mask}
+                    'descriptor_mask': descriptor_mask, 'warped_valid_mask': warped_valid_mask}
         else:
             return {'image': image, 'mask': mask, 'label': label,
                     'warped_image': warped_image, 'warped_mask': warped_mask, 'warped_label': warped_label,
                     'matched_idx': matched_idx, 'matched_valid': matched_valid,
                     'not_search_mask': not_search_mask,
-                    'warped_grid': warped_grid, 'matched_grid': matched_grid}
+                    'warped_grid': warped_grid, 'matched_grid': matched_grid, 'warped_valid_mask': warped_valid_mask}
 
     def _convert_points_to_label(self, points):
 
@@ -376,10 +377,11 @@ class COCOSuperPointTrainDataset(Dataset):
         valid_mask = valid_mask[nearest_idx]
         invalid = ~valid_mask[np.newaxis, :]
 
-        not_search_mask = (nearest | invalid).astype(np.float32)*10.
+        not_search_mask = (nearest | invalid).astype(np.float32)
         matched_valid = matched_valid & valid_mask
+        valid_mask = valid_mask.astype(np.float32)
 
-        return nearest_idx, matched_valid, not_search_mask, warped_center_grid, matched_grid
+        return nearest_idx, matched_valid, not_search_mask, warped_center_grid, matched_grid, valid_mask
 
     def __compute_warped_center_grid(self, homography, return_org_center_grid=True):
 
