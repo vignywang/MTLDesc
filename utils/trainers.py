@@ -583,7 +583,7 @@ class SuperPoint(TrainerTester):
             warped_mask = data['warped_mask'].to(self.device)
 
             descriptor_mask = data['descriptor_mask'].to(self.device)
-            valid_mask = data['valid_mask'].to(self.device)
+            valid_mask = data['warped_valid_mask'].to(self.device)
 
             shape = image.shape
 
