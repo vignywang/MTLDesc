@@ -5,6 +5,64 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+class MovingAverage(object):
+
+    def __init__(self, max_size=10):
+        self.max_size = max_size
+        self.insert_pos = 0
+        self.queue = []
+
+    def reset(self):
+        self.queue = []
+        self.insert_pos = 0
+
+    def push(self, x):
+        current_size = len(self.queue)
+        if current_size < self.max_size:
+            self.queue.append(x)
+        else:
+            self.queue[int(self.insert_pos % self.max_size)] = x
+            self.insert_pos += 1
+
+    def average(self):
+        current_queue = np.array(self.queue)
+        avg = np.mean(current_queue)
+        return avg
+
+    def current_size(self):
+        return len(self.queue)
+
+
+class PointStatistics(object):
+
+    def __init__(self):
+        self.point_num_list = []
+        self.sample_num = 0
+
+    def reset(self):
+        self.point_num_list = []
+        self.sample_num = 0
+
+    def average(self):
+        avg = 0
+        var = 0
+        std = 0
+
+        for pt_num in self.point_num_list:
+            avg += pt_num
+        avg /= self.sample_num
+
+        for pt_num in self.point_num_list:
+            var += (pt_num-avg)**2
+        var /= self.sample_num
+        std = np.sqrt(var)
+        return avg, std
+
+    def update(self, point_num):
+        self.point_num_list.append(point_num)
+        self.sample_num += 1
+
+
 class HomoAccuracyCalculator(object):
 
     def __init__(self, epsilon, height, width):

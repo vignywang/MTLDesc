@@ -21,6 +21,8 @@ from utils.evaluation_tools import mAPCalculator
 from utils.evaluation_tools import HomoAccuracyCalculator
 from utils.evaluation_tools import RepeatabilityCalculator
 from utils.evaluation_tools import MeanMatchingAccuracy
+from utils.evaluation_tools import PointStatistics
+from utils.evaluation_tools import MovingAverage
 from utils.utils import spatial_nms, Matcher
 from utils.utils import DescriptorHingeLoss
 from utils.utils import DescriptorTripletLoss
@@ -331,13 +333,22 @@ class SuperPoint(TrainerTester):
         self.logger.info('Top k: %d' % self.top_k)
 
         self.illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
+        self.illumination_repeatability_mov = MovingAverage()
         self.illumination_homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon,
                                                                  params.hpatch_height, params.hpatch_width)
+        self.illumination_homo_accuracy_mov = MovingAverage()
         self.illumination_mma = MeanMatchingAccuracy(params.correct_epsilon)
+        self.illumination_mma_mov = MovingAverage()
+
         self.viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
+        self.viewpoint_repeatability_mov = MovingAverage()
         self.viewpoint_homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon,
                                                               params.hpatch_height, params.hpatch_width)
+        self.viewpoint_homo_accuracy_mov = MovingAverage()
         self.viewpoint_mma = MeanMatchingAccuracy(params.correct_epsilon)
+        self.viewpoint_mma_mov = MovingAverage()
+
+        self.point_statistics = PointStatistics()
 
         self.matcher = Matcher()
 
@@ -377,6 +388,9 @@ class SuperPoint(TrainerTester):
     def test_HPatch(self, ckpt_file):
         self.logger.info("*****************************************************")
         self.logger.info("Testing model %s in HPatch" % ckpt_file)
+        self.logger.info("The detection threshold: %.4f" % self.detection_threshold)
+        self.logger.info("The correct thereshold: %d" % self.correct_epsilon)
+        self.logger.info("The top k: %d" % self.top_k)
 
         self._load_model_params(ckpt_file)
         self._test_model()
@@ -624,6 +638,24 @@ class SuperPoint(TrainerTester):
 
         self._test_model()
 
+        illum_homo_moving_acc = self.illumination_homo_accuracy_mov.average()
+        view_homo_moving_acc = self.viewpoint_homo_accuracy_mov.average()
+
+        illum_mma_moving_acc = self.illumination_mma_mov.average()
+        view_mma_moving_acc = self.viewpoint_mma_mov.average()
+
+        illum_repeat_moving_acc = self.illumination_repeatability_mov.average()
+        view_repeat_moving_acc = self.viewpoint_repeatability_mov.average()
+
+        current_size = self.viewpoint_mma_mov.current_size()
+
+        self.logger.info("Moving Average of %d models:" % current_size)
+        self.logger.info("illum_homo_moving_acc=%.4f, view_homo_moving_acc=%.4f" %
+                         (illum_homo_moving_acc, view_homo_moving_acc))
+        self.logger.info("illum_mma_moving_acc=%.4f, view_mma_moving_acc=%.4f" %
+                         (illum_mma_moving_acc, view_mma_moving_acc))
+        self.logger.info("illum_repeat_moving_acc=%.4f, view_repeat_moving_acc=%.4f" %
+                         (illum_repeat_moving_acc, view_repeat_moving_acc))
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
 
@@ -637,6 +669,7 @@ class SuperPoint(TrainerTester):
         self.viewpoint_repeatability.reset()
         self.viewpoint_homo_accuracy.reset()
         self.viewpoint_mma.reset()
+        self.point_statistics.reset()
 
         start_time = time.time()
         count = 0
@@ -649,6 +682,8 @@ class SuperPoint(TrainerTester):
 
             image_pair = np.stack((first_image, second_image), axis=0)
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            # debug released mode use
+            # image_pair /= 255.
 
             _, desp_pair, prob_pair = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
@@ -662,8 +697,8 @@ class SuperPoint(TrainerTester):
             second_prob = prob_pair[1, 0]
 
             # 得到对应的预测点
-            first_point = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
-            second_point = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+            first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+            second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
 
             # 得到点对应的描述子
             select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
@@ -691,6 +726,9 @@ class SuperPoint(TrainerTester):
                       "Please check !")
                 assert False
 
+            # 统计检测的点的数目
+            self.point_statistics.update((first_point_num+second_point_num)/2.)
+
             if i % 10 == 0:
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time() - start_time)))
                 start_time = time.time()
@@ -702,16 +740,25 @@ class SuperPoint(TrainerTester):
         illum_repeat, illum_repeat_sum, illum_num_sum = self.illumination_repeatability.average()
         view_repeat, view_repeat_sum, view_num_sum = self.viewpoint_repeatability.average()
         total_repeat = (illum_repeat_sum + view_repeat_sum) / (illum_num_sum + view_num_sum)
+        self.illumination_repeatability_mov.push(illum_repeat)
+        self.viewpoint_repeatability_mov.push(view_repeat)
 
         # 计算估计的单应变换准确度
         illum_homo_acc, illum_homo_sum, illum_homo_num = self.illumination_homo_accuracy.average()
         view_homo_acc, view_homo_sum, view_homo_num = self.viewpoint_homo_accuracy.average()
         total_homo_acc = (illum_homo_sum + view_homo_sum) / (illum_homo_num + view_homo_num)
+        self.illumination_homo_accuracy_mov.push(illum_homo_acc)
+        self.viewpoint_homo_accuracy_mov.push(view_homo_acc)
 
         # 计算匹配的准确度
         illum_match_acc, illum_match_sum, illum_match_num = self.illumination_mma.average()
         view_match_acc, view_match_sum, view_match_num = self.viewpoint_mma.average()
         total_match_acc = (illum_match_sum + view_match_sum) / (illum_match_num + view_match_num)
+        self.illumination_mma_mov.push(illum_match_acc)
+        self.viewpoint_mma_mov.push(view_match_acc)
+
+        # 统计最终的检测点数目的平均值和方差
+        point_avg, point_std = self.point_statistics.average()
 
         self.logger.info("Homography accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
                          (illum_homo_acc, view_homo_acc, total_homo_acc))
@@ -719,6 +766,7 @@ class SuperPoint(TrainerTester):
                          (illum_match_acc, view_match_acc, total_match_acc))
         self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
                          (illum_repeat, view_repeat, total_repeat))
+        self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
 
     def _generate_predict_point(self, prob, scale=None, top_k=0):
         point_idx = np.where(prob > self.detection_threshold)
@@ -732,10 +780,11 @@ class SuperPoint(TrainerTester):
         for idx in sorted_idx:
             top_k_point.append(point[idx])
         point = np.stack(top_k_point, axis=0)
+        point_num = point.shape[0]
 
         if scale is not None:
             point = point*scale
-        return point
+        return point, point_num
 
     def _generate_predict_descriptor(self, point, desp):
         point = torch.from_numpy(point).to(torch.float)  # 由于只有pytorch有gather的接口，因此将点调整为pytorch的格式
