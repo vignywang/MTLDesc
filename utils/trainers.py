@@ -497,6 +497,8 @@ class SuperPoint(TrainerTester):
         self.logger.info("-----------------------------------------------------")
         self.logger.info("Training epoch %2d begin:" % epoch_idx)
 
+        debug_use = False
+
         stime = time.time()
         for i, data in enumerate(self.train_dataloader):
 
@@ -527,8 +529,14 @@ class SuperPoint(TrainerTester):
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
 
             desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
-            desp_loss = self.descriptor_loss(desp_0, desp_1, matched_idx, matched_valid, not_search_mask, warped_grid,
-                                             matched_grid)
+
+            if debug_use:
+                desp_loss, positive_dist, negative_dist = self.descriptor_loss(
+                    desp_0, desp_1, matched_idx, matched_valid, not_search_mask, warped_grid, matched_grid,
+                    debug_use=True)
+            else:
+                desp_loss = self.descriptor_loss(
+                    desp_0, desp_1, matched_idx, matched_valid, not_search_mask, warped_grid, matched_grid)
 
             loss = point_loss + self.descriptor_weight*desp_loss
 
@@ -545,8 +553,19 @@ class SuperPoint(TrainerTester):
                 point_loss_val = point_loss.item()
                 desp_loss_val = desp_loss.item()
                 loss_val = loss.item()
+
+                if debug_use:
+                    for name, params in self.model.named_parameters():
+                        name_p = name.split('.')[0]
+                        if name_p in ['convDa', 'convDb']:
+                            self.summary_writer.add_histogram('params/'+name, params)
+                            self.summary_writer.add_histogram('grad/'+name, params.grad)
+                    self.summary_writer.add_scalar(
+                        'dist/positive_dist', positive_dist, int(i+self.epoch_length*epoch_idx))
+                    self.summary_writer.add_scalar(
+                        'dist/negative_dist', negative_dist, int(i+self.epoch_length*epoch_idx))
+
                 self.summary_writer.add_histogram('descriptor', desp_pair)
-                self.summary_writer.add_scalar('loss', loss_val)
                 self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
                                  " one step cost %.4fs. "
                                  % (epoch_idx, i, self.epoch_length, loss_val,
