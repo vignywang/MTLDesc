@@ -95,7 +95,7 @@ class DescriptorTripletLoss(object):
         self.device = device
 
     def __call__(self, desp_0, desp_1, matched_idx, matched_valid, not_search_mask,
-                 warped_grid=None, matched_grid=None):
+                 warped_grid=None, matched_grid=None, debug_use=False):
 
         bt, dim, h, w = desp_0.shape
         desp_0 = torch.reshape(desp_0, (bt, dim, h*w)).transpose(1, 2)  # [bt,h*w,dim]
@@ -128,7 +128,12 @@ class DescriptorTripletLoss(object):
         # debug_negative_pair = hardest_negative_pair.detach().cpu().numpy()
         # debug_dist = (torch.sum((positive_pair-hardest_negative_pair)*matched_valid, dim=1)/valid_num).detach().cpu().numpy()
 
-        return loss
+        if debug_use:
+            positive_dist = torch.mean(torch.sum(positive_pair*matched_valid, dim=1)/valid_num)
+            negative_dist = torch.mean(torch.sum(hardest_negative_pair*matched_valid, dim=1)/valid_num)
+            return loss, positive_dist, negative_dist
+        else:
+            return loss
 
 
 class BinaryDescriptorTripletLoss(object):
