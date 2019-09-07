@@ -450,16 +450,17 @@ class SuperPoint(TrainerTester):
             loss_val = loss.item()
             point_loss_val = point_loss.item()
             desp_loss_val = desp_loss.item()
-            quantization_loss_val = quantization_loss.item()
+            # quantization_loss_val = quantization_loss.item()
+            quantization_loss_val = 0
 
-            self.summary_writer.add_scalar('loss/total_loss', loss_val,
-                                           global_step=int(i + epoch_idx * self.epoch_length))
-            self.summary_writer.add_scalar('loss/point_loss', point_loss,
-                                           global_step=int(i + epoch_idx * self.epoch_length))
-            self.summary_writer.add_scalar('loss/desp_loss', desp_loss_val,
-                                           global_step=int(i + epoch_idx * self.epoch_length))
-            self.summary_writer.add_scalar('loss/quantization_loss', quantization_loss_val,
-                                           global_step=int(i + epoch_idx * self.epoch_length))
+            # self.summary_writer.add_scalar('loss/total_loss', loss_val,
+            #                                global_step=int(i + epoch_idx * self.epoch_length))
+            # self.summary_writer.add_scalar('loss/point_loss', point_loss,
+            #                                global_step=int(i + epoch_idx * self.epoch_length))
+            # self.summary_writer.add_scalar('loss/desp_loss', desp_loss_val,
+            #                                global_step=int(i + epoch_idx * self.epoch_length))
+            # self.summary_writer.add_scalar('loss/quantization_loss', quantization_loss_val,
+            #                                global_step=int(i + epoch_idx * self.epoch_length))
 
             if i % self.log_freq == 0:
 
