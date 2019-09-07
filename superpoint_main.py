@@ -30,16 +30,24 @@ class SuperPointParameters(BasicParameters):
         self.descriptor_weight = 1.0
         self.quantization_weight = 0.1
 
+        # HPatch validate/test relating params
+        self.detection_threshold = 0.005
+        self.correct_epsilon = 3
+        self.top_k = 1000
+
+        # debug use
+        # self.log_freq = 10
+
         # homography & photometric relating params using in training
         self.homography_params = {
-            'patch_ratio': 0.8,  # 0.9,
-            'perspective_amplitude_x': 0.2,  # 0.1,
-            'perspective_amplitude_y': 0.2,  # 0.1,
+            'patch_ratio': 0.8,  # 0.8,  # 0.9,
+            'perspective_amplitude_x': 0.3,  # 0.2,  # 0.1,
+            'perspective_amplitude_y': 0.3,  # 0.2,  # 0.1,
             'scaling_sample_num': 5,
             'scaling_amplitude': 0.2,
             'translation_overflow': 0.05,
             'rotation_sample_num': 25,
-            'rotation_max_angle': np.pi/2.,  # np.pi/3,
+            'rotation_max_angle': np.pi/3,  # np.pi/2.,  # np.pi/3,
             'do_perspective': True,
             'do_scaling': True,
             'do_rotation': True,
@@ -88,6 +96,12 @@ def main():
 
     trainer = SuperPoint(params)
     trainer.train()
+
+    # debug use
+    # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24/model_49.pt"
+    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth'
+
+    # trainer.test_HPatch(ckpt_file)
 
 
 if __name__ == '__main__':
