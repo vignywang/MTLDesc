@@ -94,8 +94,7 @@ class DescriptorTripletLoss(object):
     def __init__(self, device):
         self.device = device
 
-    def __call__(self, desp_0, desp_1, matched_idx, matched_valid, not_search_mask,
-                 warped_grid=None, matched_grid=None, debug_use=False):
+    def __call__(self, desp_0, desp_1, matched_idx, matched_valid, not_search_mask, debug_use=False):
 
         bt, dim, h, w = desp_0.shape
         desp_0 = torch.reshape(desp_0, (bt, dim, h*w)).transpose(1, 2)  # [bt,h*w,dim]
@@ -136,12 +135,74 @@ class DescriptorTripletLoss(object):
             return loss
 
 
+class DescriptorTripletLogSigmoidLoss(object):
+
+    def __init__(self, device):
+        self.device = device
+
+    def __call__(self, desp_0, desp_1, matched_idx, matched_valid, not_search_mask, debug_use=False):
+        bt, dim, h, w = desp_0.shape
+        desp_0 = torch.reshape(desp_0, (bt, dim, h*w))  # [bt,dim,h*w]
+        desp_1 = torch.reshape(desp_1, (bt, dim, h*w))
+
+        matched_idx = torch.unsqueeze(matched_idx, dim=1).repeat(1, dim, 1)  # [bt,dim,h*w]
+        desp_1 = torch.gather(desp_1, dim=2, index=matched_idx)  # [bt,dim,h*w]
+
+        cos_similarity = torch.matmul(desp_0.transpose(1, 2), desp_1)  # [bt,h*w,h*w]
+
+        positive_pair = torch.diagonal(cos_similarity, dim1=1, dim2=2)  # [bt,h*w]
+        minus_cos_sim = 1.0 - cos_similarity + not_search_mask*10
+
+        hardest_negative_pair, hardest_negative_idx = torch.min(minus_cos_sim, dim=2)  # [bt,h*w]
+
+        triplet_metric = -f.logsigmoid(positive_pair)-f.logsigmoid(hardest_negative_pair)
+
+        triplet_loss = triplet_metric*matched_valid
+        match_valid_num = torch.sum(matched_valid, dim=1)
+        triplet_loss = torch.mean(torch.sum(triplet_loss, dim=1)/match_valid_num)
+
+        return triplet_loss
+
+
+class BinaryDescriptorHingeLoss(object):
+
+    def __init__(self, device, lambda_d=250, m_p=1, m_n=0.2, ):
+        self.device = device
+        self.lambda_d = torch.tensor(lambda_d, device=self.device)
+        self.m_p = torch.tensor(m_p, device=self.device)
+        self.m_n = torch.tensor(m_n, device=self.device)
+        self.one = torch.tensor(1, device=self.device)
+
+    def __call__(self, desp_0, desp_1, desp_mask, valid_mask):
+        batch_size, dim, h, w = desp_0.shape
+        desp_0 = torch.reshape(desp_0, (batch_size, dim, -1)).transpose(dim0=2, dim1=1)  # [bt, h*w, dim]
+        desp_1 = torch.reshape(desp_1, (batch_size, dim, -1))
+
+        cos_similarity = torch.matmul(desp_0, desp_1)
+        positive = f.logsigmoid(cos_similarity) * self.lambda_d
+        negative = f.logsigmoid(1 - cos_similarity)
+
+        positive_mask = desp_mask
+        negative_mask = self.one - desp_mask
+
+        loss = -positive_mask * positive - negative_mask * negative
+
+        # 考虑warp带来的某些区域没有图像,则其对应的描述子应当无效
+        valid_mask = torch.unsqueeze(valid_mask, dim=1)  # [bt, 1, h*w]
+        total_num = torch.sum(valid_mask, dim=(1, 2))*h*w
+        loss = torch.sum(valid_mask*loss, dim=(1, 2))/total_num
+        loss = torch.mean(loss)
+
+        return loss
+
+
 class BinaryDescriptorTripletLoss(object):
 
     def __init__(self):
         self.gamma = 10
         self.threshold = 1.0
         self.quantization_weight = 1.0
+        self.dim = 256.
 
     def __call__(self, desp_0, desp_1, matched_idx, matched_valid, not_search_mask, valid_mask):
         bt, dim, h, w = desp_0.shape
@@ -151,33 +212,32 @@ class BinaryDescriptorTripletLoss(object):
         matched_idx = torch.unsqueeze(matched_idx, dim=1).repeat(1, dim, 1)  # [bt,dim,h*w]
         desp_1 = torch.gather(desp_1, dim=2, index=matched_idx)  # [bt,dim,h*w]
 
-        cos_similarity = torch.matmul(desp_0.transpose(1, 2), desp_1)
-        dist = torch.sqrt(2.*(1.-cos_similarity)+1e-4)
+        cos_similarity = torch.matmul(desp_0.transpose(1, 2), desp_1)  # [bt,h*w,h*w]
 
-        positive_pair = torch.diagonal(dist, dim1=1, dim2=2)  # [bt,h*w]
-        dist = dist + not_search_mask*10.
+        positive_pair = torch.diagonal(cos_similarity, dim1=1, dim2=2)  # [bt,h*w]
+        minus_cos_sim = 1.0 - cos_similarity + not_search_mask*self.dim
 
-        hardest_negative_pair, hardest_negative_idx = torch.min(dist, dim=2)  # [bt,h*w]
+        hardest_negative_pair, hardest_negative_idx = torch.min(minus_cos_sim, dim=2)  # [bt,h*w]
 
-        triplet_metric = f.relu(self.threshold+positive_pair-hardest_negative_pair)
+        triplet_metric = -f.logsigmoid(positive_pair)-f.logsigmoid(hardest_negative_pair)
 
         triplet_loss = triplet_metric*matched_valid
         match_valid_num = torch.sum(matched_valid, dim=1)
         triplet_loss = torch.mean(torch.sum(triplet_loss, dim=1)/match_valid_num)
 
-        sqrt_1_k = 1./np.sqrt(dim)
-        desp_1_valid_num = torch.sum(valid_mask, dim=1)
+        # sqrt_1_k = 1./np.sqrt(dim)
+        # desp_1_valid_num = torch.sum(valid_mask, dim=1)
 
-        dist_0 = torch.sqrt(2*(1-sqrt_1_k*torch.sum(torch.abs(desp_0), dim=1))+1e-4)
-        dist_1 = torch.sqrt(2*(1-sqrt_1_k*torch.sum(torch.abs(desp_1), dim=1))+1e-4)*valid_mask
+        # dist_0 = torch.sqrt(2*(1-sqrt_1_k*torch.sum(torch.abs(desp_0), dim=1))+1e-4)
+        # dist_1 = torch.sqrt(2*(1-sqrt_1_k*torch.sum(torch.abs(desp_1), dim=1))+1e-4)*valid_mask
 
-        quantization_loss_0 = torch.mean(dist_0, dim=1)
-        quantization_loss_1 = torch.sum(dist_1, dim=1)/desp_1_valid_num
-        quantization_loss = torch.mean(torch.cat((quantization_loss_0, quantization_loss_1)))
+        # quantization_loss_0 = torch.mean(dist_0, dim=1)
+        # quantization_loss_1 = torch.sum(dist_1, dim=1)/desp_1_valid_num
+        # quantization_loss = torch.mean(torch.cat((quantization_loss_0, quantization_loss_1)))
 
         # loss = triplet_loss
         # return loss, cauchy_loss
-        return triplet_loss, quantization_loss
+        return triplet_loss, 0
 
 
 class Matcher(object):
