@@ -26,7 +26,9 @@ from utils.evaluation_tools import MovingAverage
 from utils.utils import spatial_nms, Matcher
 from utils.utils import DescriptorHingeLoss
 from utils.utils import DescriptorTripletLoss
+from utils.utils import DescriptorTripletLogSigmoidLoss
 from utils.utils import BinaryDescriptorTripletLoss
+from utils.utils import BinaryDescriptorHingeLoss
 
 
 # 训练算子基类
@@ -364,6 +366,7 @@ class SuperPoint(TrainerTester):
         self.descriptor_weight = params.descriptor_weight
         self.quantization_weight = params.quantization_weight
         # self.descriptor_weight = 0.
+
         if self.output_type == 'float':
             if self.loss_type == 'pairwise':
                 self.descriptor_loss = DescriptorHingeLoss(device=self.device)
@@ -371,12 +374,22 @@ class SuperPoint(TrainerTester):
             elif self.loss_type == 'triplet':
                 self.descriptor_loss = DescriptorTripletLoss(device=self.device)
                 self._train_func = self._train_use_triplet_loss
+            elif self.loss_type == 'triplet_logsigmoid':
+                self.descriptor_loss = DescriptorTripletLogSigmoidLoss(device=self.device)
+                self._train_func = self._train_use_triplet_loss
             else:
                 self.logger.error('incorrect loss type: %s' % self.loss_type)
                 assert False
         elif self.output_type == 'binary':
-            self.descriptor_loss = BinaryDescriptorTripletLoss()
-            self._train_func = self._train_use_triplet_loss_binary
+            if self.loss_type == 'triplet':
+                self.descriptor_loss = BinaryDescriptorTripletLoss()
+                self._train_func = self._train_use_triplet_loss_binary
+            elif self.loss_type == 'pairwise':
+                self.descriptor_loss = BinaryDescriptorHingeLoss(device=self.device)
+                self._train_func = self._train_use_pairwise_loss_binary
+            else:
+                self.logger.error('incorrect loss type: %s' % self.loss_type)
+                assert False
         else:
             self.logger.error('incorrect output type: %s' % self.output_type)
             assert False
@@ -400,6 +413,74 @@ class SuperPoint(TrainerTester):
 
     def _train_one_epoch(self, epoch_idx):
         self._train_func(epoch_idx)
+
+    def _train_use_pairwise_loss_binary(self, epoch_idx):
+
+        self.model.train()
+
+        self.logger.info("-----------------------------------------------------")
+        self.logger.info("Training epoch %2d begin:" % epoch_idx)
+
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data['image'].to(self.device)
+            label = data['label'].to(self.device)
+            mask = data['mask'].to(self.device)
+
+            warped_image = data['warped_image'].to(self.device)
+            warped_label = data['warped_label'].to(self.device)
+            warped_mask = data['warped_mask'].to(self.device)
+
+            descriptor_mask = data['descriptor_mask'].to(self.device)
+            valid_mask = data['warped_valid_mask'].to(self.device)
+
+            shape = image.shape
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            label_pair = torch.cat((label, warped_label), dim=0)
+            mask_pair = torch.cat((mask, warped_mask), dim=0)
+            logit_pair, desp_pair, _ = self.model(image_pair)
+
+            unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
+            point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
+
+            desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
+            desp_loss = self.descriptor_loss(desp_0, desp_1, descriptor_mask, valid_mask)
+
+            loss = point_loss + self.descriptor_weight*desp_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                point_loss_val = point_loss.item()
+                desp_loss_val = desp_loss.item()
+                loss_val = loss.item()
+                self.summary_writer.add_histogram('descriptor', desp_pair)
+                self.summary_writer.add_scalar('loss', loss_val)
+                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
+                                 " one step cost %.4fs. "
+                                 % (epoch_idx, i, self.epoch_length, loss_val,
+                                    point_loss_val, desp_loss_val,
+                                    (time.time() - stime) / self.params.log_freq,
+                                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
+        self.logger.info("Training epoch %2d done." % epoch_idx)
+        self.logger.info("-----------------------------------------------------")
 
     def _train_use_triplet_loss_binary(self, epoch_idx):
         self.model.train()
@@ -533,11 +614,10 @@ class SuperPoint(TrainerTester):
 
             if debug_use:
                 desp_loss, positive_dist, negative_dist = self.descriptor_loss(
-                    desp_0, desp_1, matched_idx, matched_valid, not_search_mask, warped_grid, matched_grid,
-                    debug_use=True)
+                    desp_0, desp_1, matched_idx, matched_valid, not_search_mask, debug_use=True)
             else:
                 desp_loss = self.descriptor_loss(
-                    desp_0, desp_1, matched_idx, matched_valid, not_search_mask, warped_grid, matched_grid)
+                    desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
 
             loss = point_loss + self.descriptor_weight*desp_loss
 
