@@ -32,9 +32,9 @@ class SuperPointNet(nn.Module):
 
         self.softmax = nn.Softmax(dim=1)
 
-        # self.tanh = nn.Tanh()
+        self.tanh = nn.Tanh()
         # self.hard_tanh = nn.Hardtanh()
-        # self.output_type = output_type
+        self.output_type = output_type
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -61,8 +61,13 @@ class SuperPointNet(nn.Module):
         cDa = self.relu(self.convDa(x))
         desc = self.convDb(cDa)
 
-        dn = torch.norm(desc, p=2, dim=1, keepdim=True)  # Compute the norm.
-        desc = desc.div(dn)  # Divide by norm to normalize.
+        if self.output_type == 'float':
+            dn = torch.norm(desc, p=2, dim=1, keepdim=True)  # Compute the norm.
+            desc = desc.div(dn)  # Divide by norm to normalize.
+        elif self.output_type == 'binary':
+            # desc = self.tanh(desc)
+            dn = torch.norm(desc, p=2, dim=1, keepdim=True)  # Compute the norm.
+            desc = desc.div(dn)  # Divide by norm to normalize.
 
         return logit, desc, prob
 
