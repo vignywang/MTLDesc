@@ -149,6 +149,7 @@ class HomographyAugmentation(object):
 
         if self.do_rotation:
             angles = np.linspace(-self.rotation_max_angle, self.rotation_max_angle, self.rotation_sample_num)
+            # angles = np.random.uniform(-self.rotation_max_angle, self.rotation_max_angle, self.rotation_sample_num)
             angles = np.concatenate((angles, np.zeros((1,))), axis=0)  # in case no rotation is valid
             center = np.mean(pts_2, axis=0, keepdims=True)
             rot_mat = np.reshape(np.stack((np.cos(angles), -np.sin(angles),
