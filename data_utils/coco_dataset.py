@@ -210,7 +210,7 @@ class COCOSuperPointTrainDataset(Dataset):
         self.center_grid = self._generate_center_grid()
 
         self.loss_type = params.loss_type
-        assert self.loss_type in ['triplet', 'pairwise']
+        assert self.loss_type in ['triplet', 'pairwise', 'triplet_logsigmoid']
 
     def __len__(self):
         assert len(self.image_list) == len(self.point_list)
@@ -224,9 +224,10 @@ class COCOSuperPointTrainDataset(Dataset):
         # cv_image_keypoint = draw_image_keypoints(image, point)
 
         # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        # if np.random.rand() < 1.0:  # debug use
         if np.random.rand() < 0.5:
-            warped_image, warped_org_mask, warped_point, homography = \
-                image.copy(), org_mask.copy(), point.copy(), np.eye(3)
+             warped_image, warped_org_mask, warped_point, homography = \
+             image.copy(), org_mask.copy(), point.copy(), np.eye(3)
         else:
             warped_image, warped_org_mask, warped_point, homography = self.homography(image, point, return_homo=True)
         # warped_image, warped_org_mask, warped_point, homography = self.homography(image, point, return_homo=True)
