@@ -336,23 +336,34 @@ class SuperPoint(TrainerTester):
 
         self.illumination_repeatability = RepeatabilityCalculator(params.correct_epsilon)
         self.illumination_repeatability_mov = MovingAverage()
+
         self.illumination_homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon,
                                                                  params.hpatch_height, params.hpatch_width)
+        self.illumination_homo_accuracy_binary = HomoAccuracyCalculator(params.correct_epsilon,
+                                                                        params.hpatch_height, params.hpatch_width)
         self.illumination_homo_accuracy_mov = MovingAverage()
+
         self.illumination_mma = MeanMatchingAccuracy(params.correct_epsilon)
+        self.illumination_mma_binary = MeanMatchingAccuracy(params.correct_epsilon)
         self.illumination_mma_mov = MovingAverage()
 
         self.viewpoint_repeatability = RepeatabilityCalculator(params.correct_epsilon)
         self.viewpoint_repeatability_mov = MovingAverage()
+
         self.viewpoint_homo_accuracy = HomoAccuracyCalculator(params.correct_epsilon,
                                                               params.hpatch_height, params.hpatch_width)
+        self.viewpoint_homo_accuracy_binary = HomoAccuracyCalculator(params.correct_epsilon,
+                                                                     params.hpatch_height, params.hpatch_width)
         self.viewpoint_homo_accuracy_mov = MovingAverage()
+
         self.viewpoint_mma = MeanMatchingAccuracy(params.correct_epsilon)
+        self.viewpoint_mma_binary = MeanMatchingAccuracy(params.correct_epsilon)
         self.viewpoint_mma_mov = MovingAverage()
 
         self.point_statistics = PointStatistics()
 
         self.matcher = Matcher()
+        self.binary_matcher = Matcher(dtype='binary')
 
         # 得到指定的loss构造类型
         self.loss_type = params.loss_type
@@ -396,6 +407,7 @@ class SuperPoint(TrainerTester):
 
         # debug use
         # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24/model_49.pt"
+        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24_log/model_49.pt"
         # self._load_model_params(ckpt_file)
 
     def test_HPatch(self, ckpt_file):
@@ -531,8 +543,8 @@ class SuperPoint(TrainerTester):
             loss_val = loss.item()
             point_loss_val = point_loss.item()
             desp_loss_val = desp_loss.item()
-            # quantization_loss_val = quantization_loss.item()
-            quantization_loss_val = 0
+            quantization_loss_val = quantization_loss.item()
+            # quantization_loss_val = 0
 
             # self.summary_writer.add_scalar('loss/total_loss', loss_val,
             #                                global_step=int(i + epoch_idx * self.epoch_length))
@@ -562,6 +574,11 @@ class SuperPoint(TrainerTester):
                                     (time.time() - stime) / self.params.log_freq,
                                     ))
                 stime = time.time()
+
+            # todo: 正式训练时一定要注释掉
+            # debug use 提前结束训练
+            # if i == (self.epoch_length // 5):
+            #     break
 
         # save the model
         if self.multi_gpus:
@@ -749,6 +766,7 @@ class SuperPoint(TrainerTester):
 
         current_size = self.viewpoint_mma_mov.current_size()
 
+        self.logger.info("---------------------------------------------")
         self.logger.info("Moving Average of %d models:" % current_size)
         self.logger.info("illum_homo_moving_acc=%.4f, view_homo_moving_acc=%.4f" %
                          (illum_homo_moving_acc, view_homo_moving_acc))
@@ -756,6 +774,7 @@ class SuperPoint(TrainerTester):
                          (illum_mma_moving_acc, view_mma_moving_acc))
         self.logger.info("illum_repeat_moving_acc=%.4f, view_repeat_moving_acc=%.4f" %
                          (illum_repeat_moving_acc, view_repeat_moving_acc))
+        self.logger.info("---------------------------------------------")
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
 
@@ -812,15 +831,31 @@ class SuperPoint(TrainerTester):
             pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
                                                    matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
 
+            if self.output_type == 'binary':
+                select_first_desp_binary = np.where(select_first_desp > 0, True, False)
+                select_second_desp_binary = np.where(select_second_desp > 0, True, False)
+                matched_point_binary = self.binary_matcher(first_point, select_first_desp_binary,
+                                                           second_point, select_second_desp_binary)
+                pred_homography_binary, _ = cv.findHomography(matched_point_binary[0][:, np.newaxis, ::-1],
+                                                              matched_point_binary[1][:, np.newaxis, ::-1], cv.RANSAC)
+
             # 对单样本进行测评
             if image_type == 'illumination':
                 self.illumination_repeatability.update(first_point, second_point, gt_homography)
                 self.illumination_homo_accuracy.update(pred_homography, gt_homography)
                 self.illumination_mma.update(gt_homography, matched_point)
+
+                if self.output_type == 'binary':
+                    self.illumination_homo_accuracy_binary.update(pred_homography_binary, gt_homography)
+                    self.illumination_mma_binary.update(gt_homography, matched_point_binary)
             elif image_type == 'viewpoint':
                 self.viewpoint_repeatability.update(first_point, second_point, gt_homography)
                 self.viewpoint_homo_accuracy.update(pred_homography, gt_homography)
                 self.viewpoint_mma.update(gt_homography, matched_point)
+
+                if self.output_type == 'binary':
+                    self.viewpoint_homo_accuracy_binary.update(pred_homography_binary, gt_homography)
+                    self.viewpoint_mma_binary.update(gt_homography, matched_point_binary)
             else:
                 print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
                       "Please check !")
@@ -847,6 +882,10 @@ class SuperPoint(TrainerTester):
         illum_homo_acc, illum_homo_sum, illum_homo_num = self.illumination_homo_accuracy.average()
         view_homo_acc, view_homo_sum, view_homo_num = self.viewpoint_homo_accuracy.average()
         total_homo_acc = (illum_homo_sum + view_homo_sum) / (illum_homo_num + view_homo_num)
+        if self.output_type == 'binary':
+            illum_homo_acc_bi, illum_homo_bi_sum, illum_homo_bi_num = self.illumination_homo_accuracy_binary.average()
+            view_homo_acc_bi, view_homo_bi_sum, view_homo_bi_num = self.viewpoint_homo_accuracy_binary.average()
+            total_homo_acc_bi = (illum_homo_bi_sum + view_homo_bi_sum) / (illum_homo_bi_num + view_homo_bi_num)
         self.illumination_homo_accuracy_mov.push(illum_homo_acc)
         self.viewpoint_homo_accuracy_mov.push(view_homo_acc)
 
@@ -854,19 +893,37 @@ class SuperPoint(TrainerTester):
         illum_match_acc, illum_match_sum, illum_match_num = self.illumination_mma.average()
         view_match_acc, view_match_sum, view_match_num = self.viewpoint_mma.average()
         total_match_acc = (illum_match_sum + view_match_sum) / (illum_match_num + view_match_num)
+        if self.output_type == 'binary':
+            illum_match_acc_bi, illum_match_bi_sum, illum_match_bi_num = self.illumination_mma_binary.average()
+            view_match_acc_bi, view_match_bi_sum, view_match_bi_num = self.viewpoint_mma_binary.average()
+            total_match_acc_bi = (illum_match_bi_sum + view_match_bi_sum) / (illum_match_bi_num + view_match_bi_num)
         self.illumination_mma_mov.push(illum_match_acc)
         self.viewpoint_mma_mov.push(view_match_acc)
 
         # 统计最终的检测点数目的平均值和方差
         point_avg, point_std = self.point_statistics.average()
 
-        self.logger.info("Homography accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
-                         (illum_homo_acc, view_homo_acc, total_homo_acc))
-        self.logger.info("Mean Matching Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f " %
-                         (illum_match_acc, view_match_acc, total_match_acc))
-        self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
-                         (illum_repeat, view_repeat, total_repeat))
-        self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
+        if self.output_type == 'float':
+            self.logger.info("Homography Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                             (illum_homo_acc, view_homo_acc, total_homo_acc))
+            self.logger.info("Mean Matching Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f " %
+                             (illum_match_acc, view_match_acc, total_match_acc))
+            self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                             (illum_repeat, view_repeat, total_repeat))
+            self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
+
+        elif self.output_type == 'binary':
+            self.logger.info("Homography Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                             (illum_homo_acc, view_homo_acc, total_homo_acc))
+            self.logger.info("Homography Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f. (binary)" %
+                             (illum_homo_acc_bi, view_homo_acc_bi, total_homo_acc_bi))
+            self.logger.info("Mean Matching Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f " %
+                             (illum_match_acc, view_match_acc, total_match_acc))
+            self.logger.info("Mean Matching Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f. (binary) " %
+                             (illum_match_acc_bi, view_match_acc_bi, total_match_acc_bi))
+            self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                             (illum_repeat, view_repeat, total_repeat))
+            self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
 
     def _generate_predict_point(self, prob, scale=None, top_k=0):
         point_idx = np.where(prob > self.detection_threshold)
