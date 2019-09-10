@@ -25,6 +25,8 @@ class MovingAverage(object):
             self.insert_pos += 1
 
     def average(self):
+        if len(self.queue) == 0:
+            return 0
         current_queue = np.array(self.queue)
         avg = np.mean(current_queue)
         return avg
