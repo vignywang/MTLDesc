@@ -78,6 +78,8 @@ class HomoAccuracyCalculator(object):
         self.sum_sample_num = 0
 
     def average(self):
+        if self.sum_sample_num == 0:
+            return 0, 0, 0
         return self.sum_accuracy / self.sum_sample_num, self.sum_accuracy, self.sum_sample_num
 
     def update(self, pred_homography, gt_homography):
@@ -151,6 +153,8 @@ class MeanMatchingAccuracy(object):
         """
         Returns: 平均匹配准确度
         """
+        if self.sum_sample_num == 0:
+            return 0, 0, 0
         return self.sum_accuracy/self.sum_sample_num, self.sum_accuracy, self.sum_sample_num
 
 
@@ -170,6 +174,8 @@ class RepeatabilityCalculator(object):
         self.sum_sample_num += 1
 
     def average(self):
+        if self.sum_sample_num == 0:
+            return 0, 0, 0
         average_repeatability = self.sum_repeatability/self.sum_sample_num
         return average_repeatability, self.sum_repeatability, self.sum_sample_num
 
