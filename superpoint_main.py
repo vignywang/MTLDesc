@@ -1,6 +1,7 @@
 # 
 # Created by ZhangYuyang on 2019/8/23
 #
+import random
 import torch
 import argparse
 import numpy as np
@@ -8,11 +9,15 @@ import numpy as np
 from basic_parameters import BasicParameters
 from utils.trainers import SuperPoint
 
-# make the result reproducible
-torch.manual_seed(3928)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-np.random.seed(2933)
+
+def setup_seed():
+    # make the result reproducible
+    torch.manual_seed(3928)
+    torch.cuda.manual_seed_all(2342)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(2933)
+    random.seed(2312)
 
 
 class SuperPointParameters(BasicParameters):
@@ -28,7 +33,7 @@ class SuperPointParameters(BasicParameters):
 
         # training param
         self.descriptor_weight = 1.0
-        self.quantization_weight = 0.1
+        self.quantization_weight = 0.5
 
         # HPatch validate/test relating params
         self.detection_threshold = 0.005
@@ -91,6 +96,7 @@ class SuperPointParameters(BasicParameters):
 
 
 def main():
+    setup_seed()
     params = SuperPointParameters()
     params.initialize()
 
