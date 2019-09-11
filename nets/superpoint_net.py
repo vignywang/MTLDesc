@@ -87,55 +87,96 @@ class MagicPointNet(BasicSuperPointNet):
         super(MagicPointNet, self).__init__()
 
     def forward(self, x):
-        x = self._encoder(x)
-        logit, prob = self._detector_head(x)
+        x = self.relu(self.conv1a(x))
+        x = self.relu(self.conv1b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv2a(x))
+        x = self.relu(self.conv2b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv3a(x))
+        x = self.relu(self.conv3b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv4a(x))
+        x = self.relu(self.conv4b(x))
+
+        cPa = self.relu(self.convPa(x))
+        logit = self.convPb(cPa)
+        prob = self.softmax(logit)[:, :-1, :, :]
+
         return logit, prob
 
 
-class SuperPointNet(BasicSuperPointNet):
+class SuperPointNetFloat(BasicSuperPointNet):
 
-    def __init__(self, output_type='float', loss_type='triplet'):
-        super(SuperPointNet, self).__init__()
-        if output_type == 'float':
-            self._forward = self._forward_float_triplet
-        elif output_type == 'binary':
-            if loss_type == 'triplet':
-                self._forward = self._forward_float_triplet  # same as output_type='float'
-            elif loss_type == 'pairwise':
-                self._forward = self._forward_binary_pairwise_direct
-            else:
-                assert False
-        else:
-            assert False
+    def __init__(self):
+        super(SuperPointNetFloat, self).__init__()
 
-    def _forward_float_triplet(self, x):
-        x = self._encoder(x)
-        logit, prob = self._detector_head(x)
+    def forward(self, x):
+        x = self.relu(self.conv1a(x))
+        x = self.relu(self.conv1b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv2a(x))
+        x = self.relu(self.conv2b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv3a(x))
+        x = self.relu(self.conv3b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv4a(x))
+        x = self.relu(self.conv4b(x))
 
-        feature = self._descriptor_head(x)
+        # detect head
+        cPa = self.relu(self.convPa(x))
+        logit = self.convPb(cPa)
+        prob = self.softmax(logit)[:, :-1, :, :]
+
+        # descriptor head
+        cDa = self.relu(self.convDa(x))
+        feature = self.convDb(cDa)
+
         dn = torch.norm(feature, p=2, dim=1, keepdim=True)
         desc = feature.div(dn)
+        # desc = hash_layer(feature)
 
-        return logit, desc, prob, feature
+        return logit, desc, prob, None
 
-    def _forward_binary_pairwise_direct(self, x):
-        x = self._encoder(x)
-        logit, prob = self._detector_head(x)
 
-        feature = self._descriptor_head(x)
+class SuperPointNetBinary(BasicSuperPointNet):
+
+    def __init__(self):
+        super(SuperPointNetBinary, self).__init__()
+
+    def forward(self, x):
+        x = self.relu(self.conv1a(x))
+        x = self.relu(self.conv1b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv2a(x))
+        x = self.relu(self.conv2b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv3a(x))
+        x = self.relu(self.conv3b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv4a(x))
+        x = self.relu(self.conv4b(x))
+
+        # detect head
+        cPa = self.relu(self.convPa(x))
+        logit = self.convPb(cPa)
+        prob = self.softmax(logit)[:, :-1, :, :]
+
+        # descriptor head
+        cDa = self.relu(self.convDa(x))
+        feature = self.convDb(cDa)
+
         dn = torch.norm(feature, p=2, dim=1, keepdim=True)
         feature = feature.div(dn)
         desc = hash_layer(feature)
 
         return logit, desc, prob, feature
 
-    def forward(self, x):
-        return self._forward(x)
-
 
 if __name__ == "__main__":
     random_input = torch.randn((1, 1, 240, 320))
-    model = SuperPointNet()
+    model = SuperPointNetFloat()
     result = model(random_input)
 
 
