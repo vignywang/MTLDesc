@@ -7,6 +7,26 @@ import torch
 import torch.nn.functional as f
 
 
+def compute_batched_dist(x, y, hamming=False):
+    # x:[bt,256,n], y:[bt,256,n]
+    cos_similarity = torch.matmul(x.transpose(1, 2), y)  # [bt,n,n]
+    if hamming is False:
+        square_norm_x = (torch.norm(x, dim=1, keepdim=True).transpose(1, 2))**2  # [bt,n,1]
+        square_norm_y = (torch.norm(y, dim=1, keepdim=True))**2  # [bt,1,n]
+        dist = torch.sqrt((square_norm_x + square_norm_y - 2 * cos_similarity + 1e-4))
+        return dist
+    else:
+        dist = 0.5*(256-cos_similarity)
+    return dist
+
+
+def compute_cos_similarity_binary(x, y, k=256):
+    x = x.div(np.sqrt(k))
+    y = y.div(np.sqrt(k))
+    cos_similarity = torch.matmul(x.transpose(1, 2), y)
+    return cos_similarity
+
+
 def spatial_nms(prob, kernel_size=9):
     """
     利用max_pooling对预测的特征点的概率图进行非极大值抑制
@@ -117,7 +137,7 @@ class DescriptorTripletLoss(object):
             return loss
 
 
-class BinaryDescriptorHingeLoss(object):
+class BinaryDescriptorPairwiseLoss(object):
 
     def __init__(self, device, lambda_d=250, m_p=1, m_n=0.2, ):
         self.device = device
@@ -126,27 +146,38 @@ class BinaryDescriptorHingeLoss(object):
         self.m_n = torch.tensor(m_n, device=self.device)
         self.one = torch.tensor(1, device=self.device)
 
-    def __call__(self, desp_0, desp_1, desp_mask, valid_mask):
+    def __call__(self, desp_0, desp_1, feature_0, feature_1, desp_mask, valid_mask):
         batch_size, dim, h, w = desp_0.shape
-        desp_0 = torch.reshape(desp_0, (batch_size, dim, -1)).transpose(dim0=2, dim1=1)  # [bt, h*w, dim]
+        desp_0 = torch.reshape(desp_0, (batch_size, dim, -1))
         desp_1 = torch.reshape(desp_1, (batch_size, dim, -1))
+        feature_0 = torch.reshape(feature_0, (batch_size, dim, -1))
+        feature_1 = torch.reshape(feature_1, (batch_size, dim, -1))
 
-        cos_similarity = torch.matmul(desp_0, desp_1)
-        positive = f.logsigmoid(cos_similarity) * self.lambda_d
-        negative = f.logsigmoid(1 - cos_similarity)
+        cos_similarity = compute_cos_similarity_binary(desp_0, desp_1)
+        positive = -f.logsigmoid(cos_similarity) * self.lambda_d
+        negative = -f.logsigmoid(1. - cos_similarity)
 
         positive_mask = desp_mask
         negative_mask = self.one - desp_mask
 
-        loss = -positive_mask * positive - negative_mask * negative
+        pairwise_loss = positive_mask * positive + negative_mask * negative
 
         # 考虑warp带来的某些区域没有图像,则其对应的描述子应当无效
-        valid_mask = torch.unsqueeze(valid_mask, dim=1)  # [bt, 1, h*w]
-        total_num = torch.sum(valid_mask, dim=(1, 2))*h*w
-        loss = torch.sum(valid_mask*loss, dim=(1, 2))/total_num
-        loss = torch.mean(loss)
+        total_num = torch.sum(valid_mask, dim=1)*h*w
+        pairwise_loss = torch.sum(valid_mask.unsqueeze(dim=1)*pairwise_loss, dim=(1, 2))/total_num
+        pairwise_loss = torch.mean(pairwise_loss)
 
-        return loss
+        sqrt_1_k = 1./np.sqrt(dim)
+        desp_1_valid_num = torch.sum(valid_mask, dim=1)
+
+        ones_1_k = sqrt_1_k * torch.ones_like(feature_0)
+        quantization_loss_0 = torch.norm((torch.abs(feature_0)-ones_1_k), p=1, dim=1)
+        quantization_loss_1 = torch.norm((torch.abs(feature_1)-ones_1_k), p=1, dim=1)
+        quantization_loss_0 = torch.mean(quantization_loss_0, dim=1)
+        quantization_loss_1 = torch.sum(quantization_loss_1*valid_mask, dim=1)/desp_1_valid_num
+        quantization_loss = torch.mean(torch.cat((quantization_loss_0, quantization_loss_1)))
+
+        return pairwise_loss, quantization_loss
 
 
 class BinaryDescriptorTripletLoss(object):
@@ -183,6 +214,53 @@ class BinaryDescriptorTripletLoss(object):
         ones_1_k = sqrt_1_k * torch.ones_like(desp_0)
         quantization_loss_0 = torch.norm((torch.abs(desp_0)-ones_1_k), p=1, dim=1)
         quantization_loss_1 = torch.norm((torch.abs(desp_1)-ones_1_k), p=1, dim=1)
+        quantization_loss_0 = torch.mean(quantization_loss_0, dim=1)
+        quantization_loss_1 = torch.sum(quantization_loss_1*valid_mask, dim=1)/desp_1_valid_num
+        quantization_loss = torch.mean(torch.cat((quantization_loss_0, quantization_loss_1)))
+
+        return triplet_loss, quantization_loss
+
+
+class BinaryDescriptorTripletDirectLoss(object):
+
+    def __init__(self):
+        self.gamma = 10
+        self.threshold = 1.0
+        self.quantization_weight = 1.0
+        self.dim = 256.
+
+    def __call__(self, desp_0, desp_1, feature_0, feature_1, matched_idx, matched_valid, not_search_mask, valid_mask):
+        bt, dim, h, w = desp_0.shape
+        norm_factor = np.sqrt(dim)
+        desp_0 = torch.reshape(desp_0, (bt, dim, h*w))  # [bt,dim,h*w]
+        desp_1 = torch.reshape(desp_1, (bt, dim, h*w))
+        feature_0 = torch.reshape(feature_0, (bt, dim, h*w))
+        feature_1 = torch.reshape(feature_1, (bt, dim, h*w))
+
+        matched_idx = torch.unsqueeze(matched_idx, dim=1).repeat(1, dim, 1)  # [bt,dim,h*w]
+        desp_1 = torch.gather(desp_1, dim=2, index=matched_idx)  # [bt,dim,h*w]
+        feature_1 = torch.gather(feature_1, dim=2, index=matched_idx)
+
+        desp_0 = desp_0/norm_factor
+        desp_1 = desp_1/norm_factor
+        cos_similarity = torch.matmul(desp_0.transpose(1, 2), desp_1)
+
+        positive_pair = torch.diagonal(cos_similarity, dim1=1, dim2=2)  # [bt,h*w]
+        minus_cos_sim = 1.0 - cos_similarity + not_search_mask*10
+        hardest_negative_pair, hardest_negative_idx = torch.min(minus_cos_sim, dim=2)  # [bt,h*w]
+
+        triplet_metric = -f.logsigmoid(positive_pair)-f.logsigmoid(hardest_negative_pair)
+
+        triplet_loss = triplet_metric*matched_valid
+        match_valid_num = torch.sum(matched_valid, dim=1)
+        triplet_loss = torch.mean(torch.sum(triplet_loss, dim=1)/match_valid_num)
+
+        sqrt_1_k = 1./np.sqrt(dim)
+        desp_1_valid_num = torch.sum(valid_mask, dim=1)
+
+        ones_1_k = sqrt_1_k * torch.ones_like(feature_0)
+        quantization_loss_0 = torch.norm((torch.abs(feature_0)-ones_1_k), p=1, dim=1)
+        quantization_loss_1 = torch.norm((torch.abs(feature_1)-ones_1_k), p=1, dim=1)
         quantization_loss_0 = torch.mean(quantization_loss_0, dim=1)
         quantization_loss_1 = torch.sum(quantization_loss_1*valid_mask, dim=1)/desp_1_valid_num
         quantization_loss = torch.mean(torch.cat((quantization_loss_0, quantization_loss_1)))
