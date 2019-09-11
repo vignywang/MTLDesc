@@ -16,6 +16,7 @@ from data_utils.coco_dataset import COCOAdaptionTrainDataset
 from data_utils.coco_dataset import COCOAdaptionValDataset
 from data_utils.coco_dataset import COCOSuperPointTrainDataset
 from data_utils.hpatch_dataset import HPatchDataset
+from nets.superpoint_net import MagicPointNet
 from nets.superpoint_net import SuperPointNet
 from utils.evaluation_tools import mAPCalculator
 from utils.evaluation_tools import HomoAccuracyCalculator
@@ -28,7 +29,8 @@ from utils.utils import DescriptorHingeLoss
 from utils.utils import DescriptorTripletLoss
 from utils.utils import DescriptorTripletLogSigmoidLoss
 from utils.utils import BinaryDescriptorTripletLoss
-from utils.utils import BinaryDescriptorHingeLoss
+from utils.utils import BinaryDescriptorPairwiseLoss
+from utils.utils import BinaryDescriptorTripletDirectLoss
 
 
 # 训练算子基类
@@ -65,18 +67,7 @@ class TrainerTester(object):
         # 初始化summary writer
         self.summary_writer = SummaryWriter(self.ckpt_dir)
 
-        # 初始化模型
-        self.output_type = params.output_type
-        if self.output_type == 'float':
-            self.model = SuperPointNet()
-        elif self.output_type == 'binary':
-            self.model = SuperPointNet('binary')
-        else:
-            self.logger.error('Incorrect output_type: %s' % self.output_type)
-
-        if self.multi_gpus:
-            self.model = torch.nn.DataParallel(self.model)
-        self.model.to(self.device)
+        self.model = self._initialize_model()
 
         # 初始化优化器算子
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
@@ -102,6 +93,9 @@ class TrainerTester(object):
 
         end_time = time.time()
         self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
+
+    def _initialize_model(self):
+        raise NotImplementedError
 
     def _train_one_epoch(self, epoch_idx):
         raise NotImplementedError
@@ -148,6 +142,14 @@ class MagicPointSynthetic(TrainerTester):
         # 初始化验证算子
         self.mAP_calculator = mAPCalculator()
 
+    def _initialize_model(self):
+        # 初始化模型
+        model = MagicPointNet()
+        if self.multi_gpus:
+            model = torch.nn.DataParallel(model)
+        model = model.to(self.device)
+        return model
+
     def test(self, ckpt_file):
         self.logger.info("*****************************************************")
         self.logger.info("Testing model %s" % ckpt_file)
@@ -188,7 +190,7 @@ class MagicPointSynthetic(TrainerTester):
         image = np.expand_dims(np.expand_dims(cv_image, 0), 0)
         image = torch.from_numpy(image).to(torch.float).to(self.device)
 
-        _, _, prob = self.model(image)
+        _, prob = self.model(image)
         prob = f.pixel_shuffle(prob, 8)
         # 进行非极大值抑制
         prob = spatial_nms(prob)
@@ -226,7 +228,7 @@ class MagicPointSynthetic(TrainerTester):
             label = data['label'].to(self.device)
             mask = data['mask'].to(self.device)
 
-            logit, _, _ = self.model(image)
+            logit, _, = self.model(image)
             unmasked_loss = self.cross_entropy_loss(logit, label)
             loss = self._compute_masked_loss(unmasked_loss, mask)
 
@@ -284,7 +286,7 @@ class MagicPointSynthetic(TrainerTester):
 
             image = image.to(self.device).unsqueeze(dim=0)
             # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
-            _, _, prob = self.model(image)
+            _, prob = self.model(image)
             # 将概率图展开为原始图像大小
             prob = f.pixel_shuffle(prob, 8)
             # 进行非极大值抑制
@@ -396,7 +398,7 @@ class SuperPoint(TrainerTester):
                 self.descriptor_loss = BinaryDescriptorTripletLoss()
                 self._train_func = self._train_use_triplet_loss_binary
             elif self.loss_type == 'pairwise':
-                self.descriptor_loss = BinaryDescriptorHingeLoss(device=self.device)
+                self.descriptor_loss = BinaryDescriptorPairwiseLoss(device=self.device)
                 self._train_func = self._train_use_pairwise_loss_binary
             else:
                 self.logger.error('incorrect loss type: %s' % self.loss_type)
@@ -406,9 +408,19 @@ class SuperPoint(TrainerTester):
             assert False
 
         # debug use
-        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24/model_49.pt"
-        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24_log/model_49.pt"
+        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24_3/model_49.pt"
         # self._load_model_params(ckpt_file)
+
+    def _initialize_model(self):
+        # 初始化模型
+        output_type = self.params.output_type
+        loss_type = self.params.loss_type
+        model = SuperPointNet(output_type=output_type, loss_type=loss_type)
+
+        if self.multi_gpus:
+            model = torch.nn.DataParallel(model)
+        model = model.to(self.device)
+        return model
 
     def test_HPatch(self, ckpt_file):
         self.logger.info("*****************************************************")
@@ -452,15 +464,17 @@ class SuperPoint(TrainerTester):
             image_pair = torch.cat((image, warped_image), dim=0)
             label_pair = torch.cat((label, warped_label), dim=0)
             mask_pair = torch.cat((mask, warped_mask), dim=0)
-            logit_pair, desp_pair, _ = self.model(image_pair)
+            logit_pair, desp_pair, _, feature_pair = self.model(image_pair)
 
             unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
 
             desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
-            desp_loss = self.descriptor_loss(desp_0, desp_1, descriptor_mask, valid_mask)
+            feature_0, feature_1 = torch.split(feature_pair, shape[0], dim=0)
+            desp_loss, quantization_loss = self.descriptor_loss(desp_0, desp_1, feature_0, feature_1,
+                                                                descriptor_mask, valid_mask)
 
-            loss = point_loss + self.descriptor_weight*desp_loss
+            loss = point_loss + self.descriptor_weight*desp_loss + self.quantization_weight*quantization_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -470,20 +484,45 @@ class SuperPoint(TrainerTester):
 
             self.optimizer.step()
 
+            loss_val = loss.item()
+            point_loss_val = point_loss.item()
+            desp_loss_val = desp_loss.item()
+            quantization_loss_val = quantization_loss.item()
+            # quantization_loss_val = 0
+
+            self.summary_writer.add_scalar('loss/total_loss', loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/point_loss', point_loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/desp_loss', desp_loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/quantization_loss', quantization_loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+
             if i % self.log_freq == 0:
 
-                point_loss_val = point_loss.item()
-                desp_loss_val = desp_loss.item()
-                loss_val = loss.item()
-                self.summary_writer.add_histogram('descriptor', desp_pair)
-                self.summary_writer.add_scalar('loss', loss_val)
-                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
+                self.summary_writer.add_histogram('descriptor', desp_pair,
+                                                  global_step=int(i+epoch_idx*self.epoch_length))
+
+                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: "
+                                 "loss = %.4f, "
+                                 "point_loss = %.4f, "
+                                 "desp_loss = %.4f, "
+                                 "quantization_loss = %.4f, "
                                  " one step cost %.4fs. "
-                                 % (epoch_idx, i, self.epoch_length, loss_val,
-                                    point_loss_val, desp_loss_val,
+                                 % (epoch_idx, i, self.epoch_length,
+                                    loss_val,
+                                    point_loss_val,
+                                    desp_loss_val,
+                                    quantization_loss_val,
                                     (time.time() - stime) / self.params.log_freq,
                                     ))
                 stime = time.time()
+
+            # todo: 正式训练时一定要注释掉
+            # debug use 提前结束训练
+            # if i == (self.epoch_length // 10):
+            #     break
 
         # save the model
         if self.multi_gpus:
@@ -521,7 +560,7 @@ class SuperPoint(TrainerTester):
             image_pair = torch.cat((image, warped_image), dim=0)
             label_pair = torch.cat((label, warped_label), dim=0)
             mask_pair = torch.cat((mask, warped_mask), dim=0)
-            logit_pair, desp_pair, _ = self.model(image_pair)
+            logit_pair, desp_pair, _, _ = self.model(image_pair)
 
             unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
@@ -529,6 +568,10 @@ class SuperPoint(TrainerTester):
             desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
             desp_loss, quantization_loss = self.descriptor_loss(
                 desp_0, desp_1, matched_idx, matched_valid, not_search_mask, desp_1_valid_mask)
+
+            # feature_0, feature_1 = torch.split(feature_pair, shape[0], dim=0)
+            # desp_loss, quantization_loss = self.descriptor_loss(
+            #     desp_0, desp_1, feature_0, feature_1, matched_idx, matched_valid, not_search_mask, desp_1_valid_mask)
 
             loss = point_loss + self.descriptor_weight*desp_loss + self.quantization_weight*quantization_loss
 
@@ -546,14 +589,14 @@ class SuperPoint(TrainerTester):
             quantization_loss_val = quantization_loss.item()
             # quantization_loss_val = 0
 
-            # self.summary_writer.add_scalar('loss/total_loss', loss_val,
-            #                                global_step=int(i + epoch_idx * self.epoch_length))
-            # self.summary_writer.add_scalar('loss/point_loss', point_loss,
-            #                                global_step=int(i + epoch_idx * self.epoch_length))
-            # self.summary_writer.add_scalar('loss/desp_loss', desp_loss_val,
-            #                                global_step=int(i + epoch_idx * self.epoch_length))
-            # self.summary_writer.add_scalar('loss/quantization_loss', quantization_loss_val,
-            #                                global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/total_loss', loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/point_loss', point_loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/desp_loss', desp_loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/quantization_loss', quantization_loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
 
             if i % self.log_freq == 0:
 
@@ -622,7 +665,7 @@ class SuperPoint(TrainerTester):
             image_pair = torch.cat((image, warped_image), dim=0)
             label_pair = torch.cat((label, warped_label), dim=0)
             mask_pair = torch.cat((mask, warped_mask), dim=0)
-            logit_pair, desp_pair, _ = self.model(image_pair)
+            logit_pair, desp_pair, _, _ = self.model(image_pair)
 
             unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
@@ -707,7 +750,7 @@ class SuperPoint(TrainerTester):
             image_pair = torch.cat((image, warped_image), dim=0)
             label_pair = torch.cat((label, warped_label), dim=0)
             mask_pair = torch.cat((mask, warped_mask), dim=0)
-            logit_pair, desp_pair, _ = self.model(image_pair)
+            logit_pair, desp_pair, _, _ = self.model(image_pair)
 
             unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
@@ -804,7 +847,7 @@ class SuperPoint(TrainerTester):
             # debug released mode use
             # image_pair /= 255.
 
-            _, desp_pair, prob_pair = self.model(image_pair)
+            _, desp_pair, prob_pair, _ = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
             prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold*2+1))
 
