@@ -33,15 +33,13 @@ class SuperPointParameters(BasicParameters):
 
         # training param
         self.descriptor_weight = 1.0
-        self.quantization_weight = 0.5
+        # self.quantization_weight = 0.005  # for naive triple binary loss
+        self.quantization_weight = 0.0  # for straight-through binary loss
 
         # HPatch validate/test relating params
         self.detection_threshold = 0.005
         self.correct_epsilon = 3
         self.top_k = 1000
-
-        # debug use
-        # self.log_freq = 10
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -85,12 +83,14 @@ class SuperPointParameters(BasicParameters):
         parser = argparse.ArgumentParser(description="Pytorch Training")
         parser.add_argument("--lr", type=float, default=0.001)
         parser.add_argument("--batch_size", type=int, default=32)
+        parser.add_argument("--epoch_num", type=int, default=50)
         parser.add_argument("--gpus", type=str, default='0')
         parser.add_argument("--prefix", type=str, default='superpoint')
         parser.add_argument("--num_workers", type=int, default=8)
         parser.add_argument("--coco_pseudo_idx", type=str, default='0')
         parser.add_argument("--loss_type", type=str, default='triplet')
         parser.add_argument("--output_type", type=str, default='float')
+        parser.add_argument("--log_freq", type=int, default=100)
 
         return parser.parse_args()
 
