@@ -209,8 +209,8 @@ class COCOSuperPointTrainDataset(Dataset):
         self.photometric = PhotometricAugmentation(**params.photometric_params)
         self.center_grid = self._generate_center_grid()
 
-        self.loss_type = params.loss_type
-        assert self.loss_type in ['triplet', 'pairwise', 'triplet_logsigmoid']
+        self.loss_type = params.loss_type.split('_')[0]
+        assert self.loss_type in ['triplet', 'pairwise']
 
     def __len__(self):
         assert len(self.image_list) == len(self.point_list)

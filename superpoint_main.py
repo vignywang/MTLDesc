@@ -29,7 +29,11 @@ class SuperPointParameters(BasicParameters):
         self.log_root = './superpoint_log'
         self.epoch_num = 50
         self.coco_pseudo_idx = '0'
-        self.loss_type = 'triplet'  # 'pairwise'
+
+        # 包括 float, binary
+        self.output_type = 'binary'
+        # 包括 triplet_f, pairwise_f, triplet_b, triplet_direct_b, pairwise_b, 后缀表述float或binary的loss type
+        self.loss_type = 'triplet'
 
         # training param
         self.descriptor_weight = 1.0

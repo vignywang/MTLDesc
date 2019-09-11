@@ -375,13 +375,13 @@ class SuperPoint(TrainerTester):
         self.matcher = None
         if self.output_type == 'float':
             self.matcher = Matcher('float')
-            if self.loss_type == 'pairwise':
+            if self.loss_type == 'pairwise_f':
                 self.descriptor_loss = DescriptorHingeLoss(device=self.device)
                 self._train_func = self._train_use_pairwise_loss
-            elif self.loss_type == 'triplet':
+            elif self.loss_type == 'triplet_f':
                 self.descriptor_loss = DescriptorTripletLoss(device=self.device)
                 self._train_func = self._train_use_triplet_loss
-            elif self.loss_type == 'triplet_logsigmoid':
+            elif self.loss_type == 'triplet_logsigmoid_f':
                 self.descriptor_loss = DescriptorTripletLogSigmoidLoss(device=self.device)
                 self._train_func = self._train_use_triplet_loss
             else:
@@ -389,13 +389,13 @@ class SuperPoint(TrainerTester):
                 assert False
         elif self.output_type == 'binary':
             self.matcher = Matcher('binary')
-            if self.loss_type == 'triplet':
+            if self.loss_type == 'triplet_b':
                 self.descriptor_loss = BinaryDescriptorTripletLoss()
                 self._train_func = self._train_use_triplet_loss_binary
-            elif self.loss_type == 'triplet_direct':
+            elif self.loss_type == 'triplet_direct_b':
                 self.descriptor_loss = BinaryDescriptorTripletDirectLoss()
                 self._train_func = self._train_use_direct_triplet_loss_binary
-            elif self.loss_type == 'pairwise':
+            elif self.loss_type == 'pairwise_b':
                 self.descriptor_loss = BinaryDescriptorPairwiseLoss(device=self.device)
                 self._train_func = self._train_use_pairwise_loss_binary
             else:
@@ -416,13 +416,15 @@ class SuperPoint(TrainerTester):
         if output_type == 'float':
             model = SuperPointNetFloat()
         elif output_type == 'binary':
-            if loss_type == 'triplet':
+            if loss_type == 'triplet_b':
                 model = SuperPointNetFloat()  # same as float
-            elif loss_type in ['triplet_direct', 'pairwise']:
+            elif loss_type in ['triplet_direct_b', 'pairwise_b']:
                 model = SuperPointNetBinary()
             else:
+                self.logger.error('incorrect loss type: %s' % loss_type)
                 assert False
         else:
+            self.logger.error('incorrect output type: %s' % output_type)
             assert False
 
         if self.multi_gpus:
