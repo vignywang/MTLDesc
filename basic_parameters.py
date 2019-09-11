@@ -51,6 +51,7 @@ class BasicParameters(object):
 
         # model params
         self.output_type = 'float'
+        self.loss_type = 'triplet'
 
         # homography & photometric relating params using in training
         self.homography_params = {
