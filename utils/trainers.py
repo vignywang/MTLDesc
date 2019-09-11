@@ -17,7 +17,8 @@ from data_utils.coco_dataset import COCOAdaptionValDataset
 from data_utils.coco_dataset import COCOSuperPointTrainDataset
 from data_utils.hpatch_dataset import HPatchDataset
 from nets.superpoint_net import MagicPointNet
-from nets.superpoint_net import SuperPointNet
+from nets.superpoint_net import SuperPointNetFloat
+from nets.superpoint_net import SuperPointNetBinary
 from utils.evaluation_tools import mAPCalculator
 from utils.evaluation_tools import HomoAccuracyCalculator
 from utils.evaluation_tools import RepeatabilityCalculator
@@ -391,6 +392,9 @@ class SuperPoint(TrainerTester):
             if self.loss_type == 'triplet':
                 self.descriptor_loss = BinaryDescriptorTripletLoss()
                 self._train_func = self._train_use_triplet_loss_binary
+            elif self.loss_type == 'triplet_direct':
+                self.descriptor_loss = BinaryDescriptorTripletDirectLoss()
+                self._train_func = self._train_use_direct_triplet_loss_binary
             elif self.loss_type == 'pairwise':
                 self.descriptor_loss = BinaryDescriptorPairwiseLoss(device=self.device)
                 self._train_func = self._train_use_pairwise_loss_binary
@@ -409,7 +413,17 @@ class SuperPoint(TrainerTester):
         # 初始化模型
         output_type = self.params.output_type
         loss_type = self.params.loss_type
-        model = SuperPointNet(output_type=output_type, loss_type=loss_type)
+        if output_type == 'float':
+            model = SuperPointNetFloat()
+        elif output_type == 'binary':
+            if loss_type == 'triplet':
+                model = SuperPointNetFloat()  # same as float
+            elif loss_type in ['triplet_direct', 'pairwise']:
+                model = SuperPointNetBinary()
+            else:
+                assert False
+        else:
+            assert False
 
         if self.multi_gpus:
             model = torch.nn.DataParallel(model)
@@ -615,6 +629,102 @@ class SuperPoint(TrainerTester):
             # todo: 正式训练时一定要注释掉
             # debug use 提前结束训练
             # if i == (self.epoch_length // 5):
+            #     break
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
+        self.logger.info("Training epoch %2d done." % epoch_idx)
+        self.logger.info("-----------------------------------------------------")
+
+    def _train_use_direct_triplet_loss_binary(self, epoch_idx):
+        self.model.train()
+
+        self.logger.info("-----------------------------------------------------")
+        self.logger.info("Training epoch %2d begin:" % epoch_idx)
+
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data['image'].to(self.device)
+            label = data['label'].to(self.device)
+            mask = data['mask'].to(self.device)
+
+            warped_image = data['warped_image'].to(self.device)
+            warped_label = data['warped_label'].to(self.device)
+            warped_mask = data['warped_mask'].to(self.device)
+
+            matched_idx = data['matched_idx'].to(self.device)
+            matched_valid = data['matched_valid'].to(self.device)
+            not_search_mask = data['not_search_mask'].to(self.device)
+            desp_1_valid_mask = data['warped_valid_mask'].to(self.device)
+
+            shape = image.shape
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            label_pair = torch.cat((label, warped_label), dim=0)
+            mask_pair = torch.cat((mask, warped_mask), dim=0)
+            logit_pair, desp_pair, _, feature_pair = self.model(image_pair)
+
+            unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
+            point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
+
+            desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
+            feature_0, feature_1 = torch.split(feature_pair, shape[0], dim=0)
+            desp_loss, quantization_loss = self.descriptor_loss(
+                desp_0, desp_1, feature_0, feature_1, matched_idx, matched_valid, not_search_mask, desp_1_valid_mask)
+
+            loss = point_loss + self.descriptor_weight*desp_loss + self.quantization_weight*quantization_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            loss_val = loss.item()
+            point_loss_val = point_loss.item()
+            desp_loss_val = desp_loss.item()
+            quantization_loss_val = quantization_loss.item()
+            # quantization_loss_val = 0
+
+            self.summary_writer.add_scalar('loss/total_loss', loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/point_loss', point_loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/desp_loss', desp_loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+            self.summary_writer.add_scalar('loss/quantization_loss', quantization_loss,
+                                           global_step=int(i + epoch_idx * self.epoch_length))
+
+            if i % self.log_freq == 0:
+
+                self.summary_writer.add_histogram('feature', feature_pair,
+                                                  global_step=int(i+epoch_idx*self.epoch_length))
+
+                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: "
+                                 "loss = %.4f, "
+                                 "point_loss = %.4f, "
+                                 "desp_loss = %.4f, "
+                                 "quantization_loss = %.4f, "
+                                 " one step cost %.4fs. "
+                                 % (epoch_idx, i, self.epoch_length,
+                                    loss_val,
+                                    point_loss_val,
+                                    desp_loss_val,
+                                    quantization_loss_val,
+                                    (time.time() - stime) / self.params.log_freq,
+                                    ))
+                stime = time.time()
+
+            # todo: 正式训练时一定要注释掉
+            # debug use 提前结束训练
+            # if i == (self.epoch_length // 10):
             #     break
 
         # save the model
