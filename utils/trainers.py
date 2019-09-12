@@ -382,7 +382,6 @@ class SuperPoint(TrainerTester):
             elif self.loss_type == 'triplet_tanh_b':
                 self.descriptor_loss = BinaryDescriptorTripletTanhLoss()
                 self._train_func = self._train_use_triplet_tanh_loss_binary
-                self._test_func = self._test_model_both
             elif self.loss_type == 'pairwise_b':
                 self.descriptor_loss = BinaryDescriptorPairwiseLoss(device=self.device)
                 self._train_func = self._train_use_pairwise_loss_binary
@@ -660,7 +659,7 @@ class SuperPoint(TrainerTester):
             image_pair = torch.cat((image, warped_image), dim=0)
             label_pair = torch.cat((label, warped_label), dim=0)
             mask_pair = torch.cat((mask, warped_mask), dim=0)
-            logit_pair, desp_pair, _, _ = self.model(image_pair)
+            logit_pair, desp_pair, _, _ = self.model(image_pair, epoch_idx)
 
             unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
@@ -710,8 +709,8 @@ class SuperPoint(TrainerTester):
 
             # todo: 正式训练时一定要注释掉
             # debug use 提前结束训练
-            if i == (self.epoch_length // 10):
-                break
+            # if i == (self.epoch_length // 10):
+            #     break
 
         # save the model
         if self.multi_gpus:
