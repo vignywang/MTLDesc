@@ -47,6 +47,7 @@ class BasicSuperPointNet(nn.Module):
         self.convDb = nn.Conv2d(c5, d1, kernel_size=1, stride=1, padding=0)
 
         self.softmax = nn.Softmax(dim=1)
+        self.tanh = nn.Tanh()
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -170,6 +171,37 @@ class SuperPointNetBinary(BasicSuperPointNet):
         dn = torch.norm(feature, p=2, dim=1, keepdim=True)
         feature = feature.div(dn)
         desc = hash_layer(feature)
+
+        return logit, desc, prob, feature
+
+
+class SuperPointNetTanh(BasicSuperPointNet):
+
+    def __init__(self):
+        super(SuperPointNetTanh, self).__init__()
+
+    def forward(self, x):
+        x = self.relu(self.conv1a(x))
+        x = self.relu(self.conv1b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv2a(x))
+        x = self.relu(self.conv2b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv3a(x))
+        x = self.relu(self.conv3b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv4a(x))
+        x = self.relu(self.conv4b(x))
+
+        # detect head
+        cPa = self.relu(self.convPa(x))
+        logit = self.convPb(cPa)
+        prob = self.softmax(logit)[:, :-1, :, :]
+
+        # descriptor head
+        cDa = self.relu(self.convDa(x))
+        feature = self.convDb(cDa)
+        desc = self.tanh(feature)
 
         return logit, desc, prob, feature
 
