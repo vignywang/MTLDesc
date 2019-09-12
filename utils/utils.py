@@ -20,6 +20,15 @@ def compute_batched_dist(x, y, hamming=False):
     return dist
 
 
+def compute_cos_similarity_general(x, y):
+    x_norm = torch.norm(x, p=2, dim=1, keepdim=True)
+    y_norm = torch.norm(y, p=2, dim=1, keepdim=True)
+    x = x.div(x_norm+1e-4)
+    y = y.div(y_norm+1e-4)
+    cos_similarity = torch.matmul(x.transpose(1, 2), y)  # [bt,h*w,h*w]
+    return cos_similarity
+
+
 def compute_cos_similarity_binary(x, y, k=256):
     x = x.div(np.sqrt(k))
     y = y.div(np.sqrt(k))
@@ -266,6 +275,34 @@ class BinaryDescriptorTripletDirectLoss(object):
         quantization_loss = torch.mean(torch.cat((quantization_loss_0, quantization_loss_1)))
 
         return triplet_loss, quantization_loss
+
+
+class BinaryDescriptorTripletTanhLoss(object):
+
+    def __init__(self):
+        pass
+
+    def __call__(self, desp_0, desp_1, matched_idx, matched_valid, not_search_mask, valid_mask):
+        bt, dim, h, w = desp_0.shape
+        desp_0 = torch.reshape(desp_0, (bt, dim, h*w))  # [bt,dim,h*w]
+        desp_1 = torch.reshape(desp_1, (bt, dim, h*w))
+
+        matched_idx = torch.unsqueeze(matched_idx, dim=1).repeat(1, dim, 1)  # [bt,dim,h*w]
+        desp_1 = torch.gather(desp_1, dim=2, index=matched_idx)  # [bt,dim,h*w]
+
+        cos_similarity = compute_cos_similarity_general(desp_0, desp_1)
+
+        positive_pair = torch.diagonal(cos_similarity, dim1=1, dim2=2)  # [bt,h*w]
+        minus_cos_sim = 1.0 - cos_similarity + not_search_mask*10
+        hardest_negative_pair, hardest_negative_idx = torch.min(minus_cos_sim, dim=2)  # [bt,h*w]
+
+        triplet_metric = -f.logsigmoid(positive_pair)-f.logsigmoid(hardest_negative_pair)
+
+        triplet_loss = triplet_metric*matched_valid
+        match_valid_num = torch.sum(matched_valid, dim=1)
+        triplet_loss = torch.mean(torch.sum(triplet_loss, dim=1)/match_valid_num)
+
+        return triplet_loss
 
 
 class Matcher(object):
