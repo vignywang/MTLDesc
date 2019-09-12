@@ -180,7 +180,7 @@ class SuperPointNetTanh(BasicSuperPointNet):
     def __init__(self):
         super(SuperPointNetTanh, self).__init__()
 
-    def forward(self, x):
+    def forward(self, x, epoch_idx=-1):
         x = self.relu(self.conv1a(x))
         x = self.relu(self.conv1b(x))
         x = self.pool(x)
@@ -201,7 +201,11 @@ class SuperPointNetTanh(BasicSuperPointNet):
         # descriptor head
         cDa = self.relu(self.convDa(x))
         feature = self.convDb(cDa)
-        desc = self.tanh(feature)
+        if epoch_idx >= 0:
+            scale = 1.0 + epoch_idx // 10  # 每10个epoch增加1
+        else:
+            scale = 1.0
+        desc = self.tanh(scale*feature)
 
         return logit, desc, prob, feature
 
