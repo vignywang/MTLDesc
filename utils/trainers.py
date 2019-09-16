@@ -34,6 +34,7 @@ from utils.utils import BinaryDescriptorTripletLoss
 from utils.utils import BinaryDescriptorPairwiseLoss
 from utils.utils import BinaryDescriptorTripletDirectLoss
 from utils.utils import BinaryDescriptorTripletTanhLoss
+from utils.utils import BinaryDescriptorTripletTanhAlphaSigmoidLoss
 
 
 # 训练算子基类
@@ -380,7 +381,8 @@ class SuperPoint(TrainerTester):
                 self.descriptor_loss = BinaryDescriptorTripletDirectLoss()
                 self._train_func = self._train_use_direct_triplet_loss_binary
             elif self.loss_type == 'triplet_tanh_b':
-                self.descriptor_loss = BinaryDescriptorTripletTanhLoss()
+                # self.descriptor_loss = BinaryDescriptorTripletTanhLoss()
+                self.descriptor_loss = BinaryDescriptorTripletTanhAlphaSigmoidLoss(self.logger)
                 self._train_func = self._train_use_triplet_tanh_loss_binary
             elif self.loss_type == 'pairwise_b':
                 self.descriptor_loss = BinaryDescriptorPairwiseLoss(device=self.device)
