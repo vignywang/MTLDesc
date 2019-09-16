@@ -305,6 +305,37 @@ class BinaryDescriptorTripletTanhLoss(object):
         return triplet_loss
 
 
+class BinaryDescriptorTripletTanhAlphaSigmoidLoss(object):
+
+    def __init__(self, logger):
+        self.logger = logger
+        logger.info("Initialize the Alpha Sigmoid Tanh Triplet loss.")
+
+    def __call__(self, desp_0, desp_1, matched_idx, matched_valid, not_search_mask, valid_mask):
+        bt, dim, h, w = desp_0.shape
+        desp_0 = torch.reshape(desp_0, (bt, dim, h*w))  # [bt,dim,h*w]
+        desp_1 = torch.reshape(desp_1, (bt, dim, h*w))
+        sigmoid_params = 10./dim
+
+        matched_idx = torch.unsqueeze(matched_idx, dim=1).repeat(1, dim, 1)  # [bt,dim,h*w]
+        desp_1 = torch.gather(desp_1, dim=2, index=matched_idx)  # [bt,dim,h*w]
+
+        inner_product = torch.matmul(desp_0.transpose(1, 2), desp_1)/dim
+
+        positive_pair = torch.diagonal(inner_product, dim1=1, dim2=2)  # [bt,h*w]
+        minus_cos_sim = 1. - inner_product + not_search_mask*10.
+        hardest_negative_pair, _ = torch.min(minus_cos_sim, dim=2)  # [bt,h*w]
+
+        # triplet_metric = -f.logsigmoid(sigmoid_params*positive_pair)-f.logsigmoid(sigmoid_params*hardest_negative_pair)
+        triplet_metric = -f.logsigmoid(positive_pair)-f.logsigmoid(hardest_negative_pair)
+
+        triplet_loss = triplet_metric*matched_valid
+        match_valid_num = torch.sum(matched_valid, dim=1)
+        triplet_loss = torch.mean(torch.sum(triplet_loss, dim=1)/match_valid_num)
+
+        return triplet_loss
+
+
 class Matcher(object):
 
     def __init__(self, dtype='float'):
