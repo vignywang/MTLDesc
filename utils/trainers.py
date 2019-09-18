@@ -992,7 +992,7 @@ class SuperPoint(TrainerTester):
         self.logger.info("*****************************************************")
         self.logger.info("Validating epoch %2d begin:" % epoch_idx)
 
-        self._test_func()
+        self._test_func(epoch_idx)
 
         illum_homo_moving_acc = self.illum_homo_acc_mov.average()
         view_homo_moving_acc = self.view_homo_acc_mov.average()
@@ -1017,7 +1017,7 @@ class SuperPoint(TrainerTester):
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
 
-    def _test_model_general(self):
+    def _test_model_general(self, epoch_idx):
 
         self.model.eval()
         # 重置测评算子参数
@@ -1129,7 +1129,14 @@ class SuperPoint(TrainerTester):
                          (illum_repeat, view_repeat, total_repeat))
         self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
 
-    def _test_model_both(self):
+        self.summary_writer.add_scalar("illumination/Homography Accuracy", illum_homo_acc)
+        self.summary_writer.add_scalar("illumination/Mean Matching Accuracy", illum_match_acc)
+        self.summary_writer.add_scalar("illumination/Repeatability", illum_repeat)
+        self.summary_writer.add_scalar("viewpoint/Homography Accuracy", view_homo_acc)
+        self.summary_writer.add_scalar("viewpoint/Mean Matching Accuracy", view_match_acc)
+        self.summary_writer.add_scalar("viewpoint/Repeatability", view_repeat)
+
+    def _test_model_both(self, epoch_idx):
 
         self.model.eval()
         # 重置测评算子参数
