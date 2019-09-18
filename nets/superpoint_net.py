@@ -46,6 +46,9 @@ class BasicSuperPointNet(nn.Module):
         self.convDa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
         self.convDb = nn.Conv2d(c5, d1, kernel_size=1, stride=1, padding=0)
 
+        # batch normalization
+        self.bnDa = nn.BatchNorm2d(c5, affine=False)
+
         self.softmax = nn.Softmax(dim=1)
         self.tanh = nn.Tanh()
 
@@ -180,7 +183,7 @@ class SuperPointNetTanh(BasicSuperPointNet):
     def __init__(self):
         super(SuperPointNetTanh, self).__init__()
 
-    def forward(self, x, epoch_idx=-1):
+    def forward(self, x, do_scale=False, epoch_idx=-1):
         x = self.relu(self.conv1a(x))
         x = self.relu(self.conv1b(x))
         x = self.pool(x)
@@ -200,8 +203,9 @@ class SuperPointNetTanh(BasicSuperPointNet):
 
         # descriptor head
         cDa = self.relu(self.convDa(x))
+        cDa = self.bnDa(cDa)  # bn能够使之得到有效的输出
         feature = self.convDb(cDa)
-        if epoch_idx >= 0:
+        if do_scale & epoch_idx >= 0:
             scale = 1.0 + epoch_idx // 10  # 每10个epoch增加1
         else:
             scale = 1.0

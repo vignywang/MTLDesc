@@ -661,7 +661,7 @@ class SuperPoint(TrainerTester):
             image_pair = torch.cat((image, warped_image), dim=0)
             label_pair = torch.cat((label, warped_label), dim=0)
             mask_pair = torch.cat((mask, warped_mask), dim=0)
-            logit_pair, desp_pair, _, _ = self.model(image_pair, epoch_idx)
+            logit_pair, desp_pair, _, _ = self.model(image_pair, do_scale=True, epoch_idx=epoch_idx)
 
             unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
