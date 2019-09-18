@@ -205,7 +205,7 @@ class SuperPointNetTanh(BasicSuperPointNet):
         cDa = self.relu(self.convDa(x))
         cDa = self.bnDa(cDa)  # bn能够使之得到有效的输出
         feature = self.convDb(cDa)
-        if do_scale & epoch_idx >= 0:
+        if do_scale and epoch_idx >= 0:
             scale = 1.0 + epoch_idx // 10  # 每10个epoch增加1
         else:
             scale = 1.0
