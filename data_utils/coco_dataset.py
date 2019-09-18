@@ -16,6 +16,42 @@ from data_utils.dataset_tools import draw_image_keypoints
 from data_utils.dataset_tools import space_to_depth
 
 
+class COCOOriginalDataset(Dataset):
+
+    def __init__(self, params, dataset_type):
+        assert dataset_type in ['train2014', 'val2014']
+        self.params = params
+        self.height = params.height
+        self.width = params.width
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, dataset_type, 'images')
+        if dataset_type == 'train2014':
+            num_limits = False
+        else:
+            num_limits = True
+        self.image_list = self._format_file_list(num_limits)
+
+    def __len__(self):
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        image = cv.resize(image, (self.width, self.height), interpolation=cv.INTER_LINEAR)
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        sample = {'image': image}
+
+        return sample
+
+    def _format_file_list(self, num_limits=False):
+        image_list = glob.glob(os.path.join(self.dataset_dir, "*.jpg"))
+        image_list = sorted(image_list)
+        if num_limits:
+            length = 1000
+        else:
+            length = len(image_list)
+        image_list = image_list[:length]
+        return image_list
+
+
 class COCOAdaptionDataset(Dataset):
 
     def __init__(self, params, dataset_type):
@@ -23,7 +59,7 @@ class COCOAdaptionDataset(Dataset):
         self.params = params
         self.height = params.height
         self.width = params.width
-        self.dataset_dir = os.path.join(params.coco_dataset_root, dataset_type, 'images')
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, dataset_type, 'images')
         if dataset_type == 'train2014':
             num_limits = False
         else:
