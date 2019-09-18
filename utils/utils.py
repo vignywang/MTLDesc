@@ -336,6 +336,40 @@ class BinaryDescriptorTripletTanhAlphaSigmoidLoss(object):
         return triplet_loss
 
 
+class BinaryDescriptorTripletTanhCauchyLoss(object):
+
+    def __init__(self, logger):
+        self.logger = logger
+        self.lambda_f = 20.
+        logger.info("Initialized the Cauchy Tanh Triplet loss, lambda: %.3f" % self.lambda_f)
+
+    def __call__(self, desp_0, desp_1, matched_idx, matched_valid, not_search_mask, valid_mask):
+        bt, dim, h, w = desp_0.shape
+        desp_0 = torch.reshape(desp_0, (bt, dim, h*w))  # [bt,dim,h*w]
+        desp_1 = torch.reshape(desp_1, (bt, dim, h*w))
+
+        matched_idx = torch.unsqueeze(matched_idx, dim=1).repeat(1, dim, 1)  # [bt,dim,h*w]
+        desp_1 = torch.gather(desp_1, dim=2, index=matched_idx)  # [bt,dim,h*w]
+
+        inner_product = torch.matmul(desp_0.transpose(1, 2), desp_1)
+        hamming_dist = 0.5*(dim - inner_product)
+
+        positive_pair = torch.diagonal(hamming_dist, dim1=1, dim2=2)  # [bt,h*w]
+        masked_hamming_dist = hamming_dist + not_search_mask*dim
+        hardest_negative_pair, _ = torch.min(masked_hamming_dist, dim=2)  # [bt,h*w]
+
+        triplet_metric = -torch.log(self._cauchy(positive_pair)) - torch.log(1. - self._cauchy(hardest_negative_pair))
+
+        triplet_loss = triplet_metric*matched_valid
+        match_valid_num = torch.sum(matched_valid, dim=1)
+        triplet_loss = torch.mean(torch.sum(triplet_loss, dim=1)/match_valid_num)
+
+        return triplet_loss
+
+    def _cauchy(self, x):
+        return self.lambda_f/(self.lambda_f + x)
+
+
 class Matcher(object):
 
     def __init__(self, dtype='float'):
@@ -357,6 +391,9 @@ class Matcher(object):
             if i == nearest_idx_1_0[idx_0_1]:
                 matched_src.append(point_0[i])
                 matched_tgt.append(point_1[idx_0_1])
+        if len(matched_src) <= 4:
+            print("There exist too little matches")
+            assert False
         if len(matched_src) != 0:
             matched_src = np.stack(matched_src, axis=0)
             matched_tgt = np.stack(matched_tgt, axis=0)

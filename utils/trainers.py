@@ -35,6 +35,7 @@ from utils.utils import BinaryDescriptorPairwiseLoss
 from utils.utils import BinaryDescriptorTripletDirectLoss
 from utils.utils import BinaryDescriptorTripletTanhLoss
 from utils.utils import BinaryDescriptorTripletTanhAlphaSigmoidLoss
+from utils.utils import BinaryDescriptorTripletTanhCauchyLoss
 
 
 # 训练算子基类
@@ -383,6 +384,11 @@ class SuperPoint(TrainerTester):
             elif self.loss_type == 'triplet_tanh_b':
                 # self.descriptor_loss = BinaryDescriptorTripletTanhLoss()
                 self.descriptor_loss = BinaryDescriptorTripletTanhAlphaSigmoidLoss(self.logger)
+                self.do_scale = True
+                self._train_func = self._train_use_triplet_tanh_loss_binary
+            elif self.loss_type == 'triplet_tanh_cauchy_b':
+                self.descriptor_loss = BinaryDescriptorTripletTanhCauchyLoss(self.logger)
+                self.do_scale = False
                 self._train_func = self._train_use_triplet_tanh_loss_binary
             elif self.loss_type == 'pairwise_b':
                 self.descriptor_loss = BinaryDescriptorPairwiseLoss(device=self.device)
@@ -407,7 +413,7 @@ class SuperPoint(TrainerTester):
         elif output_type == 'binary':
             if loss_type == 'triplet_b':
                 model = SuperPointNetFloat()  # same as float
-            elif loss_type == 'triplet_tanh_b':
+            elif loss_type in ['triplet_tanh_b', 'triplet_tanh_cauchy_b']:
                 model = SuperPointNetTanh()
             elif loss_type in ['triplet_direct_b', 'pairwise_b']:
                 model = SuperPointNetBinary()
@@ -661,7 +667,10 @@ class SuperPoint(TrainerTester):
             image_pair = torch.cat((image, warped_image), dim=0)
             label_pair = torch.cat((label, warped_label), dim=0)
             mask_pair = torch.cat((mask, warped_mask), dim=0)
-            logit_pair, desp_pair, _, _ = self.model(image_pair, do_scale=True, epoch_idx=epoch_idx)
+            if self.do_scale:
+                logit_pair, desp_pair, _, _ = self.model(image_pair, do_scale=True, epoch_idx=epoch_idx)
+            else:
+                logit_pair, desp_pair, _, _ = self.model(image_pair)
 
             unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
             point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
