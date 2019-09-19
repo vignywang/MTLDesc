@@ -1130,10 +1130,10 @@ class SuperPoint(TrainerTester):
         self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
 
         self.summary_writer.add_scalar("illumination/Homography_Accuracy", illum_homo_acc, epoch_idx)
-        self.summary_writer.add_scalar("illumination/Mean Matching_Accuracy", illum_match_acc, epoch_idx)
+        self.summary_writer.add_scalar("illumination/Mean_Matching_Accuracy", illum_match_acc, epoch_idx)
         self.summary_writer.add_scalar("illumination/Repeatability", illum_repeat, epoch_idx)
         self.summary_writer.add_scalar("viewpoint/Homography_Accuracy", view_homo_acc, epoch_idx)
-        self.summary_writer.add_scalar("viewpoint/Mean Matching_Accuracy", view_match_acc, epoch_idx)
+        self.summary_writer.add_scalar("viewpoint/Mean_Matching_Accuracy", view_match_acc, epoch_idx)
         self.summary_writer.add_scalar("viewpoint/Repeatability", view_repeat, epoch_idx)
 
     def _test_model_both(self, epoch_idx):
