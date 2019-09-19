@@ -358,7 +358,7 @@ class BinaryDescriptorTripletTanhCauchyLoss(object):
         masked_hamming_dist = hamming_dist + not_search_mask*dim
         hardest_negative_pair, _ = torch.min(masked_hamming_dist, dim=2)  # [bt,h*w]
 
-        triplet_metric = -torch.log(self._cauchy(positive_pair)) - torch.log(1. - self._cauchy(hardest_negative_pair))
+        triplet_metric = -torch.log(self._cauchy(positive_pair)) - torch.log(1.001 - self._cauchy(hardest_negative_pair))
 
         triplet_loss = triplet_metric*matched_valid
         match_valid_num = torch.sum(matched_valid, dim=1)
