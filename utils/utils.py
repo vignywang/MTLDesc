@@ -305,7 +305,7 @@ class BinaryDescriptorTripletTanhLoss(object):
         return triplet_loss
 
 
-class BinaryDescriptorTripletTanhAlphaSigmoidLoss(object):
+class BinaryDescriptorTripletTanhSigmoidLoss(object):
 
     def __init__(self, logger):
         self.logger = logger
@@ -323,11 +323,14 @@ class BinaryDescriptorTripletTanhAlphaSigmoidLoss(object):
         inner_product = torch.matmul(desp_0.transpose(1, 2), desp_1)/dim
 
         positive_pair = torch.diagonal(inner_product, dim1=1, dim2=2)  # [bt,h*w]
+
         minus_cos_sim = 1. - inner_product + not_search_mask*10.
         hardest_negative_pair, _ = torch.min(minus_cos_sim, dim=2)  # [bt,h*w]
-
-        # triplet_metric = -f.logsigmoid(sigmoid_params*positive_pair)-f.logsigmoid(sigmoid_params*hardest_negative_pair)
         triplet_metric = -f.logsigmoid(positive_pair)-f.logsigmoid(hardest_negative_pair)
+
+        # masked_cos_sim = inner_product - not_search_mask*10.
+        # hardest_negative_pair, _ = torch.max(masked_cos_sim, dim=2)
+        # triplet_metric = -f.logsigmoid(positive_pair)-f.logsigmoid(-hardest_negative_pair)
 
         triplet_loss = triplet_metric*matched_valid
         match_valid_num = torch.sum(matched_valid, dim=1)
