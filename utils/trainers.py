@@ -34,7 +34,7 @@ from utils.utils import BinaryDescriptorTripletLoss
 from utils.utils import BinaryDescriptorPairwiseLoss
 from utils.utils import BinaryDescriptorTripletDirectLoss
 from utils.utils import BinaryDescriptorTripletTanhLoss
-from utils.utils import BinaryDescriptorTripletTanhAlphaSigmoidLoss
+from utils.utils import BinaryDescriptorTripletTanhSigmoidLoss
 from utils.utils import BinaryDescriptorTripletTanhCauchyLoss
 
 
@@ -72,7 +72,7 @@ class TrainerTester(object):
         # 初始化summary writer
         self.summary_writer = SummaryWriter(self.ckpt_dir)
 
-        self.model = self._initialize_model()
+        self._initialize_model()
 
         # 初始化优化器算子
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
@@ -149,11 +149,10 @@ class MagicPointSynthetic(TrainerTester):
 
     def _initialize_model(self):
         # 初始化模型
-        model = MagicPointNet()
+        self.model = MagicPointNet()
         if self.multi_gpus:
-            model = torch.nn.DataParallel(model)
-        model = model.to(self.device)
-        return model
+            self.model = torch.nn.DataParallel(self.model)
+        self.model = self.model.to(self.device)
 
     def test(self, ckpt_file):
         self.logger.info("*****************************************************")
@@ -383,7 +382,7 @@ class SuperPoint(TrainerTester):
                 self._train_func = self._train_use_direct_triplet_loss_binary
             elif self.loss_type == 'triplet_tanh_b':
                 # self.descriptor_loss = BinaryDescriptorTripletTanhLoss()
-                self.descriptor_loss = BinaryDescriptorTripletTanhAlphaSigmoidLoss(self.logger)
+                self.descriptor_loss = BinaryDescriptorTripletTanhSigmoidLoss(self.logger)
                 self.do_scale = True
                 self._train_func = self._train_use_triplet_tanh_loss_binary
             elif self.loss_type == 'triplet_tanh_cauchy_b':
@@ -402,6 +401,7 @@ class SuperPoint(TrainerTester):
 
         # debug use
         # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24_3/model_49.pt"
+        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/binary/superpoint_triplet_tanh_bn_0.0010_24/model_99.pt"
         # self._load_model_params(ckpt_file)
 
     def _initialize_model(self):
@@ -409,14 +409,14 @@ class SuperPoint(TrainerTester):
         output_type = self.params.output_type
         loss_type = self.params.loss_type
         if output_type == 'float':
-            model = SuperPointNetFloat()
+            self.model = SuperPointNetFloat()
         elif output_type == 'binary':
             if loss_type == 'triplet_b':
-                model = SuperPointNetFloat()  # same as float
+                self.model = SuperPointNetFloat()  # same as float
             elif loss_type in ['triplet_tanh_b', 'triplet_tanh_cauchy_b']:
-                model = SuperPointNetTanh()
+                self.model = SuperPointNetTanh()
             elif loss_type in ['triplet_direct_b', 'pairwise_b']:
-                model = SuperPointNetBinary()
+                self.model = SuperPointNetBinary()
             else:
                 self.logger.error('incorrect loss type: %s' % loss_type)
                 assert False
@@ -424,10 +424,13 @@ class SuperPoint(TrainerTester):
             self.logger.error('incorrect output type: %s' % output_type)
             assert False
 
+        # todo: 后面增加更加方便的接口
+        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/binary/superpoint_triplet_tanh_bn_0.0010_24/model_99.pt"
+        # self._load_model_params(ckpt_file)
+
         if self.multi_gpus:
-            model = torch.nn.DataParallel(model)
-        model = model.to(self.device)
-        return model
+            self.model = torch.nn.DataParallel(self.model)
+        self.model = self.model.to(self.device)
 
     def test_HPatch_float(self, ckpt_file):
         self.logger.info("*****************************************************")
@@ -668,7 +671,8 @@ class SuperPoint(TrainerTester):
             label_pair = torch.cat((label, warped_label), dim=0)
             mask_pair = torch.cat((mask, warped_mask), dim=0)
             if self.do_scale:
-                logit_pair, desp_pair, _, _ = self.model(image_pair, do_scale=True, epoch_idx=epoch_idx)
+                # logit_pair, desp_pair, _, _ = self.model(image_pair, do_scale=True, epoch_idx=epoch_idx)
+                logit_pair, desp_pair, _, _ = self.model(image_pair)
             else:
                 logit_pair, desp_pair, _, _ = self.model(image_pair)
 
