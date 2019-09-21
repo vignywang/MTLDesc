@@ -37,7 +37,7 @@ class SuperPointParameters(BasicParameters):
 
         # training param
         self.descriptor_weight = 1.0
-        # self.quantization_weight = 0.005  # for naive triple binary loss
+        # self.quantization_weight = 0.0005  # for naive triple binary loss
         self.quantization_weight = 0.0  # for straight-through binary loss
 
         # HPatch validate/test relating params
