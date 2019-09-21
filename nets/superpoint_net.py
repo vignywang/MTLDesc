@@ -56,34 +56,6 @@ class BasicSuperPointNet(nn.Module):
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
 
-    def _encoder(self, x):
-        x = self.relu(self.conv1a(x))
-        x = self.relu(self.conv1b(x))
-        x = self.pool(x)
-        x = self.relu(self.conv2a(x))
-        x = self.relu(self.conv2b(x))
-        x = self.pool(x)
-        x = self.relu(self.conv3a(x))
-        x = self.relu(self.conv3b(x))
-        x = self.pool(x)
-        x = self.relu(self.conv4a(x))
-        x = self.relu(self.conv4b(x))
-
-        return x
-
-    def _detector_head(self, x):
-        cPa = self.relu(self.convPa(x))
-        logit = self.convPb(cPa)
-        prob = self.softmax(logit)[:, :-1, :, :]
-
-        return logit, prob
-
-    def _descriptor_head(self, x):
-        cDa = self.relu(self.convDa(x))
-        feature = self.convDb(cDa)
-
-        return feature
-
 
 class MagicPointNet(BasicSuperPointNet):
 
