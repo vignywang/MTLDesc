@@ -671,8 +671,8 @@ class SuperPoint(TrainerTester):
             label_pair = torch.cat((label, warped_label), dim=0)
             mask_pair = torch.cat((mask, warped_mask), dim=0)
             if self.do_scale:
-                # logit_pair, desp_pair, _, _ = self.model(image_pair, do_scale=True, epoch_idx=epoch_idx)
-                logit_pair, desp_pair, _, _ = self.model(image_pair)
+                logit_pair, desp_pair, _, _ = self.model(image_pair, do_scale=True, epoch_idx=epoch_idx)
+                # logit_pair, desp_pair, _, _ = self.model(image_pair)
             else:
                 logit_pair, desp_pair, _, _ = self.model(image_pair)
 
