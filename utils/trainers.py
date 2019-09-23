@@ -425,7 +425,7 @@ class SuperPoint(TrainerTester):
             assert False
 
         # todo: 后面增加更加方便的接口
-        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/binary/superpoint_triplet_tanh_bn_0.0010_24/model_99.pt"
+        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/binary/superpoint_triplet_tanh_stay_0.0010_24/model_09.pt"
         # self._load_model_params(ckpt_file)
 
         if self.multi_gpus:
