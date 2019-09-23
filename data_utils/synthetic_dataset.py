@@ -50,6 +50,7 @@ class SyntheticTrainDataset(Dataset):
 
         # 将它们转换成tensor
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        image = image*2./255. - 1.  # scale到[-1,1]之间
         org_mask = torch.from_numpy(org_mask)
         point = torch.from_numpy(point)
 
@@ -143,6 +144,7 @@ class SyntheticValTestDataset(Dataset):
         # point = np.round(point).astype(np.int)
         point = np.floor(point).astype(np.int)
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        image = image*2./255. - 1.  # 归一化到[-1,1]之间
         point = torch.from_numpy(point)
 
         sample = {"image": image, "gt_point": point}
@@ -193,26 +195,5 @@ if __name__ == "__main__":
         mask = data['mask'][0].numpy()
         cv.imshow('image', image)
         a = 3
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
