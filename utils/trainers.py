@@ -232,7 +232,7 @@ class MagicPointSynthetic(TrainerTester):
             label = data['label'].to(self.device)
             mask = data['mask'].to(self.device)
 
-            logit, _, = self.model(image)
+            logit, _ = self.model(image)
             unmasked_loss = self.cross_entropy_loss(logit, label)
             loss = self._compute_masked_loss(unmasked_loss, mask)
 
