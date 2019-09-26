@@ -16,30 +16,22 @@ from data_utils.dataset_tools import draw_image_keypoints
 from data_utils.dataset_tools import space_to_depth
 
 
-class COCOOriginalDataset(Dataset):
+class COCORawDataset(Dataset):
 
-    def __init__(self, params, dataset_type):
-        assert dataset_type in ['train2014', 'val2014']
-        self.params = params
-        self.height = params.height
-        self.width = params.width
-        self.dataset_dir = os.path.join(params.coco_dataset_dir, dataset_type, 'images')
-        if dataset_type == 'train2014':
-            num_limits = False
-        else:
-            num_limits = True
-        self.image_list = self._format_file_list(num_limits)
+    def __init__(self, dataset_dir):
+        self.height = 240
+        self.width = 320
+        self.dataset_dir = os.path.join(dataset_dir, 'train2014', 'images')
+        self.image_file_list = self._format_file_list()
 
     def __len__(self):
-        return len(self.image_list)
+        return len(self.image_file_list)
 
     def __getitem__(self, idx):
-        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        image = cv.imread(self.image_file_list[idx], flags=cv.IMREAD_GRAYSCALE)
         image = cv.resize(image, (self.width, self.height), interpolation=cv.INTER_LINEAR)
-        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
-        sample = {'image': image}
 
-        return sample
+        return image
 
     def _format_file_list(self, num_limits=False):
         image_list = glob.glob(os.path.join(self.dataset_dir, "*.jpg"))
@@ -49,6 +41,51 @@ class COCOOriginalDataset(Dataset):
         else:
             length = len(image_list)
         image_list = image_list[:length]
+        return image_list
+
+
+class COCOMegPointAdaptionDataset(Dataset):
+
+    def __init__(self, params):
+        self.height = params.height
+        self.width = params.width
+        self.coco_pseudo_idx = params.coco_pseudo_idx
+        # self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014', 'resized_images')
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014/pseudo_image_points_'+self.coco_pseudo_idx)
+        self.image_file_list = self._format_file_list(False)
+
+    def __len__(self):
+        return len(self.image_file_list)
+
+    def __getitem__(self, idx):
+        image = cv.imread(self.image_file_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        image = image*2./255. - 1.
+        # image = self.image_list[idx]
+        sample = {"image": image}
+        return sample
+
+    def _format_file_list(self, num_limits=False):
+        image_list = glob.glob(os.path.join(self.dataset_dir, "*.jpg"))
+        image_list = sorted(image_list)
+        if num_limits:
+            length = 20000  # 1000
+        else:
+            length = len(image_list)
+        image_list = image_list[:length]
+        return image_list
+
+    def _read_from_list(self):
+        print("Begin loading all the images to the memory")
+        image_list = []
+        for i in range(len(self.image_file_list)):
+            image = cv.imread(self.image_file_list[i], flags=cv.IMREAD_GRAYSCALE)
+            image = cv.resize(image, (self.width, self.height), interpolation=cv.INTER_LINEAR)
+            image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+            image_list.append(image)
+            if i % 1000 == 0:
+                print("Having read %d images" % i)
+        print("Loading finished!")
         return image_list
 
 

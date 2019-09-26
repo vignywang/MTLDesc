@@ -326,13 +326,14 @@ def space_to_depth(org_tensor, patch_height=8, patch_width=8):
     return new_tensor
 
 
-def draw_image_keypoints(image, points, color=(0, 255, 0)):
+def draw_image_keypoints(image, points, color=(0, 255, 0), show=True):
     """
     将输入的关键点画到图像上并显示出来
     Args:
         image: 待画点的原始图像
         points: 图像对应的关键点组合，输入为np.array，shape为（n，2）, 点的第一维代表y轴，第二维代表x轴
         color: 待描关键点的颜色
+        show: 是否显示当前的图像
     Returns:
         None
     """
@@ -343,6 +344,25 @@ def draw_image_keypoints(image, points, color=(0, 255, 0)):
         keypt.pt = (points[i, 1], points[i, 0])
         cv_keypoints.append(keypt)
     image = cv.drawKeypoints(image.astype(np.uint8), cv_keypoints, None, color=color)
-    cv.imshow("image&keypoints", image)
-    cv.waitKey()
+    if show:
+       cv.imshow("image&keypoints", image)
+       cv.waitKey()
     return image
+
+
+def debug_draw_image_keypoints(image, prob, color=(0, 255, 0), max_show=4):
+    batch_size, _, height, width = image.shape
+    all_image_point = []
+    for i in range(batch_size):
+        single_image = image[i][0]
+        single_prob = prob[i][0]
+        point_idx = np.where(single_prob > 0)
+        points = np.stack((point_idx[0], point_idx[1]), axis=1)
+        # print(points.shape)
+        image_points = draw_image_keypoints(single_image, points, color, False)
+        all_image_point.append(image_points)
+        if i == max_show:
+            break
+    all_image_point = np.concatenate(all_image_point, axis=1).transpose((2, 0, 1))
+    return all_image_point
+
