@@ -1046,6 +1046,7 @@ class SuperPoint(TrainerTester):
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
             # debug released mode use
             # image_pair /= 255.
+            image_pair = image_pair*2./255. - 1.
 
             _, desp_pair, prob_pair, _ = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
@@ -1174,6 +1175,7 @@ class SuperPoint(TrainerTester):
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
             # debug released mode use
             # image_pair /= 255.
+            image_pair = image_pair*2./255. - 1.
 
             _, desp_pair, prob_pair, _ = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
