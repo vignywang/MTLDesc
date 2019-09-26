@@ -314,6 +314,8 @@ class COCOSuperPointTrainDataset(Dataset):
 
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
         warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
+        image = image*2./255. - 1.
+        warped_image = warped_image*2./255. - 1.
 
         # 2、对点和标签的相关处理
         # 2.1 输入的点标签和掩膜的预处理
