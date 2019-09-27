@@ -50,6 +50,22 @@ class MegPointAdaptionParameters(BasicParameters):
             'allow_artifacts': True
         }
 
+        self.aug_homography_params = {
+            'patch_ratio': 0.8,  # 0.8,  # 0.9,
+            'perspective_amplitude_x': 0.3,  # 0.2,  # 0.1,
+            'perspective_amplitude_y': 0.3,  # 0.2,  # 0.1,
+            'scaling_sample_num': 5,
+            'scaling_amplitude': 0.2,
+            'translation_overflow': 0.05,
+            'rotation_sample_num': 25,
+            'rotation_max_angle': np.pi/3,  # np.pi/2.,  # np.pi/3,
+            'do_perspective': True,
+            'do_scaling': True,
+            'do_rotation': True,
+            'do_translation': True,
+            'allow_artifacts': True
+        }
+
         self.photometric_params = {
             'gaussian_noise_mean': 0,  # 10,
             'gaussian_noise_std': 5,

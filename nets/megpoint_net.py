@@ -11,10 +11,11 @@ import cv2 as cv
 from data_utils.dataset_tools import HomographyAugmentation
 from data_utils.dataset_tools import PhotometricAugmentation
 from data_utils.dataset_tools import debug_draw_image_keypoints
+from data_utils.dataset_tools import draw_image_keypoints
 # from torchvision.models import ResNet
 
 
-def interpolation(image, homo, nearest=False):
+def interpolation(image, homo):
     bt, _, height, width = image.shape
     device = image.device
     inv_homo = torch.inverse(homo)
@@ -65,22 +66,7 @@ def interpolation(image, homo, nearest=False):
         (bt, 1, height, width)
     )
 
-    if nearest:
-        x_nearest = torch.floor(warped_coords_x)
-        y_nearest = torch.floor(warped_coords_y)
-
-        x_nearest_safe = torch.clamp(x_nearest, 0, width - 1)
-        y_nearest_safe = torch.clamp(y_nearest, 0, height - 1)
-
-        idx_nearest = (x_nearest_safe + y_nearest_safe * width).to(torch.long)
-
-        img_nearest = torch.gather(image, dim=1, index=idx_nearest)
-        nearest_img = img_nearest.reshape(
-            (bt, 1, height, width)
-        )
-        return bilinear_img, nearest_img
-    else:
-        return bilinear_img
+    return bilinear_img
 
 
 def space_to_depth(org_label, is_bool=False):
@@ -151,75 +137,60 @@ def projection(point, homo, height=240, width=320):
 
 class AdaptionDataset(Dataset):
 
-    def __init__(self):
+    def __init__(self, length):
         self.sample_list = []
         self.homography_sampler = HomographyAugmentation()
         self.cpu = torch.device("cpu:0")
         self.gpu = torch.device("cuda:0")
+        self.dataset_length = length
 
     def __len__(self):
-        return len(self.sample_list)
+        return self.dataset_length
 
     def __getitem__(self, idx):
         sample = self.sample_list[idx]
-        image = sample["image"].to(self.gpu)
-        point = sample["point"].to(self.gpu)
-        point_mask = sample["point_mask"].to(self.gpu)
-        mask = torch.ones_like(image, dtype=torch.bool)
+        image = sample["image"]
+        image_mask = torch.ones_like(image, dtype=torch.bool)
+        point = sample["point"]
+        point_mask = sample["point_mask"]
 
-        # do_augmentation
-        # if np.random.randn() < 0.5:
-        image, mask, point, point_mask = self.do_augmentation(image, mask, point, point_mask)
-
-        image = image.detach()
-        space_label = convert_point_to_label(point, point_mask)
-        sparse_label = space_to_depth(space_label).detach()
-        sparse_mask = space_to_depth(mask, True).detach().to(torch.float)
-        prob = space_label.detach()
-
-        # debug use
-        # aug_image, aug_mask, aug_point, aug_point_mask = self.do_augmentation(image, mask, point, point_mask)
-        # diff_image = (image - aug_image).detach().cpu().numpy()
-        # diff_mask = (mask & aug_mask).detach().cpu().numpy()
-        # aug_image = aug_image.detach()
-        # aug_space_label = convert_point_to_label(aug_point, aug_point_mask)
-        # aug_sparse_label = space_to_depth(aug_space_label).detach()
-        # aug_sparse_mask = space_to_depth(aug_mask, True).detach().to(torch.float)
-        # aug_prob = (aug_space_label*aug_mask.to(torch.float)).detach()
-
-        # np_sparse_mask = sparse_mask.cpu().numpy()
-        # np_sparse_label = sparse_label.cpu().numpy()
-        # np_prob = prob.cpu().numpy()
-        # np_image = (image.cpu().numpy()+1)*255/2
-
-        # np_aug_sparse_mask = aug_sparse_mask.cpu().numpy()
-        # np_aug_sparse_label = aug_sparse_label.cpu().numpy()
-        # np_aug_prob = aug_prob.cpu().numpy()
-        # np_aug_image = (aug_image.cpu().numpy()+1)*255/2
-
-        # debug_image_point = debug_draw_image_keypoints(np_image, np_prob)
-        # debug_aug_image_point = debug_draw_image_keypoints(np_aug_image, np_aug_prob)
-
-        # cat_image_point = np.concatenate(
-        #     (debug_image_point, debug_aug_image_point), axis=1).transpose((1, 2, 0))
-        # cv.imshow("image_point", debug_image_point.transpose(1, 2, 0))
-        # cv.imshow("image_point", cat_image_point)
-        # cv.waitKey()
-
-        sample = {"image": image, "sparse_label": sparse_label, "sparse_mask": sparse_mask, "prob": prob}
+        image, mask, point, point_mask = self.do_augmentation(image, image_mask, point, point_mask)
+        sample = {"image": image, "image_mask": image_mask, "point": point, "point_mask": point_mask}
 
         return sample
 
     def do_augmentation(self, image, image_mask, point, point_mask):
-        shape = image.shape
-        aug_homo = self._sample_aug_homography(shape[0]).to(self.gpu)
-        # aug_homo = torch.eye(3).unsqueeze(dim=0).repeat((shape[0], 1, 1)).to(self.gpu)
-        aug_image = interpolation(image, aug_homo)
-        aug_image_mask = interpolation(image_mask.to(torch.float), aug_homo)
-        aug_image_mask = torch.gt(aug_image_mask, 0.9)
+        if np.random.randn() < 0.5:
+            aug_homo = self.homography_sampler.sample()
+        else:
+            aug_homo = np.eye(3)
 
-        aug_point, aug_point_mask = projection(point, aug_homo)
+        # use opencv
+        org_image = ((image[0] + 1) * 255./2.).numpy().astype(np.uint8)
+        org_image_mask = image_mask[0].numpy().astype(np.float)
+        warped_image = cv.warpPerspective(org_image, aug_homo, dsize=(320, 240), flags=cv.INTER_LINEAR)
+        warped_image_mask = cv.warpPerspective(org_image_mask, aug_homo, dsize=(320, 240), flags=cv.INTER_LINEAR)
+        valid_mask = warped_image_mask.astype(np.uint8).astype(np.bool)
+
+        aug_image = torch.from_numpy(warped_image*2./255.-1).unsqueeze(dim=0).to(torch.float)
+        aug_image_mask = torch.from_numpy(valid_mask).unsqueeze(dim=0)
+
+        # use self-defined interpolation
+        # org_image = ((image + 1) * 255 / 2).unsqueeze(dim=0)
+        # org_image_mask = image_mask.to(torch.float).unsqueeze(dim=0)
+        # warped_image = interpolation(org_image, torch.from_numpy(aug_homo).unsqueeze(dim=0).to(torch.float))[0]
+        # warped_image_mask = interpolation(org_image_mask, torch.from_numpy(aug_homo).unsqueeze(dim=0).to(torch.float))[0]
+        # valid_mask = warped_image_mask > 0.9
+
+        # aug_image = warped_image*2/255-1
+        # aug_image_mask = valid_mask
+
+        aug_point, aug_point_mask = projection(
+            point.unsqueeze(dim=0), torch.from_numpy(aug_homo).unsqueeze(dim=0).to(torch.float))
         aug_point_mask *= point_mask
+
+        aug_point = aug_point[0]
+        aug_point_mask = aug_point_mask[0]
 
         return aug_image, aug_image_mask, aug_point, aug_point_mask
 
@@ -227,8 +198,10 @@ class AdaptionDataset(Dataset):
         image = image.to(self.cpu)
         point = point.to(self.cpu)
         point_mask = point_mask.to(self.cpu)
-        sample = {"image": image, "point": point, "point_mask": point_mask}
-        self.sample_list.append(sample)
+        for i in range(image.shape[0]):
+            single_sample = {
+                "image": image[i], "point": point[i], "point_mask": point_mask[i]}
+            self.sample_list.append(single_sample)
 
     def reset(self):
         self.sample_list = []
