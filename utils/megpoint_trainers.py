@@ -126,8 +126,7 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         self.logger.info("Only to process %d batches(max: %d), total: %d samples" %
                          (self.total_batch, self.epoch_length, int(self.total_batch*self.batch_size)))
 
-        self.adaption_dataset = AdaptionDataset(int(self.total_batch*self.batch_size))
-        # self.train_dataset = COCOAdaptionDataset(params, 'train2014')
+        self.adaption_dataset = AdaptionDataset(int(self.total_batch*self.batch_size), params.aug_homography_params)
         self.raw_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=False,
                                          num_workers=self.num_workers, drop_last=False)
         self.train_dataloader = DataLoader(self.adaption_dataset, self.batch_size, shuffle=True,

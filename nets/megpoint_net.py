@@ -137,9 +137,9 @@ def projection(point, homo, height=240, width=320):
 
 class AdaptionDataset(Dataset):
 
-    def __init__(self, length):
+    def __init__(self, length, sampler_params):
         self.sample_list = []
-        self.homography_sampler = HomographyAugmentation()
+        self.homography_sampler = HomographyAugmentation(**sampler_params)
         self.cpu = torch.device("cpu:0")
         self.gpu = torch.device("cuda:0")
         self.dataset_length = length
@@ -179,7 +179,8 @@ class AdaptionDataset(Dataset):
         # org_image = ((image + 1) * 255 / 2).unsqueeze(dim=0)
         # org_image_mask = image_mask.to(torch.float).unsqueeze(dim=0)
         # warped_image = interpolation(org_image, torch.from_numpy(aug_homo).unsqueeze(dim=0).to(torch.float))[0]
-        # warped_image_mask = interpolation(org_image_mask, torch.from_numpy(aug_homo).unsqueeze(dim=0).to(torch.float))[0]
+        # warped_image_mask = interpolation(
+        #     org_image_mask, torch.from_numpy(aug_homo).unsqueeze(dim=0).to(torch.float))[0]
         # valid_mask = warped_image_mask > 0.9
 
         # aug_image = warped_image*2/255-1
