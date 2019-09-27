@@ -14,6 +14,11 @@ from torch.utils.data import DataLoader
 from nets.megpoint_net import AdaptionDataset
 from nets.megpoint_net import MegPointNet
 from nets.megpoint_net import LabelGenerator
+from nets.megpoint_net import interpolation
+from nets.megpoint_net import projection
+from nets.megpoint_net import space_to_depth
+from nets.megpoint_net import convert_point_to_label
+
 from utils.utils import spatial_nms
 from data_utils.coco_dataset import COCOMegPointAdaptionDataset
 from data_utils.hpatch_dataset import HPatchDataset
@@ -110,13 +115,23 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
 
     def __init__(self, params):
         super(MegPointAdaptionTrainer, self).__init__(params)
+
         # 初始化训练数据的读入接口
         self.train_dataset = COCOMegPointAdaptionDataset(params)
-        self.adaption_dataset = AdaptionDataset()
+        self.epoch_length = len(self.train_dataset) / self.batch_size
+
+        # debug use
+        # self.total_batch = 320
+        self.total_batch = 200
+        self.logger.info("Only to process %d batches(max: %d), total: %d samples" %
+                         (self.total_batch, self.epoch_length, int(self.total_batch*self.batch_size)))
+
+        self.adaption_dataset = AdaptionDataset(int(self.total_batch*self.batch_size))
         # self.train_dataset = COCOAdaptionDataset(params, 'train2014')
         self.raw_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=False,
-                                         num_workers=self.num_workers, drop_last=True)
-        self.epoch_length = len(self.train_dataset) / self.batch_size
+                                         num_workers=self.num_workers, drop_last=False)
+        self.train_dataloader = DataLoader(self.adaption_dataset, self.batch_size, shuffle=True,
+                                           num_workers=self.num_workers, drop_last=True)
 
         self.test_dataset = HPatchDataset(params)
         self.test_length = len(self.test_dataset)
@@ -137,6 +152,7 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         # 初始化单应变换采样算子
         self.sample_num = params.sample_num
         self.homography_sampler = HomographyAugmentation(**params.homography_params)
+        self.aug_homography_sampler = HomographyAugmentation(**params.aug_homography_params)
 
         # 初始化模型
         self.model = MegPointNet()
@@ -149,7 +165,7 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         self.label_generator = LabelGenerator(params)
 
         # 初始化loss算子
-        # loss_weight = torch.ones(64, dtype=torch.float, device=self.device)  # *100
+        # loss_weight = torch.ones(64, dtype=torch.float, device=self.device) * 10
         # loss_weight = torch.cat((loss_weight, torch.ones((1,), device=self.device)), dim=0)
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
 
@@ -161,8 +177,8 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         self.label_generator = self.label_generator.to(self.device)
 
         # 初始化优化器算子
-        # self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        # self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
 
         # 初始化学习率调整算子
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.1)
@@ -206,6 +222,10 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         count = 0
         self.logger.info("Relabeling current dataset")
         for i, data in enumerate(self.raw_dataloader):
+            if i == self.total_batch:
+                print("Debug use, only to adaption %d batches" % self.total_batch)
+                break
+
             image = data["image"].to(self.device)
 
             # 采样构成标签需要的单应变换
@@ -224,10 +244,6 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
                                     ))
                 stime = time.time()
 
-            if i == 200:
-                print("Debug use, only to adaption 200 batches")
-                break
-
         self.logger.info("Relabeling Done. Totally %d batched sample. Takes %.3fs" % (count, (time.time()-start_time)))
 
     def _train_one_epoch(self, epoch_idx):
@@ -240,15 +256,20 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
             assert False
 
         self.model.train()
-        for i, data in enumerate(self.adaption_dataset):
+        for i, data in enumerate(self.train_dataloader):
             image = data['image'].to(self.device)  # [bt,1,240,320]
-            label = data["sparse_label"].to(self.device)
-            mask = data["sparse_mask"].to(self.device)
-            prob = data["prob"].to(self.device)
+            image_mask = data["image_mask"].to(self.device)
+            point = data["point"].to(self.device)
+            point_mask = data["point_mask"].to(self.device)
+
+            # convert to label
+            space_label = convert_point_to_label(point, point_mask)
+            sparse_label = space_to_depth(space_label)
+            sparse_mask = space_to_depth(image_mask, True).to(torch.float)
 
             logit, _ = self.model(image)
-            unmasked_loss = self.cross_entropy_loss(logit, label)
-            loss = self._compute_masked_loss(unmasked_loss, mask)
+            unmasked_loss = self.cross_entropy_loss(logit, sparse_label)
+            loss = self._compute_masked_loss(unmasked_loss, sparse_mask)
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -258,15 +279,20 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
 
             self.optimizer.step()
 
+            loss_val = loss.item()
+            if loss_val > 0.9:
+                debug_point = 3
+
             if i % self.log_freq == 0:
-                step = int(i+epoch_idx*self.batch_size)
+                step = int(i+epoch_idx*len(self.adaption_dataset)/self.batch_size)
                 debug_image = ((image+1.)*255./2.).detach().cpu().numpy()
-                debug_prob = prob.detach().cpu().numpy()
-                image_points = debug_draw_image_keypoints(debug_image, debug_prob)
-                loss_val = loss.item()
+                debug_space_label = space_label.detach().cpu().numpy()
+                image_points = debug_draw_image_keypoints(debug_image, debug_space_label)
+
                 self.summary_writer.add_image("image_points", image_points, step)
                 self.summary_writer.add_scalar('loss', loss, step)
                 self.summary_writer.add_histogram("logit", logit, step)
+
                 if not self.multi_gpus:
                     self.summary_writer.add_histogram(
                         "convPb.weight", self.model.base_megpoint.state_dict()["convPb.weight"], step)
@@ -441,12 +467,30 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
     def _sample_aug_homography(self, batch_size):
         sampled_homo = []
         for i in range(batch_size):
-            homo = self.homography_sampler.sample()
+            # debug use
+            # homo = np.eye(3)
+            if np.random.randn() < 0.5:
+                homo = self.aug_homography_sampler.sample()
+            else:
+                homo = np.eye(3)
             sampled_homo.append(homo)
         sampled_homo = torch.from_numpy(np.stack(sampled_homo, axis=0)).to(torch.float)
         return sampled_homo
 
+    def do_augmentation(self, image, image_mask, point, point_mask):
+        shape = image.shape
+        device = image.device
+        aug_homo = self._sample_aug_homography(shape[0]).to(device)
+        rescale_image = (image + 1)*255/2
+        aug_image = interpolation(rescale_image, aug_homo).round().clamp(0, 255)
+        aug_image = aug_image*2/255 - 1
+        aug_image_mask = interpolation(image_mask.to(torch.float), aug_homo)
+        aug_image_mask = torch.gt(aug_image_mask, 0.9)
 
+        aug_point, aug_point_mask = projection(point, aug_homo)
+        aug_point_mask *= point_mask
+
+        return aug_image, aug_image_mask, aug_point, aug_point_mask
 
 
 
