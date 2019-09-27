@@ -52,6 +52,8 @@ class PointStatistics(object):
 
         for pt_num in self.point_num_list:
             avg += pt_num
+        if self.sample_num == 0:
+            return 0, 0
         avg /= self.sample_num
 
         for pt_num in self.point_num_list:
