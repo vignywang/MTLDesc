@@ -9,6 +9,7 @@ from torch.nn import functional as f
 from torch.utils.data import Dataset
 
 from data_utils.dataset_tools import HomographyAugmentation, PhotometricAugmentation
+from data_utils.dataset_tools import space_to_depth
 from nets.megpoint_net import BaseMegPointNet
 
 
@@ -115,70 +116,31 @@ class LabelGenerator(nn.Module):
 
         # space_label = torch.where(torch.gt(final_prob, 0), torch.ones_like(final_prob), torch.zeros_like(final_prob))
 
-        image = org_image
+        image = org_image.squeeze()
 
         return image, point, point_mask
 
 
 class AdaptionDataset(Dataset):
 
-    def __init__(self, length, sampler_params):
+    def __init__(self, length, homography_params, photometric_params):
+        self.height = 240
+        self.width = 320
+        self.n_height = int(self.height/8)
+        self.n_width = int(self.width/8)
         self.sample_list = []
-        self.homography_sampler = HomographyAugmentation(**sampler_params)
+        self.homography = HomographyAugmentation(**homography_params)
+        self.photometric = PhotometricAugmentation(**photometric_params)
         self.cpu = torch.device("cpu:0")
         self.gpu = torch.device("cuda:0")
         self.dataset_length = length
+        self.center_grid = self._generate_center_grid()
 
     def __len__(self):
         return self.dataset_length
 
-    def __getitem__(self, idx):
-        sample = self.sample_list[idx]
-        image = sample["image"]
-        image_mask = torch.ones_like(image, dtype=torch.bool)
-        point = sample["point"]
-        point_mask = sample["point_mask"]
-
-        image, mask, point, point_mask = self.do_augmentation(image, image_mask, point, point_mask)
-        sample = {"image": image, "image_mask": image_mask, "point": point, "point_mask": point_mask}
-
-        return sample
-
-    def do_augmentation(self, image, image_mask, point, point_mask):
-        if np.random.randn() < 0.5:
-            aug_homo = self.homography_sampler.sample()
-        else:
-            aug_homo = np.eye(3)
-
-        # use opencv
-        org_image = ((image[0] + 1) * 255./2.).numpy().astype(np.uint8)
-        org_image_mask = image_mask[0].numpy().astype(np.float)
-        warped_image = cv.warpPerspective(org_image, aug_homo, dsize=(320, 240), flags=cv.INTER_LINEAR)
-        warped_image_mask = cv.warpPerspective(org_image_mask, aug_homo, dsize=(320, 240), flags=cv.INTER_LINEAR)
-        valid_mask = warped_image_mask.astype(np.uint8).astype(np.bool)
-
-        aug_image = torch.from_numpy(warped_image*2./255.-1).unsqueeze(dim=0).to(torch.float)
-        aug_image_mask = torch.from_numpy(valid_mask).unsqueeze(dim=0)
-
-        # use self-defined interpolation
-        # org_image = ((image + 1) * 255 / 2).unsqueeze(dim=0)
-        # org_image_mask = image_mask.to(torch.float).unsqueeze(dim=0)
-        # warped_image = interpolation(org_image, torch.from_numpy(aug_homo).unsqueeze(dim=0).to(torch.float))[0]
-        # warped_image_mask = interpolation(
-        #     org_image_mask, torch.from_numpy(aug_homo).unsqueeze(dim=0).to(torch.float))[0]
-        # valid_mask = warped_image_mask > 0.9
-
-        # aug_image = warped_image*2/255-1
-        # aug_image_mask = valid_mask
-
-        aug_point, aug_point_mask = projection(
-            point.unsqueeze(dim=0), torch.from_numpy(aug_homo).unsqueeze(dim=0).to(torch.float))
-        aug_point_mask *= point_mask
-
-        aug_point = aug_point[0]
-        aug_point_mask = aug_point_mask[0]
-
-        return aug_image, aug_image_mask, aug_point, aug_point_mask
+    def reset(self):
+        self.sample_list = []
 
     def append(self, image, point, point_mask):
         image = image.to(self.cpu)
@@ -189,21 +151,163 @@ class AdaptionDataset(Dataset):
                 "image": image[i], "point": point[i], "point_mask": point_mask[i]}
             self.sample_list.append(single_sample)
 
-    def reset(self):
-        self.sample_list = []
+    def __getitem__(self, idx):
+        sample = self.sample_list[idx]
 
-    def _sample_aug_homography(self, batch_size):
-        sampled_homo = []
-        for i in range(batch_size):
-            # debug use
-            # homo = np.eye(3)
-            if np.random.randn() < 0.5:
-                homo = self.homography_sampler.sample()
-            else:
-                homo = np.eye(3)
-            sampled_homo.append(homo)
-        sampled_homo = torch.from_numpy(np.stack(sampled_homo, axis=0)).to(torch.float)
-        return sampled_homo
+        # 1.从内存中读取图像以及对应的点标签
+        image = sample["image"].numpy()
+        image = ((image + 1.) * 255./2.).astype(np.uint8)
+        org_mask = np.ones_like(image)
+
+        point = sample["point"].numpy()
+        point_mask = sample["point_mask"].numpy()
+        valid_point_idx = np.nonzero(point_mask)
+        point = np.flip(point[valid_point_idx][:, :2], axis=1)  # [n,2] 顺序为y,x
+
+        # 1.1 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        if torch.rand([]).item() < 0.5:
+            warped_image = image.copy()
+            warped_org_mask = org_mask.copy()
+            warped_point = point.copy()
+            homography = np.eye(3)
+        else:
+            warped_image, warped_org_mask, warped_point, homography = self.homography(image, point, return_homo=True)
+
+        # 2.对图像光度进行增强
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+        if torch.rand([]).item() < 0.5:
+            warped_image = self.photometric(warped_image)
+
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
+        image = image*2./255. - 1.
+        warped_image = warped_image*2./255. - 1.
+
+        # 3. 对点和标签的相关处理
+        # 3.1 输入的点标签和掩膜的预处理
+        point = np.abs(np.floor(point)).astype(np.int)
+        warped_point = np.abs(np.floor(warped_point)).astype(np.int)
+        point = torch.from_numpy(point)
+        warped_point = torch.from_numpy(warped_point)
+        org_mask = torch.from_numpy(org_mask)
+        warped_org_mask = torch.from_numpy(warped_org_mask)
+
+        # 3.2 得到第一副图点和标签的最终输出
+        label = self._convert_points_to_label(point).to(torch.long)
+        mask = space_to_depth(org_mask).to(torch.uint8)
+        mask = torch.all(mask, dim=0).to(torch.float)
+
+        # 3.3 得到第二副图点和标签的最终输出
+        warped_label = self._convert_points_to_label(warped_point).to(torch.long)
+        warped_mask = space_to_depth(warped_org_mask).to(torch.uint8)
+        warped_mask = torch.all(warped_mask, dim=0).to(torch.float)
+
+        # 4. 构造描述子loss有关关系的计算
+        # 4.1 得到第二副图中有效描述子的掩膜
+        warped_valid_mask = warped_mask.reshape((-1,))
+
+        # 4.2 根据指定的loss类型计算不同的关系，
+        #     triplet要计算匹配对应关系，匹配有效掩膜，匹配点与其他点的近邻关系
+        matched_idx, matched_valid, not_search_mask, warped_grid, matched_grid, warped_valid_mask = \
+            self.generate_corresponding_relationship(homography, warped_valid_mask)
+        matched_idx = torch.from_numpy(matched_idx)
+        matched_valid = torch.from_numpy(matched_valid).to(torch.float)
+        not_search_mask = torch.from_numpy(not_search_mask)
+        warped_grid = torch.from_numpy(warped_grid)
+        matched_grid = torch.from_numpy(matched_grid)
+        warped_valid_mask = torch.from_numpy(warped_valid_mask)
+
+        return {'image': image, 'mask': mask, 'label': label,
+                'warped_image': warped_image, 'warped_mask': warped_mask, 'warped_label': warped_label,
+                'matched_idx': matched_idx, 'matched_valid': matched_valid,
+                'not_search_mask': not_search_mask,
+                'warped_grid': warped_grid, 'matched_grid': matched_grid, 'warped_valid_mask': warped_valid_mask}
+
+    def _convert_points_to_label(self, points):
+
+        height = self.height
+        width = self.width
+        n_height = int(height / 8)
+        n_width = int(width / 8)
+        assert n_height * 8 == height and n_width * 8 == width
+
+        num_pt = points.shape[0]
+        label = torch.zeros((height * width))
+        if num_pt > 0:
+            points_h, points_w = torch.split(points, 1, dim=1)
+            points_idx = points_w + points_h * width
+            label = label.scatter_(dim=0, index=points_idx[:, 0], value=1.0).reshape((height, width))
+        else:
+            label = label.reshape((height, width))
+
+        dense_label = space_to_depth(label)
+        dense_label = torch.cat((dense_label, 0.5 * torch.ones((1, n_height, n_width))), dim=0)  # [65, 30, 40]
+        sparse_label = torch.argmax(dense_label, dim=0)  # [30,40]
+
+        return sparse_label
+
+    def _generate_center_grid(self, patch_height=8, patch_width=8):
+        n_height = int(self.height/patch_height)
+        n_width = int(self.width/patch_width)
+        center_grid = []
+        for i in range(n_height):
+            for j in range(n_width):
+                h = (patch_height-1.)/2. + i*patch_height
+                w = (patch_width-1.)/2. + j*patch_width
+                center_grid.append((w, h))
+        center_grid = np.stack(center_grid, axis=0)
+        return center_grid
+
+    def _generate_descriptor_mask(self, homography):
+
+        center_grid, warped_center_grid = self.__compute_warped_center_grid(homography)
+
+        center_grid = np.expand_dims(center_grid, axis=0)  # [1,n,2]
+        warped_center_grid = np.expand_dims(warped_center_grid, axis=1)  # [n,1,2]
+
+        dist = np.linalg.norm((warped_center_grid-center_grid), axis=2)  # [n,n]
+        mask = (dist < 8.).astype(np.float32)
+
+        return mask
+
+    def generate_corresponding_relationship(self, homography, valid_mask):
+
+        center_grid, warped_center_grid = self.__compute_warped_center_grid(homography)
+
+        dist = np.linalg.norm(warped_center_grid[:, np.newaxis, :]-center_grid[np.newaxis, :, :], axis=2)
+        nearest_idx = np.argmin(dist, axis=1)
+        nearest_dist = np.min(dist, axis=1)
+        matched_valid = nearest_dist < 8.
+
+        matched_grid = center_grid[nearest_idx, :]
+        diff = np.linalg.norm(matched_grid[:, np.newaxis, :] - matched_grid[np.newaxis, :, :], axis=2)
+
+        # nearest = diff < 8.
+        nearest = diff < 16.
+        valid_mask = valid_mask.numpy().astype(np.bool)
+        valid_mask = valid_mask[nearest_idx]
+        invalid = ~valid_mask[np.newaxis, :]
+
+        not_search_mask = (nearest | invalid).astype(np.float32)
+        matched_valid = matched_valid & valid_mask
+        valid_mask = valid_mask.astype(np.float32)
+
+        return nearest_idx, matched_valid, not_search_mask, warped_center_grid, matched_grid, valid_mask
+
+    def __compute_warped_center_grid(self, homography, return_org_center_grid=True):
+
+        center_grid = self.center_grid.copy()  # [n,2]
+        num = center_grid.shape[0]
+        ones = np.ones((num, 1), dtype=np.float)
+        homo_center_grid = np.concatenate((center_grid, ones), axis=1)[:, :, np.newaxis]  # [n,3,1]
+        warped_homo_center_grid = np.matmul(homography, homo_center_grid)
+        warped_center_grid = warped_homo_center_grid[:, :2, 0] / warped_homo_center_grid[:, 2:, 0]  # [n,2]
+
+        if return_org_center_grid:
+            return center_grid, warped_center_grid
+        else:
+            return warped_center_grid
 
 
 def interpolation(image, homo):
@@ -260,7 +364,7 @@ def interpolation(image, homo):
     return bilinear_img
 
 
-def space_to_depth(org_label, is_bool=False):
+def batch_space_to_depth(org_label, is_bool=False):
     batch_size, _, h, w = org_label.shape
     n_patch_h = h // 8
     n_patch_w = w // 8

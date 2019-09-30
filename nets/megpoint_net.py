@@ -58,18 +58,42 @@ class BaseMegPointNet(nn.Module):
         return logit, prob
 
 
-class MegPointNet(nn.Module):
+class MegPointNet(BaseMegPointNet):
 
     def __init__(self):
         super(MegPointNet, self).__init__()
-        self.base_megpoint = BaseMegPointNet()
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
 
     def forward(self, x):
-        return self.base_megpoint(x)
+        x = self.relu(self.conv1a(x))
+        x = self.relu(self.conv1b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv2a(x))
+        x = self.relu(self.conv2b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv3a(x))
+        x = self.relu(self.conv3b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv4a(x))
+        x = self.relu(self.conv4b(x))
+
+        # detect head
+        cPa = self.relu(self.convPa(x))
+        logit = self.convPb(cPa)
+        prob = self.softmax(logit)[:, :-1, :, :]
+
+        # descriptor head
+        cDa = self.relu(self.convDa(x))
+        feature = self.convDb(cDa)
+
+        dn = torch.norm(feature, p=2, dim=1, keepdim=True)
+        desc = feature.div(dn)
+
+        return logit, prob, desc
+
 
 
 

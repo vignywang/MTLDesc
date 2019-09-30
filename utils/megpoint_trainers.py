@@ -8,24 +8,25 @@ import time
 import torch
 import torch.nn.functional as f
 import numpy as np
+import cv2 as cv
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
-from data_utils.megpoint_dataset import AdaptionDataset, LabelGenerator
-from data_utils.megpoint_dataset import interpolation
-from data_utils.megpoint_dataset import space_to_depth
-from data_utils.megpoint_dataset import convert_point_to_label
-from data_utils.megpoint_dataset import projection
 from nets.megpoint_net import MegPointNet
 
-from utils.utils import spatial_nms
+from data_utils.megpoint_dataset import AdaptionDataset, LabelGenerator
 from data_utils.coco_dataset import COCOMegPointAdaptionDataset
 from data_utils.hpatch_dataset import HPatchDataset
+from data_utils.dataset_tools import HomographyAugmentation
+
 from utils.evaluation_tools import RepeatabilityCalculator
 from utils.evaluation_tools import MovingAverage
 from utils.evaluation_tools import PointStatistics
-from data_utils.dataset_tools import HomographyAugmentation
-from data_utils.dataset_tools import debug_draw_image_keypoints
+from utils.evaluation_tools import HomoAccuracyCalculator
+from utils.evaluation_tools import MeanMatchingAccuracy
+from utils.utils import spatial_nms
+from utils.utils import DescriptorTripletLoss
+from utils.utils import Matcher
 
 
 class MegPointTrainerTester(object):
@@ -102,10 +103,10 @@ class MegPointTrainerTester(object):
             return False
 
         self.logger.info("Load pretrained model %s " % ckpt_file)
-        model_dict = self.model.base_megpoint.state_dict()
+        model_dict = self.model.state_dict()
         pretrain_dict = torch.load(ckpt_file, map_location=self.device)
         model_dict.update(pretrain_dict)
-        self.model.base_megpoint.load_state_dict(model_dict)
+        self.model.load_state_dict(model_dict)
 
         return True
 
@@ -125,7 +126,8 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         self.logger.info("Only to process %d batches(max: %d), total: %d samples" %
                          (self.total_batch, self.epoch_length, int(self.total_batch*self.batch_size)))
 
-        self.adaption_dataset = AdaptionDataset(int(self.total_batch*self.batch_size), params.aug_homography_params)
+        self.adaption_dataset = AdaptionDataset(
+            int(self.total_batch*self.batch_size), params.aug_homography_params, params.photometric_params)
         self.raw_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=False,
                                          num_workers=self.num_workers, drop_last=False)
         self.train_dataloader = DataLoader(self.adaption_dataset, self.batch_size, shuffle=True,
@@ -134,23 +136,15 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         self.test_dataset = HPatchDataset(params)
         self.test_length = len(self.test_dataset)
 
-        # 初始化验证算子
-        self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, correct_epsilon: %d'
-                         % (self.detection_threshold, self.correct_epsilon))
-        self.logger.info('Top k: %d' % self.top_k)
+        # 初始化各种验证算子
+        self._initialize_test_calculator(params)
 
-        self.illum_repeat = RepeatabilityCalculator(params.correct_epsilon)
-        self.illum_repeat_mov = MovingAverage()
-
-        self.view_repeat = RepeatabilityCalculator(params.correct_epsilon)
-        self.view_repeat_mov = MovingAverage()
-
-        self.point_statistics = PointStatistics()
+        # 初始化匹配算子
+        self.general_matcher = Matcher('float')
 
         # 初始化单应变换采样算子
         self.sample_num = params.sample_num
         self.homography_sampler = HomographyAugmentation(**params.homography_params)
-        self.aug_homography_sampler = HomographyAugmentation(**params.aug_homography_params)
 
         # 初始化模型
         self.model = MegPointNet()
@@ -163,9 +157,11 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         self.label_generator = LabelGenerator(params)
 
         # 初始化loss算子
-        # loss_weight = torch.ones(64, dtype=torch.float, device=self.device) * 10
-        # loss_weight = torch.cat((loss_weight, torch.ones((1,), device=self.device)), dim=0)
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
+        self.descriptor_loss = DescriptorTripletLoss(device=self.device)
+
+        # 初始化loss相关的权重
+        self.descriptor_weight = params.descriptor_weight
 
         # 若有多gpu设置则加载多gpu
         if self.multi_gpus:
@@ -176,7 +172,6 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
 
         # 初始化优化器算子
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        # self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
 
         # 初始化学习率调整算子
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.1)
@@ -198,22 +193,22 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         # 将当前网络的参数读入到标注网络之中
         self.logger.info("Load current model parameters of epoch %d " % epoch_idx)
         if self.multi_gpus:
-            model_dict = self.model.module.base_megpoint.state_dict()
+            model_dict = self.model.module.state_dict()
             generator_model_dict = self.label_generator.module.base_megpoint.state_dict()
             generator_model_dict.update(model_dict)
             self.label_generator.module.base_megpoint.load_state_dict(generator_model_dict)
         else:
-            model_dict = self.model.base_megpoint.state_dict()
+            model_dict = self.model.state_dict()
             label_generator_model_dict = self.label_generator.base_megpoint.state_dict()
             label_generator_model_dict.update(model_dict)
             self.label_generator.base_megpoint.load_state_dict(label_generator_model_dict)
 
         if epoch_idx == 0:
-            detection_threshold = self.detection_threshold
-            self.logger.info("Labeling, detection_threshold=%.4f" % detection_threshold)
+            adaption_threshold = self.detection_threshold
+            self.logger.info("Labeling, adaption_detection_threshold=%.4f" % adaption_threshold)
         else:
-            detection_threshold = self.detection_threshold*2.0
-            self.logger.info("Labeling, detection_threshold=%.4f" % detection_threshold)
+            adaption_threshold = self.detection_threshold*2.0
+            self.logger.info("Labeling, adaption_detection_threshold=%.4f" % adaption_threshold)
 
         start_time = time.time()
         stime = time.time()
@@ -231,7 +226,7 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
             sampled_homo = sampled_homo.to(self.device)
             sampled_inv_homo = sampled_inv_homo.to(self.device)
 
-            image, point, point_mask = self.label_generator(image, sampled_homo, sampled_inv_homo, detection_threshold)
+            image, point, point_mask = self.label_generator(image, sampled_homo, sampled_inv_homo, adaption_threshold)
             self.adaption_dataset.append(image, point, point_mask)
             count += 1
             if i % self.log_freq == 0:
@@ -255,19 +250,35 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
 
         self.model.train()
         for i, data in enumerate(self.train_dataloader):
-            image = data['image'].to(self.device)  # [bt,1,240,320]
-            image_mask = data["image_mask"].to(self.device)
-            point = data["point"].to(self.device)
-            point_mask = data["point_mask"].to(self.device)
 
-            # convert to label
-            space_label = convert_point_to_label(point, point_mask)
-            sparse_label = space_to_depth(space_label)
-            sparse_mask = space_to_depth(image_mask, True).to(torch.float)
+            image = data['image'].to(self.device)
+            label = data['label'].to(self.device)
+            mask = data['mask'].to(self.device)
 
-            logit, _ = self.model(image)
-            unmasked_loss = self.cross_entropy_loss(logit, sparse_label)
-            loss = self._compute_masked_loss(unmasked_loss, sparse_mask)
+            warped_image = data['warped_image'].to(self.device)
+            warped_label = data['warped_label'].to(self.device)
+            warped_mask = data['warped_mask'].to(self.device)
+
+            matched_idx = data['matched_idx'].to(self.device)
+            matched_valid = data['matched_valid'].to(self.device)
+            not_search_mask = data['not_search_mask'].to(self.device)
+
+            shape = image.shape
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            label_pair = torch.cat((label, warped_label), dim=0)
+            mask_pair = torch.cat((mask, warped_mask), dim=0)
+            logit_pair, _, desp_pair = self.model(image_pair)
+
+            unmasked_point_loss = self.cross_entropy_loss(logit_pair, label_pair)
+            point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
+
+            desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
+
+            desp_loss = self.descriptor_loss(
+                desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
+
+            loss = point_loss + self.descriptor_weight*desp_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -277,38 +288,26 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
 
             self.optimizer.step()
 
-            loss_val = loss.item()
-            if loss_val > 0.9:
-                debug_point = 3
-
             if i % self.log_freq == 0:
-                step = int(i+epoch_idx*len(self.adaption_dataset)/self.batch_size)
-                debug_image = ((image+1.)*255./2.).detach().cpu().numpy()
-                debug_space_label = space_label.detach().cpu().numpy()
-                image_points = debug_draw_image_keypoints(debug_image, debug_space_label)
 
-                self.summary_writer.add_image("image_points", image_points, step)
-                self.summary_writer.add_scalar('loss', loss, step)
-                self.summary_writer.add_histogram("logit", logit, step)
+                point_loss_val = point_loss.item()
+                desp_loss_val = desp_loss.item()
+                loss_val = loss.item()
 
-                if not self.multi_gpus:
-                    self.summary_writer.add_histogram(
-                        "convPb.weight", self.model.base_megpoint.state_dict()["convPb.weight"], step)
-                else:
-                    self.summary_writer.add_histogram(
-                        "convPb.weight", self.model.module.base_megpoint.state_dict()["convPb.weight"], step)
-                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f,"
+                self.summary_writer.add_histogram('descriptor', desp_pair)
+                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
                                  " one step cost %.4fs. "
                                  % (epoch_idx, i, self.epoch_length, loss_val,
-                                    (time.time() - stime) / self.log_freq,
+                                    point_loss_val, desp_loss_val,
+                                    (time.time() - stime) / self.params.log_freq,
                                     ))
                 stime = time.time()
 
         # save the model
         if self.multi_gpus:
-            torch.save(self.model.module.base_megpoint.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
         else:
-            torch.save(self.model.base_megpoint.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
 
         self.logger.info("Training epoch %2d done." % epoch_idx)
         self.logger.info("-----------------------------------------------------")
@@ -319,13 +318,23 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
 
         self._test_model_general(epoch_idx)
 
+        illum_homo_moving_acc = self.illum_homo_acc_mov.average()
+        view_homo_moving_acc = self.view_homo_acc_mov.average()
+
+        illum_mma_moving_acc = self.illum_mma_mov.average()
+        view_mma_moving_acc = self.view_mma_mov.average()
+
         illum_repeat_moving_acc = self.illum_repeat_mov.average()
         view_repeat_moving_acc = self.view_repeat_mov.average()
 
-        current_size = self.illum_repeat_mov.current_size()
+        current_size = self.view_mma_mov.current_size()
 
         self.logger.info("---------------------------------------------")
         self.logger.info("Moving Average of %d models:" % current_size)
+        self.logger.info("illum_homo_moving_acc=%.4f, view_homo_moving_acc=%.4f" %
+                         (illum_homo_moving_acc, view_homo_moving_acc))
+        self.logger.info("illum_mma_moving_acc=%.4f, view_mma_moving_acc=%.4f" %
+                         (illum_mma_moving_acc, view_mma_moving_acc))
         self.logger.info("illum_repeat_moving_acc=%.4f, view_repeat_moving_acc=%.4f" %
                          (illum_repeat_moving_acc, view_repeat_moving_acc))
         self.logger.info("---------------------------------------------")
@@ -337,19 +346,18 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         self.model.eval()
         # 重置测评算子参数
         self.illum_repeat.reset()
+        self.illum_homo_acc.reset()
+        self.illum_mma.reset()
         self.view_repeat.reset()
+        self.view_homo_acc.reset()
+        self.view_mma.reset()
         self.point_statistics.reset()
 
         start_time = time.time()
         count = 0
         skip = 0
 
-        if epoch_idx == 0:
-            detection_threshold = self.detection_threshold
-            self.logger.info("Test, detection_threshold=%.4f" % detection_threshold)
-        else:
-            detection_threshold = self.detection_threshold * 2.0
-            self.logger.info("Test, detection_threshold=%.4f" % detection_threshold)
+        self.logger.info("Test, detection_threshold=%.4f" % self.detection_threshold)
 
         for i, data in enumerate(self.test_dataset):
             first_image = data['first_image']
@@ -359,32 +367,53 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
 
             image_pair = np.stack((first_image, second_image), axis=0)
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
-            image_pair = image_pair*2/255. - 1.
             # debug released mode use
             # image_pair /= 255.
+            image_pair = image_pair * 2. / 255. - 1.
 
-            _, prob_pair = self.model(image_pair)
+            _, prob_pair, desp_pair = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
-            prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold*2+1))
+            prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold * 2 + 1))
 
+            desp_pair = desp_pair.detach().cpu().numpy()
+            first_desp = desp_pair[0]
+            second_desp = desp_pair[1]
             prob_pair = prob_pair.detach().cpu().numpy()
             first_prob = prob_pair[0, 0]
             second_prob = prob_pair[1, 0]
 
             # 得到对应的预测点
-            first_point, first_point_num = self._generate_predict_point(
-                first_prob, detection_threshold, top_k=self.top_k)  # [n,2]
-            second_point, second_point_num = self._generate_predict_point(
-                second_prob, detection_threshold, top_k=self.top_k)  # [m,2]
+            first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+            second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
 
+            # 得到点对应的描述子
+            select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
+            select_second_desp = self._generate_predict_descriptor(second_point, second_desp)
+
+            # 若未能检测出点，则跳过这一对测试样本
             if first_point_num == 0 or second_point_num == 0:
                 skip += 1
                 continue
+
+            # 得到匹配点
+            matched_point = self.general_matcher(first_point, select_first_desp,
+                                                 second_point, select_second_desp)
+
+            # 计算得到单应变换
+            pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                   matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
+
             # 对单样本进行测评
             if image_type == 'illumination':
                 self.illum_repeat.update(first_point, second_point, gt_homography)
+                self.illum_homo_acc.update(pred_homography, gt_homography)
+                self.illum_mma.update(gt_homography, matched_point)
+
             elif image_type == 'viewpoint':
                 self.view_repeat.update(first_point, second_point, gt_homography)
+                self.view_homo_acc.update(pred_homography, gt_homography)
+                self.view_mma.update(gt_homography, matched_point)
+
             else:
                 print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
                       "Please check !")
@@ -397,8 +426,6 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time() - start_time)))
                 start_time = time.time()
             count += 1
-            # if count % 1000 == 0:
-            #     break
 
         # 计算各自的重复率以及总的重复率
         illum_repeat, view_repeat, total_repeat = self._compute_total_metric(self.illum_repeat,
@@ -406,16 +433,34 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         self.illum_repeat_mov.push(illum_repeat)
         self.view_repeat_mov.push(view_repeat)
 
+        # 计算估计的单应变换准确度
+        illum_homo_acc, view_homo_acc, total_homo_acc = self._compute_total_metric(self.illum_homo_acc,
+                                                                                   self.view_homo_acc)
+        self.illum_homo_acc_mov.push(illum_homo_acc)
+        self.view_homo_acc_mov.push(view_homo_acc)
+
+        # 计算匹配的准确度
+        illum_match_acc, view_match_acc, total_match_acc = self._compute_total_metric(self.illum_mma,
+                                                                                      self.view_mma)
+        self.illum_mma_mov.push(illum_match_acc)
+        self.view_mma_mov.push(view_match_acc)
+
         # 统计最终的检测点数目的平均值和方差
         point_avg, point_std = self.point_statistics.average()
 
-        self.logger.info("Skip point num: %d" % skip)
+        self.logger.info("Homography Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_homo_acc, view_homo_acc, total_homo_acc))
+        self.logger.info("Mean Matching Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f " %
+                         (illum_match_acc, view_match_acc, total_match_acc))
         self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
                          (illum_repeat, view_repeat, total_repeat))
         self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
 
-        # 将测试结果写入summaryWriter中，方便在tensorboard中查看
+        self.summary_writer.add_scalar("illumination/Homography_Accuracy", illum_homo_acc, epoch_idx)
+        self.summary_writer.add_scalar("illumination/Mean_Matching_Accuracy", illum_match_acc, epoch_idx)
         self.summary_writer.add_scalar("illumination/Repeatability", illum_repeat, epoch_idx)
+        self.summary_writer.add_scalar("viewpoint/Homography_Accuracy", view_homo_acc, epoch_idx)
+        self.summary_writer.add_scalar("viewpoint/Mean_Matching_Accuracy", view_match_acc, epoch_idx)
         self.summary_writer.add_scalar("viewpoint/Repeatability", view_repeat, epoch_idx)
 
     @staticmethod
@@ -424,8 +469,8 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         view_acc, view_sum, view_num = view_metric.average()
         return illum_acc, view_acc, (illum_sum+view_sum)/(illum_num+view_num+1e-4)
 
-    def _generate_predict_point(self, prob, detection_threshold, scale=None, top_k=0):
-        point_idx = np.where(prob > detection_threshold)
+    def _generate_predict_point(self, prob, scale=None, top_k=0):
+        point_idx = np.where(prob > self.detection_threshold)
         prob = prob[point_idx]
         sorted_idx = np.argsort(prob)[::-1]
         if sorted_idx.shape[0] >= top_k:
@@ -443,6 +488,106 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
         if scale is not None:
             point = point*scale
         return point, point_num
+
+    def _generate_predict_descriptor(self, point, desp):
+        point = torch.from_numpy(point).to(torch.float)  # 由于只有pytorch有gather的接口，因此将点调整为pytorch的格式
+        desp = torch.from_numpy(desp)
+        dim, h, w = desp.shape
+        desp = torch.reshape(desp, (dim, -1))
+        desp = torch.transpose(desp, dim0=1, dim1=0)  # [h*w,256]
+
+        # 下采样
+        scaled_point = point / 8
+        point_y = scaled_point[:, 0:1]  # [n,1]
+        point_x = scaled_point[:, 1:2]
+
+        x0 = torch.floor(point_x)
+        x1 = x0 + 1
+        y0 = torch.floor(point_y)
+        y1 = y0 + 1
+        x_nearest = torch.round(point_x)
+        y_nearest = torch.round(point_y)
+
+        x0_safe = torch.clamp(x0, min=0, max=w-1)
+        x1_safe = torch.clamp(x1, min=0, max=w-1)
+        y0_safe = torch.clamp(y0, min=0, max=h-1)
+        y1_safe = torch.clamp(y1, min=0, max=h-1)
+
+        x_nearest_safe = torch.clamp(x_nearest, min=0, max=w-1)
+        y_nearest_safe = torch.clamp(y_nearest, min=0, max=h-1)
+
+        idx_00 = (x0_safe + y0_safe*w).to(torch.long).repeat((1, dim))
+        idx_01 = (x0_safe + y1_safe*w).to(torch.long).repeat((1, dim))
+        idx_10 = (x1_safe + y0_safe*w).to(torch.long).repeat((1, dim))
+        idx_11 = (x1_safe + y1_safe*w).to(torch.long).repeat((1, dim))
+        idx_nearest = (x_nearest_safe + y_nearest_safe*w).to(torch.long).repeat((1, dim))
+
+        d_x = point_x - x0_safe
+        d_y = point_y - y0_safe
+        d_1_x = x1_safe - point_x
+        d_1_y = y1_safe - point_y
+
+        desp_00 = torch.gather(desp, dim=0, index=idx_00)
+        desp_01 = torch.gather(desp, dim=0, index=idx_01)
+        desp_10 = torch.gather(desp, dim=0, index=idx_10)
+        desp_11 = torch.gather(desp, dim=0, index=idx_11)
+        nearest_desp = torch.gather(desp, dim=0, index=idx_nearest)
+        bilinear_desp = desp_00*d_1_x*d_1_y + desp_01*d_1_x*d_y + desp_10*d_x*d_1_y+desp_11*d_x*d_y
+
+        # todo: 插值得到的描述子不再满足模值为1，强行归一化到模值为1，这里可能有问题
+        condition = torch.eq(torch.norm(bilinear_desp, dim=1, keepdim=True), 0)
+        interpolation_desp = torch.where(condition, nearest_desp, bilinear_desp)
+        # interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
+        # interpolation_desp = interpolation_desp/interpolation_norm
+
+        return interpolation_desp.numpy()
+
+    def _initialize_test_calculator(self, params):
+        # 初始化验证算子
+        self.logger.info('Initialize the homography accuracy calculator, correct_epsilon: %d' % self.correct_epsilon)
+        self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, correct_epsilon: %d'
+                         % (self.detection_threshold, self.correct_epsilon))
+        self.logger.info('Top k: %d' % self.top_k)
+
+        self.illum_repeat = RepeatabilityCalculator(params.correct_epsilon)
+        self.illum_repeat_mov = MovingAverage()
+
+        self.view_repeat = RepeatabilityCalculator(params.correct_epsilon)
+        self.view_repeat_mov = MovingAverage()
+
+        self.illum_homo_acc = HomoAccuracyCalculator(params.correct_epsilon,
+                                                     params.hpatch_height, params.hpatch_width)
+        self.illum_homo_acc_mov = MovingAverage()
+
+        self.view_homo_acc = HomoAccuracyCalculator(params.correct_epsilon,
+                                                    params.hpatch_height, params.hpatch_width)
+        self.view_homo_acc_mov = MovingAverage()
+
+        self.illum_mma = MeanMatchingAccuracy(params.correct_epsilon)
+        self.illum_mma_mov = MovingAverage()
+
+        self.view_mma = MeanMatchingAccuracy(params.correct_epsilon)
+        self.view_mma_mov = MovingAverage()
+
+        # 初始化用于浮点型描述子的测试方法
+        self.illum_homo_acc_f = HomoAccuracyCalculator(params.correct_epsilon,
+                                                       params.hpatch_height, params.hpatch_width)
+        self.view_homo_acc_f = HomoAccuracyCalculator(params.correct_epsilon,
+                                                      params.hpatch_height, params.hpatch_width)
+
+        self.illum_mma_f = MeanMatchingAccuracy(params.correct_epsilon)
+        self.view_mma_f = MeanMatchingAccuracy(params.correct_epsilon)
+
+        # 初始化用于二进制描述子的测试方法
+        self.illum_homo_acc_b = HomoAccuracyCalculator(params.correct_epsilon,
+                                                       params.hpatch_height, params.hpatch_width)
+        self.view_homo_acc_b = HomoAccuracyCalculator(params.correct_epsilon,
+                                                      params.hpatch_height, params.hpatch_width)
+
+        self.illum_mma_b = MeanMatchingAccuracy(params.correct_epsilon)
+        self.view_mma_b = MeanMatchingAccuracy(params.correct_epsilon)
+
+        self.point_statistics = PointStatistics()
 
     def _sample_homography(self, batch_size):
         # 采样单应变换
@@ -462,33 +607,6 @@ class MegPointAdaptionTrainer(MegPointTrainerTester):
 
         return sampled_homo, sampled_inv_homo
 
-    def _sample_aug_homography(self, batch_size):
-        sampled_homo = []
-        for i in range(batch_size):
-            # debug use
-            # homo = np.eye(3)
-            if np.random.randn() < 0.5:
-                homo = self.aug_homography_sampler.sample()
-            else:
-                homo = np.eye(3)
-            sampled_homo.append(homo)
-        sampled_homo = torch.from_numpy(np.stack(sampled_homo, axis=0)).to(torch.float)
-        return sampled_homo
-
-    def do_augmentation(self, image, image_mask, point, point_mask):
-        shape = image.shape
-        device = image.device
-        aug_homo = self._sample_aug_homography(shape[0]).to(device)
-        rescale_image = (image + 1)*255/2
-        aug_image = interpolation(rescale_image, aug_homo).round().clamp(0, 255)
-        aug_image = aug_image*2/255 - 1
-        aug_image_mask = interpolation(image_mask.to(torch.float), aug_homo)
-        aug_image_mask = torch.gt(aug_image_mask, 0.9)
-
-        aug_point, aug_point_mask = projection(point, aug_homo)
-        aug_point_mask *= point_mask
-
-        return aug_image, aug_image_mask, aug_point, aug_point_mask
 
 
 

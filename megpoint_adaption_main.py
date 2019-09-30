@@ -33,6 +33,9 @@ class MegPointAdaptionParameters(BasicParameters):
         self.detection_threshold = 0.005
         self.train_top_k = 150
 
+        # loss权重有关
+        self.descriptor_weight = 1.0
+
         # homography & photometric relating params using in training
         self.homography_params = {
             'patch_ratio': 0.8,  # 0.8,
