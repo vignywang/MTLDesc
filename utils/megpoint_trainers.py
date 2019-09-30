@@ -11,13 +11,12 @@ import numpy as np
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
-from data_utils.megpoint_dataset import AdaptionDataset
+from data_utils.megpoint_dataset import AdaptionDataset, LabelGenerator
 from data_utils.megpoint_dataset import interpolation
 from data_utils.megpoint_dataset import space_to_depth
 from data_utils.megpoint_dataset import convert_point_to_label
 from data_utils.megpoint_dataset import projection
 from nets.megpoint_net import MegPointNet
-from nets.megpoint_net import LabelGenerator
 
 from utils.utils import spatial_nms
 from data_utils.coco_dataset import COCOMegPointAdaptionDataset
