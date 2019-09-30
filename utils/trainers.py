@@ -857,8 +857,8 @@ class SuperPoint(TrainerTester):
             not_search_mask = data['not_search_mask'].to(self.device)
 
             # debug use
-            warped_grid = data['warped_grid'].to(self.device)
-            matched_grid = data['matched_grid'].to(self.device)
+            # warped_grid = data['warped_grid'].to(self.device)
+            # matched_grid = data['matched_grid'].to(self.device)
 
             shape = image.shape
 
