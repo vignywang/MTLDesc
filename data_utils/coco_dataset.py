@@ -298,7 +298,8 @@ class COCOSuperPointTrainDataset(Dataset):
 
         # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
         # if np.random.rand() < 1.0:  # debug use
-        if np.random.rand() < 0.5:
+        if torch.rand([]).item() < 0.5:
+        # if np.random.rand() < 0.5:
              warped_image, warped_org_mask, warped_point, homography = \
              image.copy(), org_mask.copy(), point.copy(), np.eye(3)
         else:
@@ -307,9 +308,11 @@ class COCOSuperPointTrainDataset(Dataset):
         # cv_image_keypoint = draw_image_keypoints(warped_image, warped_point)
 
         # 1、对图像的相关处理
-        if np.random.rand() < 0.5:
+        if torch.rand([]).item() < 0.5:
+        # if np.random.rand() < 0.5:
             image = self.photometric(image)
-        if np.random.rand() < 0.5:
+        if torch.rand([]).item() < 0.5:
+        # if np.random.rand() < 0.5:
             warped_image = self.photometric(warped_image)
 
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)

@@ -110,9 +110,13 @@ class HomographyAugmentation(object):
             if not self.allow_artifacts:
                 perspective_amplitude_x = min(self.perspective_amplitude_x, margin)
                 perspective_amplitude_y = min(self.perspective_amplitude_y, margin)
-            y_displacement = np.random.uniform(-perspective_amplitude_y, perspective_amplitude_y)
-            x_displacement_left = np.random.uniform(-perspective_amplitude_x, perspective_amplitude_x)
-            x_displacement_right = np.random.uniform(-perspective_amplitude_x, perspective_amplitude_x)
+            tmp_tensor = torch.ones([], dtype=torch.float)
+            y_displacement = tmp_tensor.uniform_(-perspective_amplitude_y, perspective_amplitude_y).item()
+            x_displacement_left = tmp_tensor.uniform_(-perspective_amplitude_x, perspective_amplitude_x).item()
+            x_displacement_right = tmp_tensor.uniform_(-perspective_amplitude_x, perspective_amplitude_x).item()
+            # y_displacement = np.random.uniform(-perspective_amplitude_y, perspective_amplitude_y)
+            # x_displacement_left = np.random.uniform(-perspective_amplitude_x, perspective_amplitude_x)
+            # x_displacement_right = np.random.uniform(-perspective_amplitude_x, perspective_amplitude_x)
 
             pts_2 += np.array(((x_displacement_left, y_displacement),
                                (x_displacement_left, -y_displacement),
@@ -122,11 +126,12 @@ class HomographyAugmentation(object):
         # 进行尺度变换
         if self.do_scaling:
             # 得到n+1个尺度参数，其中最后一个为1，即不进行尺度化
-            # scales = np.concatenate((np.random.normal(1, self.scaling_amplitude, (self.scaling_sample_num,)),
+            random_scales = torch.ones((self.scaling_sample_num,), dtype=torch.float).uniform_(
+                1-self.scaling_amplitude, 1+self.scaling_amplitude).numpy()
+            scales = np.concatenate((random_scales, np.ones((1,))), axis=0)
+            # scales = np.concatenate((np.random.uniform(1-self.scaling_amplitude, 1+self.scaling_amplitude,
+            #                                            size=(self.scaling_sample_num,)),
             #                          np.ones((1,))), axis=0)
-            scales = np.concatenate((np.random.uniform(1-self.scaling_amplitude, 1+self.scaling_amplitude,
-                                                       size=(self.scaling_sample_num,)),
-                                     np.ones((1,))), axis=0)
             # 中心点不变的尺度缩放
             center = np.mean(pts_2, axis=0, keepdims=True)
             scaled = np.expand_dims(pts_2 - center, axis=0) * np.expand_dims(np.expand_dims(scales, 1), 1) + center
@@ -134,18 +139,24 @@ class HomographyAugmentation(object):
                 valid = np.arange(self.scaling_sample_num + 1)
             else:
                 valid = np.where(np.all((scaled >= 0.) & (scaled < 1.), axis=(1, 2)))[0]
-            idx = valid[np.random.randint(0, valid.shape[0])]
+            random_idx = torch.randint(0, valid.shape[0], size=[]).item()
+            idx = valid[random_idx]
+            # idx = valid[np.random.randint(0, valid.shape[0])]
             # 从n_scales个随机的缩放中随机地取一个出来
             pts_2 = scaled[idx]
 
         # 进行平移变换
         if self.do_translation:
-            t_min, t_max = np.min(pts_2, axis=0), np.min(1 - pts_2, axis=0)
+            t_min, t_max = np.min(np.abs(pts_2), axis=0), np.min(np.abs(1 - pts_2), axis=0)
+            # t_min, t_max = np.min(pts_2, axis=0), np.min(1 - pts_2, axis=0)
             if self.allow_artifacts:
                 t_min += self.translation_overflow
                 t_max += self.translation_overflow
-            pts_2 += np.expand_dims(np.stack((np.random.uniform(-t_min[0], t_max[0]),
-                                              np.random.uniform(-t_min[1], t_max[1]))), axis=0)
+            random_t_0 = torch.ones([]).uniform_(-t_min[0], t_max[0]).item()
+            random_t_1 = torch.ones([]).uniform_(-t_min[1], t_max[1]).item()
+            pts_2 += np.expand_dims(np.stack((random_t_0, random_t_1)), axis=0)
+            # pts_2 += np.expand_dims(np.stack((np.random.uniform(-t_min[0], t_max[0]),
+            #                                   np.random.uniform(-t_min[1], t_max[1]))), axis=0)
 
         if self.do_rotation:
             angles = np.linspace(-self.rotation_max_angle, self.rotation_max_angle, self.rotation_sample_num)
@@ -164,7 +175,9 @@ class HomographyAugmentation(object):
             else:
                 # 得到未超边界值的idx
                 valid = np.where(np.all((rotated >= 0.) & (rotated < 1.), axis=(1, 2)))[0]
-            idx = valid[np.random.randint(0, valid.shape[0])]
+            random_idx = torch.randint(0, valid.shape[0], size=[]).item()
+            idx = valid[random_idx]
+            # idx = valid[np.random.randint(0, valid.shape[0])]
             pts_2 = rotated[idx]
 
         def mat(p, q):
@@ -243,25 +256,32 @@ class PhotometricAugmentation(object):
         return image.astype(np.uint8)
 
     def apply_gaussian_noise(self, image):
-        noise = np.random.normal(self.gaussian_noise_mean, self.gaussian_noise_std, size=np.shape(image))
+        noise = torch.normal(self.gaussian_noise_mean, self.gaussian_noise_std, size=np.shape(image)).numpy()
+        # noise = np.random.normal(self.gaussian_noise_mean, self.gaussian_noise_std, size=np.shape(image))
         noise_image = image+noise
         noise_image = np.clip(noise_image, 0, 255)
         return noise_image
 
     def apply_speckle_noise(self, image):
-        prob = np.random.uniform(self.speckle_noise_max_prob, self.speckle_noise_max_prob)
-        sample = np.random.uniform(0, 1, size=np.shape(image))
+        prob = torch.ones([], dtype=torch.float).uniform_(
+            self.speckle_noise_min_prob, self.speckle_noise_max_prob).item()
+        sample = torch.ones(np.shape(image), dtype=torch.float).uniform_(0, 1).numpy()
+        # prob = np.random.uniform(self.speckle_noise_min_prob, self.speckle_noise_max_prob)
+        # sample = np.random.uniform(0, 1, size=np.shape(image))
         noisy_image = np.where(sample < prob, np.zeros_like(image), image)
         noisy_image = np.where(sample >= (1-prob), 255*np.ones_like(image), noisy_image)
         return noisy_image
 
     def apply_random_brightness(self, image):
-        delta = np.random.uniform(-self.brightness_max_abs_change, self.brightness_max_abs_change)
+        delta = torch.ones([], dtype=torch.float).uniform_(
+            -self.brightness_max_abs_change, self.brightness_max_abs_change).item()
+        # delta = np.random.uniform(-self.brightness_max_abs_change, self.brightness_max_abs_change)
         image = np.clip(image+delta, 0, 255)
         return image
 
     def apply_random_contrast(self, image):
-        ratio = np.random.uniform(self.contrast_min, self.contrast_max)
+        ratio = torch.ones([], dtype=torch.float).uniform_(self.contrast_min, self.contrast_max).item()
+        # ratio = np.random.uniform(self.contrast_min, self.contrast_max)
         image = np.clip(image*ratio, 0, 255)
         return image
 
@@ -269,16 +289,24 @@ class PhotometricAugmentation(object):
         min_dim = min(image.shape[:2]) / 4
         mask = np.zeros(image.shape[:2], np.uint8)
         for i in range(self.shade_nb_ellipses):
-            ax = int(max(np.random.rand() * min_dim, min_dim / 5))
-            ay = int(max(np.random.rand() * min_dim, min_dim / 5))
+            ax = int(max(torch.rand([]).item() * min_dim, min_dim / 5))
+            ay = int(max(torch.rand([]).item()  * min_dim, min_dim / 5))
+            # ax = int(max(np.random.rand() * min_dim, min_dim / 5))
+            # ay = int(max(np.random.rand() * min_dim, min_dim / 5))
             max_rad = max(ax, ay)
-            x = np.random.randint(max_rad, image.shape[1] - max_rad)  # center
-            y = np.random.randint(max_rad, image.shape[0] - max_rad)
-            angle = np.random.rand() * 90
+            x = torch.randint(max_rad, image.shape[1] - max_rad, []).item()
+            y = torch.randint(max_rad, image.shape[0] - max_rad, []).item()
+            angle = torch.rand([]).item() * 90
+            # x = np.random.randint(max_rad, image.shape[1] - max_rad)  # center
+            # y = np.random.randint(max_rad, image.shape[0] - max_rad)
+            # angle = np.random.rand() * 90
             cv.ellipse(mask, (x, y), (ax, ay), angle, 0, 360, 255, -1)
 
-        transparency = np.random.uniform(*self.shade_transparency_range)
-        kernel_size = np.random.randint(*self.shade_kernel_size_range)
+        transparency = torch.ones([], dtype=torch.float).uniform_(
+            self.shade_transparency_range[0], self.shade_transparency_range[1]).item()
+        kernel_size = torch.randint(self.shade_kernel_size_range[0], self.shade_kernel_size_range[1], []).item()
+        # transparency = np.random.uniform(*self.shade_transparency_range)
+        # kernel_size = np.random.randint(*self.shade_kernel_size_range)
         if (kernel_size % 2) == 0:  # kernel_size has to be odd
             kernel_size += 1
         mask = cv.GaussianBlur(mask.astype(np.float32), (kernel_size, kernel_size), 0)
@@ -287,8 +315,12 @@ class PhotometricAugmentation(object):
 
     def apply_motion_blur(self, image):
         # Either vertial, hozirontal or diagonal blur
-        mode = np.random.choice(['h', 'v', 'diag_down', 'diag_up'])
-        ksize = np.random.randint(0, int((self.motion_blur_max_kernel_size + 1) / 2)) * 2 + 1  # make sure is odd
+        choices = ['h', 'v', 'diag_down', 'diag_up']
+        choices_idx = torch.randint(0, 3, []).item()
+        mode = choices[choices_idx]
+        ksize = torch.randint(0, int((self.motion_blur_max_kernel_size + 1) / 2), []).item() * 2 + 1
+        # mode = np.random.choice(['h', 'v', 'diag_down', 'diag_up'])
+        # ksize = np.random.randint(0, int((self.motion_blur_max_kernel_size + 1) / 2)) * 2 + 1  # make sure is odd
         center = int((ksize - 1) / 2)
         kernel = np.zeros((ksize, ksize))
         if mode == 'h':
