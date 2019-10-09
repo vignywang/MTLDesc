@@ -477,6 +477,174 @@ class COCOSuperPointTrainDataset(Dataset):
             return warped_center_grid
 
 
+class COCOMegPointSelfSuperviseDataset(Dataset):
+
+    def __init__(self, params):
+        self.params = params
+        self.height = params.height
+        self.width = params.width
+        self.n_height = int(self.height/8)
+        self.n_width = int(self.width/8)
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014', 'resized_images')
+        self.image_list = self._format_file_list()
+        self.homography = HomographyAugmentation(**params.homography_params)
+        self.photometric = PhotometricAugmentation(**params.photometric_params)
+        self.center_grid = self._generate_center_grid()
+
+    def __len__(self):
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        # cv_image_keypoint = draw_image_keypoints(image, point)
+
+        # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        if torch.rand([]).item() < 0.5:
+            warped_image, warped_org_mask, homography = image.copy(), np.ones_like(image), np.eye(3)
+        else:
+            warped_image, warped_org_mask, homography = self.homography.warp(image)
+        # cv_image_keypoint = draw_image_keypoints(warped_image, warped_point)
+
+        # 1、得到图像以及对应的有效掩膜
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
+        image = image*2./255. - 1.
+        warped_image = warped_image*2./255. - 1.
+        image_mask = torch.ones_like(image)
+        warped_org_mask = torch.from_numpy(warped_org_mask)
+        warped_image_mask = torch.where(
+            torch.eq(warped_org_mask.unsqueeze(dim=0), 1), torch.ones_like(image), torch.zeros_like(image))
+
+        # 2、得到描述子匹配的有效mask，代表经投影后也在图像范围内的点
+        warped_mask = space_to_depth(warped_org_mask).to(torch.uint8)
+        warped_mask = torch.all(warped_mask, dim=0).to(torch.float)
+        warped_valid_mask = warped_mask.reshape((-1,))
+
+        # 3.2 根据当前采样的单应变换计算描述子的匹配关系
+        # matched_idx: 距离最近的匹配点的id
+        # matched_valid: 匹配的有效性
+        # not_search_mask: 对每一对匹配点而言的不搜索的负样本的范围
+        matched_idx, matched_valid, not_search_mask = \
+            self.generate_corresponding_relationship(homography, warped_valid_mask)
+        matched_idx = torch.from_numpy(matched_idx)
+        matched_valid = torch.from_numpy(matched_valid).to(torch.float)
+        not_search_mask = torch.from_numpy(not_search_mask)
+
+        # 4、返回样本
+        return {
+            'image': image,
+            'image_mask': image_mask,
+            'warped_image': warped_image,
+            'warped_image_mask': warped_image_mask,
+            'matched_idx': matched_idx,
+            'matched_valid': matched_valid,
+            'not_search_mask': not_search_mask,
+        }
+
+    def _convert_points_to_label(self, points):
+
+        height = self.height
+        width = self.width
+        n_height = int(height / 8)
+        n_width = int(width / 8)
+        assert n_height * 8 == height and n_width * 8 == width
+
+        num_pt = points.shape[0]
+        label = torch.zeros((height * width))
+        if num_pt > 0:
+            points_h, points_w = torch.split(points, 1, dim=1)
+            points_idx = points_w + points_h * width
+            label = label.scatter_(dim=0, index=points_idx[:, 0], value=1.0).reshape((height, width))
+        else:
+            label = label.reshape((height, width))
+
+        dense_label = space_to_depth(label)
+        dense_label = torch.cat((dense_label, 0.5 * torch.ones((1, n_height, n_width))), dim=0)  # [65, 30, 40]
+        sparse_label = torch.argmax(dense_label, dim=0)  # [30,40]
+
+        return sparse_label
+
+    def _format_file_list(self):
+        dataset_dir = self.dataset_dir
+        org_image_list = glob.glob(os.path.join(dataset_dir, "*.jpg"))
+        org_image_list = sorted(org_image_list)
+        image_list = []
+        for org_image_dir in org_image_list:
+            image_list.append(org_image_dir)
+
+        return image_list
+
+    def _generate_center_grid(self, patch_height=8, patch_width=8):
+        n_height = int(self.height/patch_height)
+        n_width = int(self.width/patch_width)
+        center_grid = []
+        for i in range(n_height):
+            for j in range(n_width):
+                h = (patch_height-1.)/2. + i*patch_height
+                w = (patch_width-1.)/2. + j*patch_width
+                center_grid.append((w, h))
+        center_grid = np.stack(center_grid, axis=0)
+        return center_grid
+
+    def _generate_descriptor_mask(self, homography):
+
+        center_grid, warped_center_grid = self.__compute_warped_center_grid(homography)
+
+        center_grid = np.expand_dims(center_grid, axis=0)  # [1,n,2]
+        warped_center_grid = np.expand_dims(warped_center_grid, axis=1)  # [n,1,2]
+
+        dist = np.linalg.norm((warped_center_grid-center_grid), axis=2)  # [n,n]
+        mask = (dist < 8.).astype(np.float32)
+
+        return mask
+
+    def generate_corresponding_relationship(self, homography, valid_mask):
+
+        center_grid, warped_center_grid = self.__compute_warped_center_grid(homography)
+
+        # 1、找到距离最近的点当作匹配点，其中距离小于8的点为有效匹配
+        dist = np.linalg.norm(warped_center_grid[:, np.newaxis, :]-center_grid[np.newaxis, :, :], axis=2)
+        nearest_idx = np.argmin(dist, axis=1)
+        nearest_dist = np.min(dist, axis=1)
+        matched_valid = nearest_dist < 8.
+
+        # 2、因为可能存在1对多的情况，因此被匹配点间的距离如果太小，则可能代表同一个区域，这在后续构造负样本时要排除掉
+        # 这里得到需要排除掉的mask
+        matched_grid = center_grid[nearest_idx, :]
+        diff = np.linalg.norm(matched_grid[:, np.newaxis, :] - matched_grid[np.newaxis, :, :], axis=2)
+        # nearest = diff < 8.
+        nearest = diff < 16.
+
+        # 3、得到当前无效点的mask，这些点在构造负样本时也要排除掉
+        valid_mask = valid_mask.numpy().astype(np.bool)
+        valid_mask = valid_mask[nearest_idx]
+        invalid = ~valid_mask[np.newaxis, :]
+
+        # 4、综合相近的被匹配点以及无效匹配点，得到负样本搜索时要排除掉的点的mask，1代表要排除，0代表保留
+        not_search_mask = (nearest | invalid).astype(np.float32)
+
+        # 5、根据投影点是否出界以及其与对应匹配点间的距离是否小于8得到最终有效匹配的mask
+        matched_valid = matched_valid & valid_mask
+
+        return nearest_idx, matched_valid, not_search_mask
+
+    def __compute_warped_center_grid(self, homography, return_org_center_grid=True):
+        # 计算8x8区域的中心点的投影点位置并返回
+
+        center_grid = self.center_grid.copy()  # [n,2]
+        num = center_grid.shape[0]
+        ones = np.ones((num, 1), dtype=np.float)
+        homo_center_grid = np.concatenate((center_grid, ones), axis=1)[:, :, np.newaxis]  # [n,3,1]
+        warped_homo_center_grid = np.matmul(homography, homo_center_grid)
+        warped_center_grid = warped_homo_center_grid[:, :2, 0] / warped_homo_center_grid[:, 2:, 0]  # [n,2]
+
+        if return_org_center_grid:
+            return center_grid, warped_center_grid
+        else:
+            return warped_center_grid
+
+
 if __name__ == "__main__":
 
     np.random.seed(2343)

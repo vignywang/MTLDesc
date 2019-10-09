@@ -51,6 +51,11 @@ class HomographyAugmentation(object):
         else:
             return image, mask, points
 
+    def warp(self, image):
+        homography = self.sample()
+        image, mask = self._compute_warped_image_and_mask(image, homography)
+        return image, mask, homography
+
     def _compute_warped_image_and_mask(self, image, homography):
         dsize = (self.width, self.height)
         org_mask = np.ones_like(image, dtype=np.float)

@@ -135,7 +135,7 @@ class BasicParameters(object):
             if arg in self_dict:
                 self_dict[arg] = args_dict[arg]
             else:
-                print('The argument %s is invalid' % arg)
+                print('[BasicParameters::__convert_args_params] The argument %s is invalid' % arg)
 
 
 
