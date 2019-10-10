@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 
 from nets.megpoint_net import MegPointNet
 from nets.megpoint_net import EncoderDecoderMegPoint
+from nets.megpoint_net import HardDetectionModule
 
 from data_utils.megpoint_dataset import AdaptionDataset, LabelGenerator
 from data_utils.coco_dataset import COCOMegPointAdaptionDataset
@@ -85,7 +86,7 @@ class MegPointTrainerTester(object):
             # break  # todo
 
             # validation
-            # self._validate_one_epoch(i)
+            self._validate_one_epoch(i)
 
             # adjust learning rate
             self.scheduler.step(i)
@@ -136,6 +137,8 @@ class MegPointSelfSuperviseTrainer(MegPointTrainerTester):
 
         # 初始化模型
         self.model = EncoderDecoderMegPoint()
+        self.detector = HardDetectionModule(nms_threshold=params.nms_threshold)
+        self._load_model_params(params.megpoint_ckpt)
 
         # 初始化loss算子
         self.l1_loss = torch.nn.L1Loss(reduction='none')
@@ -308,16 +311,16 @@ class MegPointSelfSuperviseTrainer(MegPointTrainerTester):
             # image_pair /= 255.
             image_pair = image_pair * 2. / 255. - 1.
 
-            _, prob_pair, desp_pair = self.model(image_pair)
-            prob_pair = f.pixel_shuffle(prob_pair, 8)
-            prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold * 2 + 1))
+            # todo
+            _, desp_pair, feature_pair = self.model(image_pair)
+            prob_pair = self.detector(feature_pair)
 
             desp_pair = desp_pair.detach().cpu().numpy()
             first_desp = desp_pair[0]
             second_desp = desp_pair[1]
             prob_pair = prob_pair.detach().cpu().numpy()
-            first_prob = prob_pair[0, 0]
-            second_prob = prob_pair[1, 0]
+            first_prob = prob_pair[0]
+            second_prob = prob_pair[1]
 
             # 得到对应的预测点
             first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]

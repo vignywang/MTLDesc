@@ -25,6 +25,9 @@ class MegPointSelfSupervisedParameters(BasicParameters):
         self.ckpt_root = './megpoint_ckpt'
         self.log_root = './megpoint_log'
 
+        # debug use
+        self.megpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/tmp_results/model_23.pt"
+
         # 采样检测相关
         self.do_augmentation = False
         self.sample_num = 10

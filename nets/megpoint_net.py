@@ -165,6 +165,56 @@ class EncoderDecoderMegPoint(nn.Module):
         return recovered_image, descriptor, up_feature
 
 
+class HardDetectionModule(nn.Module):
+    def __init__(self, edge_threshold=5, nms_threshold=4):
+        super(HardDetectionModule, self).__init__()
+
+        self.edge_threshold = edge_threshold
+        self.pooling_size = int(nms_threshold * 2 + 1)
+        self.padding_size = int(self.pooling_size//2)
+
+        self.dii_filter = torch.tensor(
+            [[0, 1., 0], [0, -2., 0], [0, 1., 0]]
+        ).reshape(1, 1, 3, 3)
+        self.dij_filter = 0.25 * torch.tensor(
+            [[1., 0, -1.], [0, 0., 0], [-1., 0, 1.]]
+        ).reshape(1, 1, 3, 3)
+        self.djj_filter = torch.tensor(
+            [[0, 0, 0], [1., -2., 1.], [0, 0, 0]]
+        ).reshape(1, 1, 3, 3)
+
+    def forward(self, x):
+        # device = x.device
+
+        depth_wise_max = torch.max(x, dim=1, keepdim=True)[0]
+        is_depth_wise_max = torch.where(
+            torch.eq(x, depth_wise_max), torch.ones_like(x), torch.zeros_like(x)
+        ).to(torch.bool)
+
+        local_max = f.max_pool2d(x, self.pooling_size, stride=1, padding=self.padding_size)
+        is_local_max = torch.where(
+            torch.eq(x, local_max), torch.ones_like(x), torch.zeros_like(x)
+        ).to(torch.bool)
+
+        prob = torch.where(
+            is_depth_wise_max & is_local_max, x, torch.zeros_like(x)
+        ).sum(dim=1)
+
+        # dii = f.conv2d(x, self.dii_filter.to(device), padding=1)
+        # dij = f.conv2d(x, self.dij_filter.to(device), padding=1)
+        # djj = f.conv2d(x, self.djj_filter.to(device), padding=1)
+
+        # det = dii * djj - dij * dij
+        # tr = dii + djj
+
+        # threshold = (self.edge_threshold + 1) ** 2 / self.edge_threshold
+        # is_not_edge = (tr * tr / det <= threshold) & (det > 0)
+
+        # detected = is_depth_wise_max & is_local_max & is_not_edge
+
+        return prob
+
+
 
 
 
