@@ -477,7 +477,7 @@ class COCOSuperPointTrainDataset(Dataset):
             return warped_center_grid
 
 
-class COCOMegPointSelfSuperviseDataset(Dataset):
+class COCOMegPointAdversarialDataset(Dataset):
 
     def __init__(self, params):
         self.params = params
@@ -497,24 +497,24 @@ class COCOMegPointSelfSuperviseDataset(Dataset):
     def __getitem__(self, idx):
 
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
-        # cv_image_keypoint = draw_image_keypoints(image, point)
+        org_mask = np.ones_like(image)
 
-        # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
         if torch.rand([]).item() < 0.5:
-            warped_image, warped_org_mask, homography = image.copy(), np.ones_like(image), np.eye(3)
+            warped_image, warped_org_mask, homography = image.copy(), org_mask.copy(), np.eye(3)
         else:
             warped_image, warped_org_mask, homography = self.homography.warp(image)
-        # cv_image_keypoint = draw_image_keypoints(warped_image, warped_point)
+
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+        if torch.rand([]).item() < 0.5:
+            warped_image = self.photometric(warped_image)
 
         # 1、得到图像以及对应的有效掩膜
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
         warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
         image = image*2./255. - 1.
         warped_image = warped_image*2./255. - 1.
-        image_mask = torch.ones_like(image)
         warped_org_mask = torch.from_numpy(warped_org_mask)
-        warped_image_mask = torch.where(
-            torch.eq(warped_org_mask.unsqueeze(dim=0), 1), torch.ones_like(image), torch.zeros_like(image))
 
         # 2、得到描述子匹配的有效mask，代表经投影后也在图像范围内的点
         warped_mask = space_to_depth(warped_org_mask).to(torch.uint8)
@@ -534,9 +534,7 @@ class COCOMegPointSelfSuperviseDataset(Dataset):
         # 4、返回样本
         return {
             'image': image,
-            'image_mask': image_mask,
             'warped_image': warped_image,
-            'warped_image_mask': warped_image_mask,
             'matched_idx': matched_idx,
             'matched_valid': matched_valid,
             'not_search_mask': not_search_mask,
