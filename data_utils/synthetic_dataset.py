@@ -108,6 +108,40 @@ class SyntheticTrainDataset(Dataset):
         return image_list, point_list
 
 
+class SyntheticAdversarialDataset(SyntheticTrainDataset):
+
+    def __init__(self, params):
+        super(SyntheticAdversarialDataset, self).__init__(params=params)
+
+    def __getitem__(self, idx):
+
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        point = np.load(self.point_list[idx])
+
+        org_mask = np.ones_like(image)
+        if torch.rand([]).item() >= 0.1:
+            image, org_mask, point = self.homography_augmentation(image, point)
+            image = self.photometric_augmentation(image)
+
+        # 将亚像素精度处的点的位置去小数到整数
+        point = np.abs(np.floor(point)).astype(np.int)
+
+        # 将它们转换成tensor
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        image = image * 2. / 255. - 1.  # scale到[-1,1]之间
+        org_mask = torch.from_numpy(org_mask)
+        point = torch.from_numpy(point)
+
+        # 由点的位置生成训练所需label
+        label = self.convert_points_to_label(point).to(torch.long)
+        # 由原始的掩膜生成对应label形状的掩膜
+        mask = space_to_depth(org_mask).to(torch.uint8)
+        mask = torch.all(mask, dim=0).to(torch.float)
+
+        sample = {"image": image, "label": label, "mask": mask}
+        return sample
+
+
 class SyntheticValTestDataset(Dataset):
 
     def __init__(self, params, dataset_type='validation', add_noise=False):
