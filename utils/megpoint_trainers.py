@@ -13,20 +13,23 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
 from nets.megpoint_net import MegPointNet
-from nets.megpoint_net import EncoderDecoderMegPoint
-from nets.megpoint_net import HardDetectionModule
+from nets.megpoint_net import Discriminator
 
 from data_utils.megpoint_dataset import AdaptionDataset, LabelGenerator
 from data_utils.coco_dataset import COCOMegPointAdaptionDataset
-from data_utils.coco_dataset import COCOMegPointSelfSuperviseDataset
+from data_utils.coco_dataset import COCOMegPointAdversarialDataset
+from data_utils.synthetic_dataset import SyntheticAdversarialDataset
+from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
 from data_utils.dataset_tools import HomographyAugmentation
+from data_utils.dataset_tools import InfiniteDataLoader
 
 from utils.evaluation_tools import RepeatabilityCalculator
 from utils.evaluation_tools import MovingAverage
 from utils.evaluation_tools import PointStatistics
 from utils.evaluation_tools import HomoAccuracyCalculator
 from utils.evaluation_tools import MeanMatchingAccuracy
+from utils.evaluation_tools import mAPCalculator
 from utils.utils import spatial_nms
 from utils.utils import DescriptorTripletLoss
 from utils.utils import Matcher
@@ -89,7 +92,7 @@ class MegPointTrainerTester(object):
             self._validate_one_epoch(i)
 
             # adjust learning rate
-            self.scheduler.step(i)
+            # self.scheduler.step(i)
 
         end_time = time.time()
         self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
@@ -114,19 +117,37 @@ class MegPointTrainerTester(object):
         return True
 
 
-class MegPointSelfSuperviseTrainer(MegPointTrainerTester):
+class MegPointAdversarialTrainer(MegPointTrainerTester):
 
     def __init__(self, params):
-        super(MegPointSelfSuperviseTrainer, self).__init__(params)
+        super(MegPointAdversarialTrainer, self).__init__(params)
 
-        # 初始化训练数据的读入接口
-        self.train_dataset = COCOMegPointSelfSuperviseDataset(params)
-        self.epoch_length = len(self.train_dataset) / self.batch_size
+        # 初始化源数据与目标数据
+        self.source_dataset = SyntheticAdversarialDataset(params)
+        self.target_dataset = COCOMegPointAdversarialDataset(params)
 
-        self.train_dataloader = DataLoader(self.train_dataset, self.batch_size, shuffle=True,
-                                           num_workers=self.num_workers, drop_last=True)
+        self.epoch_length = max(
+            (len(self.source_dataset)//self.batch_size),
+            (len(self.target_dataset)//self.batch_size)
+        )
+
+        self.source_dataloader = InfiniteDataLoader(
+            self.source_dataset,
+            self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            drop_last=True
+        )
+        self.target_dataloader = InfiniteDataLoader(
+            self.target_dataset,
+            self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            drop_last=True
+        )
 
         self.test_dataset = HPatchDataset(params)
+        self.synthetic_test_dataset = SyntheticValTestDataset(params, dataset_type='validation')
         self.test_length = len(self.test_dataset)
 
         # 初始化各种验证算子
@@ -136,28 +157,35 @@ class MegPointSelfSuperviseTrainer(MegPointTrainerTester):
         self.general_matcher = Matcher('float')
 
         # 初始化模型
-        self.model = EncoderDecoderMegPoint()
-        self.detector = HardDetectionModule(nms_threshold=params.nms_threshold)
-        self._load_model_params(params.megpoint_ckpt)
+        self.model = MegPointNet()
+        self.discriminator = Discriminator()
+
+        # self._load_model_params(params.magicpoint_ckpt)
 
         # 初始化loss算子
-        self.l1_loss = torch.nn.L1Loss(reduction='none')
-        self.l2_loss = torch.nn.MSELoss(reduction='none')
+        self.detector_loss = torch.nn.CrossEntropyLoss(reduction='none')
         self.descriptor_loss = DescriptorTripletLoss(device=self.device)
+        self.discriminator_loss = torch.nn.BCEWithLogitsLoss()
 
-        # 初始化loss相关的权重
-        self.descriptor_weight = params.descriptor_weight
+        # 初始化loss权重
+        self.discriminator_weight = params.discriminator_weight
 
         # 若有多gpu设置则加载多gpu
         if self.multi_gpus:
             self.model = torch.nn.DataParallel(self.model)
+            self.discriminator = torch.nn.DataParallel(self.discriminator)
         self.model = self.model.to(self.device)
+        self.discriminator = self.discriminator.to(self.device)
 
         # 初始化优化器算子
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        self.model_optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        self.discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=self.lr)
 
         # 初始化学习率调整算子
-        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.1)
+        self.model_scheduler = torch.optim.lr_scheduler.StepLR(self.model_optimizer, step_size=100, gamma=0.1)
+        self.discriminator_scheduler = torch.optim.lr_scheduler.StepLR(
+            self.discriminator_optimizer, step_size=100, gamma=0.1
+        )
 
     @staticmethod
     def _compute_masked_loss(unmasked_loss, mask):
@@ -172,73 +200,112 @@ class MegPointSelfSuperviseTrainer(MegPointTrainerTester):
         stime = time.time()
 
         self.model.train()
-        for i, data in enumerate(self.train_dataloader):
+        self.discriminator.train()
 
-            image = data["image"].to(self.device)
-            image_mask = data["image_mask"].to(self.device)
+        sourceloader_iter = enumerate(self.source_dataloader)
+        targetloader_iter = enumerate(self.target_dataloader)
+        for i in range(self.epoch_length):
 
-            warped_image = data['warped_image'].to(self.device)
-            warped_image_mask = data["warped_image_mask"].to(self.device)
+            self.model_optimizer.zero_grad()
+            # self.discriminator_optimizer.zero_grad()
 
-            matched_idx = data['matched_idx'].to(self.device)
-            matched_valid = data['matched_valid'].to(self.device)
-            not_search_mask = data['not_search_mask'].to(self.device)
+            # # 固定discriminator的参数不变
+            # for param in self.discriminator.parameters():
+            #     param.requires_grad = False
 
-            shape = image.shape
+            _, src_data = sourceloader_iter.__next__()
+            _, tgt_data = targetloader_iter.__next__()
 
-            image_pair = torch.cat((image, warped_image), dim=0)
-            image_mask_pair = torch.cat((image_mask, warped_image_mask), dim=0)
-            recovered_image_pair, desp_pair, _ = self.model(image_pair)
+            # 1、读取带标签的源数据并训练关键点检测算子
+            src_image = src_data["image"].to(self.device)
+            src_label = src_data["label"].to(self.device)
+            src_mask = src_data["mask"].to(self.device)
 
-            desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
+            # 送入网络统一运算，充分利用GPU并行计算
+            src_logit, _, _, src_feature = self.model(src_image)
 
-            # 计算图像生成loss
-            # generator_loss = self.l2_loss(recovered_image_pair, image_pair)
-            generator_loss = self.l1_loss(recovered_image_pair, image_pair)
-            generator_loss = self._compute_masked_loss(generator_loss, image_mask_pair)
+            # 计算关键点检测loss
+            unmasked_detector_loss = self.detector_loss(src_logit, src_label)
+            detector_loss = self._compute_masked_loss(unmasked_detector_loss, src_mask)
 
-            # 计算描述子loss
-            desp_loss = self.descriptor_loss(
-                desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
+            if torch.isnan(detector_loss):
+                self.logger.error("detector_loss is nan!")
+                assert False
+            detector_loss.backward()
 
-            loss = generator_loss + self.descriptor_weight*desp_loss
+            # 2、读取无标签的目标数据计算描述子loss,对抗loss，用于减少src与tgt之间的domain shift
+            tgt_image = tgt_data["image"].to(self.device)
+            tgt_warped_image = tgt_data["warped_image"].to(self.device)
 
-            if torch.isnan(loss):
-                self.logger.error('loss is nan!')
+            tgt_matched_idx = tgt_data['matched_idx'].to(self.device)
+            tgt_matched_valid = tgt_data['matched_valid'].to(self.device)
+            tgt_not_search_mask = tgt_data['not_search_mask'].to(self.device)
 
-            self.optimizer.zero_grad()
-            loss.backward()
+            tgt_image_pair = torch.cat((tgt_image, tgt_warped_image), dim=0)
+            _, _, tgt_desp_pair, tgt_feature_pair = self.model(tgt_image_pair)
 
-            self.optimizer.step()
+            tgt_desp_0, tgt_desp_1 = torch.chunk(tgt_desp_pair, 2, dim=0)
+            tgt_desp_loss = self.descriptor_loss(
+                tgt_desp_0, tgt_desp_1, tgt_matched_idx, tgt_matched_valid, tgt_not_search_mask)
+
+            # tgt_adverse_label = torch.zeros((self.batch_size*2, 1), dtype=torch.float, device=self.device)
+            # tgt_adverse_logit = self.discriminator(tgt_feature_pair)
+            # tgt_adverse_loss = self.discriminator_loss(tgt_adverse_logit, tgt_adverse_label)
+
+            # tgt_loss = tgt_desp_loss + self.discriminator_weight*tgt_adverse_loss
+            tgt_loss = tgt_desp_loss
+
+            if torch.isnan(tgt_loss):
+                self.logger.error("tgt_loss is nan!")
+                assert False
+            tgt_loss.backward()
+
+            # 3、计算判别器loss并更新
+            # for param in self.discriminator.parameters():
+            #     param.requires_grad = True
+            # feature_cats = torch.cat((src_feature, tgt_feature_pair), dim=0).detach()
+            # d_logit = self.discriminator(feature_cats)
+            # d_src_label = torch.zeros((self.batch_size, 1), dtype=torch.float, device=self.device)
+            # d_tgt_label = torch.ones((self.batch_size*2, 1), dtype=torch.float, device=self.device)
+            # d_label = torch.cat((d_src_label, d_tgt_label), dim=0)
+
+            # d_loss = self.discriminator_loss(d_logit, d_label)
+            # if torch.isnan(d_loss):
+            #     self.logger.error("d_loss is nan!")
+            #     assert False
+            # d_loss.backward()
+
+            # 更新网络参数
+            self.model_optimizer.step()
+            self.discriminator_optimizer.step()
 
             if i % self.log_freq == 0:
 
-                generator_loss_val = generator_loss.item()
-                desp_loss_val = desp_loss.item()
-                loss_val = loss.item()
                 step = int(i + epoch_idx*self.epoch_length)
 
-                image_cat = ((torch.cat((image_pair, recovered_image_pair), dim=2)+1)*255/2)
-                image_cat = image_cat.detach().cpu().numpy().astype(np.uint8)
-                image_cat = np.concatenate((
-                    image_cat[0], image_cat[1], image_cat[2], image_cat[3], image_cat[4]), axis=2)
-                # cv.imshow("debug_image_cat", image_cat[0, 0])
-                # cv.waitKey()
+                detector_loss_val = detector_loss.item()
+                desp_loss_val = tgt_desp_loss.item()
+                adverse_loss_val = 0  # tgt_adverse_loss.item()
+                d_loss_val = 0  # d_loss.item()
 
-                self.summary_writer.add_image(
-                    "images_and_recovered_images", image_cat, global_step=step)
-
-                self.summary_writer.add_histogram(
-                    'descriptor', desp_pair, global_step=step)
+                self.summary_writer.add_scalar("loss/detector_loss", detector_loss_val, global_step=step)
+                self.summary_writer.add_scalar("loss/desp_loss", desp_loss_val, global_step=step)
+                self.summary_writer.add_scalar("loss/adverse_loss", adverse_loss_val, global_step=step)
+                self.summary_writer.add_scalar("loss/discriminator_loss", d_loss_val, global_step=step)
                 self.logger.info(
-                    "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, generator_loss = %.4f, desp_loss = %.4f"
-                    " one step cost %.4fs. " % (
+                    "[Epoch:%2d][Step:%5d:%5d]: "
+                    "detector_loss = %.4f, "
+                    "desp_loss = %.4f, "
+                    "adverse_loss = %.4f, "
+                    "discriminator_loss = %.4f, "
+                    "%.2fs/step. " % (
                         epoch_idx,
                         i,
                         self.epoch_length,
-                        loss_val,
-                        generator_loss_val,
+                        detector_loss_val,
                         desp_loss_val,
+                        adverse_loss_val,
+                        d_loss_val,
                         (time.time() - stime) / self.params.log_freq,
                     ))
                 stime = time.time()
@@ -246,8 +313,14 @@ class MegPointSelfSuperviseTrainer(MegPointTrainerTester):
         # save the model
         if self.multi_gpus:
             torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+            torch.save(
+                self.discriminator.module.state_dict(),
+                os.path.join(self.ckpt_dir, 'discriminator_%02d.pt' % epoch_idx))
         else:
             torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+            torch.save(
+                self.discriminator.state_dict(),
+                os.path.join(self.ckpt_dir, 'discriminator_%02d.pt' % epoch_idx))
 
         self.logger.info("Training epoch %2d done." % epoch_idx)
         self.logger.info("-----------------------------------------------------")
@@ -268,6 +341,9 @@ class MegPointSelfSuperviseTrainer(MegPointTrainerTester):
         view_repeat_moving_acc = self.view_repeat_mov.average()
 
         current_size = self.view_mma_mov.current_size()
+
+        # mAP, test_data, count = self._test_func(self.synthetic_test_dataset)
+        # self.logger.info("[Epoch %2d] The mean Average Precision : %.4f of %d samples" % (epoch_idx, mAP, count))
 
         self.logger.info("---------------------------------------------")
         self.logger.info("Moving Average of %d models:" % current_size)
@@ -311,37 +387,44 @@ class MegPointSelfSuperviseTrainer(MegPointTrainerTester):
             # image_pair /= 255.
             image_pair = image_pair * 2. / 255. - 1.
 
-            # todo
-            _, desp_pair, feature_pair = self.model(image_pair)
-            prob_pair = self.detector(feature_pair)
+            _, prob_pair, desp_pair, tmp = self.model(image_pair)
+            prob_pair = f.pixel_shuffle(prob_pair, 8)
+            prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold * 2 + 1))
 
             desp_pair = desp_pair.detach().cpu().numpy()
             first_desp = desp_pair[0]
             second_desp = desp_pair[1]
             prob_pair = prob_pair.detach().cpu().numpy()
-            first_prob = prob_pair[0]
-            second_prob = prob_pair[1]
+            first_prob = prob_pair[0, 0]
+            second_prob = prob_pair[1, 0]
 
             # 得到对应的预测点
             first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
             second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
-
-            # 得到点对应的描述子
-            select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
-            select_second_desp = self._generate_predict_descriptor(second_point, second_desp)
 
             # 若未能检测出点，则跳过这一对测试样本
             if first_point_num == 0 or second_point_num == 0:
                 skip += 1
                 continue
 
+            # 得到点对应的描述子
+            select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
+            select_second_desp = self._generate_predict_descriptor(second_point, second_desp)
+
             # 得到匹配点
             matched_point = self.general_matcher(first_point, select_first_desp,
                                                  second_point, select_second_desp)
+            if matched_point is None:
+                skip += 1
+                continue
 
             # 计算得到单应变换
             pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
                                                    matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
+
+            if pred_homography is None:
+                skip += 1
+                continue
 
             # 对单样本进行测评
             if image_type == 'illumination':
@@ -402,6 +485,38 @@ class MegPointSelfSuperviseTrainer(MegPointTrainerTester):
         self.summary_writer.add_scalar("viewpoint/Homography_Accuracy", view_homo_acc, epoch_idx)
         self.summary_writer.add_scalar("viewpoint/Mean_Matching_Accuracy", view_match_acc, epoch_idx)
         self.summary_writer.add_scalar("viewpoint/Repeatability", view_repeat, epoch_idx)
+
+    def _test_func(self, dataset):
+        self.model.eval()
+        self.mAP_calculator.reset()
+
+        start_time = time.time()
+        count = 0
+
+        for i, data in enumerate(dataset):
+            image = data['image']
+            gt_point = data['gt_point']
+            gt_point = gt_point.numpy()
+
+            image = image.to(self.device).unsqueeze(dim=0)
+            # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
+            _, prob, _, _ = self.model(image)
+            # 将概率图展开为原始图像大小
+            prob = f.pixel_shuffle(prob, 8)
+            # 进行非极大值抑制
+            prob = spatial_nms(prob)
+            prob = prob.detach().cpu().numpy()[0, 0]
+            self.mAP_calculator.update(prob, gt_point)
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                start_time = time.time()
+            count += 1
+            # if count % 1000 == 0:
+            #     break
+
+        mAP, test_data = self.mAP_calculator.compute_mAP()
+
+        return mAP, test_data, count
 
     @staticmethod
     def _compute_total_metric(illum_metric, view_metric):
@@ -528,6 +643,7 @@ class MegPointSelfSuperviseTrainer(MegPointTrainerTester):
         self.view_mma_b = MeanMatchingAccuracy(params.correct_epsilon)
 
         self.point_statistics = PointStatistics()
+        self.mAP_calculator = mAPCalculator()
 
 
 class MegPointAdaptionTrainer(MegPointTrainerTester):

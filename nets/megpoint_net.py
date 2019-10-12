@@ -79,21 +79,83 @@ class MegPointNet(BaseMegPointNet):
         x = self.relu(self.conv3b(x))
         x = self.pool(x)
         x = self.relu(self.conv4a(x))
-        x = self.relu(self.conv4b(x))
+        feature = self.relu(self.conv4b(x))
 
         # detect head
-        cPa = self.relu(self.convPa(x))
+        cPa = self.relu(self.convPa(feature))
         logit = self.convPb(cPa)
         prob = self.softmax(logit)[:, :-1, :, :]
 
         # descriptor head
-        cDa = self.relu(self.convDa(x))
-        feature = self.convDb(cDa)
+        cDa = self.relu(self.convDa(feature))
+        desc = self.convDb(cDa)
+        dn = torch.norm(desc, p=2, dim=1, keepdim=True)
+        desc = desc.div(dn)
 
-        dn = torch.norm(feature, p=2, dim=1, keepdim=True)
-        desc = feature.div(dn)
+        # return logit, prob, desc, feature
+        return logit, prob, desc, feature
 
-        return logit, prob, desc
+
+class Generator(nn.Module):
+
+    def __init__(self):
+        super(Generator, self).__init__()
+        self.relu = nn.ReLU(inplace=True)
+        self.tanh = nn.Tanh()
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        c1, c2, c3, c4 = 64, 64, 128, 128
+
+        # Decoder.
+        self.upconv3a = nn.Conv2d(c4, c3, kernel_size=3, stride=1, padding=1)
+        self.upconv3b = nn.Conv2d(c3, c2, kernel_size=3, stride=1, padding=1)
+        self.upconv2a = nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1)
+        self.upconv2b = nn.Conv2d(c2, c1, kernel_size=3, stride=1, padding=1)
+        self.upconv1a = nn.Conv2d(c1, c1, kernel_size=3, stride=1, padding=1)
+        self.upconv1b = nn.Conv2d(c1, 1, kernel_size=3, stride=1, padding=1)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+    def forward(self, feature):
+        # decoder part
+        ux = f.interpolate(feature, scale_factor=2, mode='bilinear', align_corners=False)
+        ux = self.relu(self.upconv3a(ux))
+        ux = self.relu(self.upconv3b(ux))
+
+        ux = f.interpolate(ux, scale_factor=2, mode='bilinear', align_corners=False)
+        ux = self.relu(self.upconv2a(ux))
+        ux = self.relu(self.upconv2b(ux))
+
+        ux = f.interpolate(ux, scale_factor=2, mode='bilinear', align_corners=False)
+        up_feature = self.relu(self.upconv1a(ux))
+        recovered_image = self.tanh(self.upconv1b(up_feature))
+
+        return recovered_image
+
+
+class Discriminator(nn.Module):
+
+    def __init__(self, input_dim=128):
+        super(Discriminator, self).__init__()
+        self.leaky_relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+        self.conv1 = nn.Conv2d(input_dim, 128, kernel_size=3, stride=2, padding=1)
+        self.conv2 = nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1)
+        self.conv3 = nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1)
+        self.pooling = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, 1)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+    def forward(self, x):
+        x = self.leaky_relu(self.conv1(x))
+        x = self.leaky_relu(self.conv2(x))
+        x = self.leaky_relu(self.conv3(x))
+        x = self.pooling(x).squeeze()
+        logit = self.fc(x)
+        return logit
 
 
 class EncoderDecoderMegPoint(nn.Module):
