@@ -109,6 +109,13 @@ class DescriptorHingeLoss(object):
         return loss
 
 
+def prob_2_entropy(prob):
+    """ convert probabilistic prediction maps to weighted self-information maps
+    """
+    n, c, h, w = prob.size()
+    return -torch.mul(prob, torch.log2(prob + 1e-30)) / np.log2(c)
+
+
 class DescriptorTripletLoss(object):
 
     def __init__(self, device):
@@ -396,7 +403,8 @@ class Matcher(object):
                 matched_tgt.append(point_1[idx_0_1])
         if len(matched_src) <= 4:
             print("There exist too little matches")
-            assert False
+            # assert False
+            return None
         if len(matched_src) != 0:
             matched_src = np.stack(matched_src, axis=0)
             matched_tgt = np.stack(matched_tgt, axis=0)
