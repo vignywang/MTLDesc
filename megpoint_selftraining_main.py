@@ -1,12 +1,12 @@
-# 
-# Created by ZhangYuyang on 2019/10/8
+#
+# Created by ZhangYuyang on 2019/10/13
 #
 import argparse
 import torch
 import numpy as np
 
 from basic_parameters import BasicParameters
-from utils.megpoint_trainers import MegPointSelfSuperviseTrainer
+from utils.megpoint_trainers import MegPointSeflTrainingTrainer
 
 
 def setup_seed():
@@ -18,24 +18,22 @@ def setup_seed():
     np.random.seed(2933)
 
 
-class MegPointSelfSupervisedParameters(BasicParameters):
+class MegPointSelfTrainingParameters(BasicParameters):
 
     def __init__(self):
-        super(MegPointSelfSupervisedParameters, self).__init__()
+        super(MegPointSelfTrainingParameters, self).__init__()
         self.ckpt_root = './megpoint_ckpt'
         self.log_root = './megpoint_log'
+        # self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_new_0.0010_64/model_59.pt"
+        self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_new_0.0010_64/model_05.pt"
 
-        # debug use
-        self.megpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/tmp_results/model_23.pt"
-
-        # 采样检测相关
-        self.do_augmentation = False
-        self.sample_num = 10
-        self.detection_threshold = 0.005
-        self.train_top_k = 150
-
-        # loss权重有关
-        self.descriptor_weight = 1.0
+        # training相关
+        self.round_num = 100
+        self.epoch_each_round = 5
+        self.label_batch_size = 32
+        self.initial_portion = 0.002  # 每一轮按1%递增，最高0.005
+        self.src_detector_weight = 0.2
+        self.tgt_detector_weight = 1 - self.src_detector_weight
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -85,21 +83,28 @@ class MegPointSelfSupervisedParameters(BasicParameters):
         parser.add_argument("--prefix", type=str, default='adaption')
         return parser.parse_args()
 
+    def initialize(self):
+        super(MegPointSelfTrainingParameters, self).initialize()
+        self.logger.info("label_batch_size: %d" % self.label_batch_size)
+        self.logger.info(
+            "src_detector_weight=%.1f, tgt_detector_weight=%.1f" % (
+                self.src_detector_weight,
+                self.tgt_detector_weight
+            )
+        )
+
 
 def main():
     setup_seed()
-    params = MegPointSelfSupervisedParameters()
+    params = MegPointSelfTrainingParameters()
     params.initialize()
 
     # initialize the trainer and train
-    megpoint_trainer = MegPointSelfSuperviseTrainer(params)
+    megpoint_trainer = MegPointSeflTrainingTrainer(params)
     megpoint_trainer.train()
 
 
 if __name__ == '__main__':
     main()
-
-
-
 
 
