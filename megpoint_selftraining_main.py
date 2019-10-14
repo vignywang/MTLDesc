@@ -30,7 +30,7 @@ class MegPointSelfTrainingParameters(BasicParameters):
         # training相关
         self.round_num = 100
         self.epoch_each_round = 5
-        self.label_batch_size = 32
+        self.raw_batch_size = 32
         self.initial_portion = 0.002  # 每一轮按1%递增，最高0.005
         self.src_detector_weight = 0.2
         self.tgt_detector_weight = 1 - self.src_detector_weight
@@ -85,9 +85,9 @@ class MegPointSelfTrainingParameters(BasicParameters):
 
     def initialize(self):
         super(MegPointSelfTrainingParameters, self).initialize()
-        self.logger.info("label_batch_size: %d" % self.label_batch_size)
+        self.logger.info("raw_batch_size: %d" % self.raw_batch_size)
         self.logger.info(
-            "src_detector_weight=%.1f, tgt_detector_weight=%.1f" % (
+            "src_detector_weight=%.2f, tgt_detector_weight=%.2f" % (
                 self.src_detector_weight,
                 self.tgt_detector_weight
             )

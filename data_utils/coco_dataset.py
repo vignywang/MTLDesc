@@ -492,34 +492,21 @@ class COCOMegPointSelfTrainingDataset(Dataset):
         self.homography = HomographyAugmentation(**params.homography_params)
         self.photometric = PhotometricAugmentation(**params.photometric_params)
         self.center_grid = self._generate_center_grid()
-        self._use_for_train = False
-
-    def set_train(self):
-        assert (len(self.point_memory_list) != 0) and (len(self.image_memory_list) != 0)
-        self._use_for_train = True
-
-    def set_label(self):
-        self.point_memory_list = []
-        self.image_memory_list = []
-        self._use_for_train = False
 
     def append(self, image, point):
         # 输入的图像应该是uint8类型的
         self.image_memory_list.append(image)
         self.point_memory_list.append(point)
 
+    def reset(self):
+        self.image_memory_list = []
+        self.point_memory_list = []
+
     def __len__(self):
         return len(self.image_list)
 
     def __getitem__(self, idx):
-
-        if not self._use_for_train:
-            image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
-            image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
-            image = (image * 2. / 255.) - 1.
-            return {
-                "image": image
-            }
+        assert (len(self.point_memory_list) != 0) and (len(self.image_memory_list) != 0)
 
         image = self.image_memory_list[idx]
         point = self.point_memory_list[idx]
@@ -686,6 +673,41 @@ class COCOMegPointSelfTrainingDataset(Dataset):
             return center_grid, warped_center_grid
         else:
             return warped_center_grid
+
+
+class COCOMegPointRawDataset(Dataset):
+
+    def __init__(self, params):
+        self.params = params
+        self.height = params.height
+        self.width = params.width
+        self.n_height = int(self.height/8)
+        self.n_width = int(self.width/8)
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014', 'resized_images')
+        self.image_list = self._format_file_list()
+
+    def __len__(self):
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        image = (image * 2. / 255.) - 1.
+        return {
+            "image": image
+        }
+
+    def _format_file_list(self):
+        dataset_dir = self.dataset_dir
+        org_image_list = glob.glob(os.path.join(dataset_dir, "*.jpg"))
+        org_image_list = sorted(org_image_list)
+        image_list = []
+        for org_image_dir in org_image_list:
+            image_list.append(org_image_dir)
+
+        return image_list
+
 
 
 class COCOMegPointAdversarialDataset(Dataset):

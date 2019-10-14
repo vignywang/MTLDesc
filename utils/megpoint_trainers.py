@@ -20,6 +20,7 @@ from data_utils.megpoint_dataset import AdaptionDataset, LabelGenerator
 from data_utils.coco_dataset import COCOMegPointAdaptionDataset
 from data_utils.coco_dataset import COCOMegPointAdversarialDataset
 from data_utils.coco_dataset import COCOMegPointSelfTrainingDataset
+from data_utils.coco_dataset import COCOMegPointRawDataset
 from data_utils.synthetic_dataset import SyntheticAdversarialDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
@@ -127,34 +128,47 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         # 读取与该训练类有关的参数
         self.round_num = params.round_num
         self.epoch_each_round = params.epoch_each_round
-        self.label_batch_size = params.label_batch_size
+        self.raw_batch_size = params.raw_batch_size * self.gpu_count
         self.initial_portion = params.initial_portion
+        self.portion = self.initial_portion
         self.src_detector_weight = params.src_detector_weight
         self.tgt_detector_weight = params.tgt_detector_weight
 
         # 初始化源数据与目标数据
         self.source_dataset = SyntheticAdversarialDataset(params)
         self.target_dataset = COCOMegPointSelfTrainingDataset(params)
+        self.target_raw_dataset = COCOMegPointRawDataset(params)
 
-        self.epoch_length = max(
+        self.epoch_length = min(
             (len(self.source_dataset)//self.batch_size),
             (len(self.target_dataset)//self.batch_size)
         )
 
-        self.source_dataloader = InfiniteDataLoader(
+        self.raw_epoch_length = len(self.target_raw_dataset) // self.raw_batch_size
+
+        self.source_dataloader = DataLoader(
             self.source_dataset,
             self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
             drop_last=True
         )
-        # self.target_dataloader = InfiniteDataLoader(
-        #     self.target_dataset,
-        #     self.batch_size,
-        #     shuffle=True,
-        #     num_workers=self.num_workers,
-        #     drop_last=True
-        # )
+
+        self.target_dataloader = DataLoader(
+            self.target_dataset,
+            self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            drop_last=True
+        )
+
+        self.target_raw_dataloader = DataLoader(
+            self.target_raw_dataset,
+            self.raw_batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            drop_last=False
+        )
 
         self.test_dataset = HPatchDataset(params)
         self.synthetic_test_dataset = SyntheticValTestDataset(params, dataset_type='validation')
@@ -212,32 +226,14 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         end_time = time.time()
         self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
 
-    def _label_one_round(self, round_idx):
-        self.logger.info("-----------------------------------------------------")
-        self.logger.info("Start to label the whole target data")
-
+    def _compute_threshold(self, portion):
         self.model.eval()
-        self.target_dataset.set_label()
-
-        epoch_length = len(self.target_dataset) // (self.label_batch_size * self.gpu_count)
-        label_batch_size = self.label_batch_size * self.gpu_count
-        self.target_dataloader = DataLoader(
-            self.target_dataset,
-            label_batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            drop_last=False
-        )
-
-        # 将概率从高到低排序并取portion处的概率值当作这一次的标注阈值
-        portion = min(self.initial_portion*1.01**round_idx, 0.015)
-        partial_idx = int(label_batch_size*self.params.height*self.params.width*portion)
-
         # 计算每一张图像的关键点的概率图，并统计所有的概率
-        self.logger.info("Begin to compute prob of all target data")
+        self.logger.info("Begin to compute threshold of portion: %.4f" % portion)
+        partial_idx = int(self.raw_batch_size*self.params.height*self.params.width*portion)
         start_time = time.time()
         all_prob = np.empty((0,))
-        for i, data in enumerate(self.target_dataloader):
+        for i, data in enumerate(self.target_raw_dataloader):
             image = data["image"].to(self.device)
             _, prob, _ = self.model(image)  # [bt,64,h/8,w/8]
             prob = f.pixel_shuffle(prob, 8)
@@ -251,26 +247,33 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
                     "Batch %04d/%04d have been computed , %.3fs/step" %
                     (
                         i,
-                        epoch_length,
+                        self.raw_epoch_length,
                         (time.time()-start_time)/50
                     )
                 )
                 start_time = time.time()
 
-            # debug use
-            # if i == 50:
-            #     break
-
         all_prob = np.sort(all_prob)
         threshold = all_prob[0]
-        self.detection_threshold = threshold  # 用每次标记的阈值当作测试用的阈值
-        del all_prob
-        # threshold = 0.0001
+        self.logger.info("Computing Done! the threshold is: %.4f" % threshold)
+
+        return threshold
+
+    def _label_one_round(self, round_idx):
+        self.logger.info("-----------------------------------------------------")
+        self.logger.info("Start to label the whole target data")
+
+        self.model.eval()
+
+        # 根据当前的round数计算当前的portion
+        self.portion = min(self.initial_portion*1.01**round_idx, 0.015)
+        label_threshold = self._compute_threshold(self.portion)
 
         # 再次对数据集中每一张图像进行预测且标注
-        self.logger.info("Begin to label all target data by threshold: %.4f" % threshold)
+        self.logger.info("Begin to label all target data by threshold: %.4f" % label_threshold)
+        self.target_dataset.reset()
         start_time = time.time()
-        for i, data in enumerate(self.target_dataloader):
+        for i, data in enumerate(self.target_raw_dataloader):
             image = data["image"].to(self.device)
             _, prob, _ = self.model(image)
             image = ((image + 1) * 255. / 2.).to(torch.uint8).squeeze().cpu().numpy()
@@ -280,7 +283,7 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
 
             for j in range(batch_size):
                 # 得到对应的预测点
-                cur_point, cur_point_num = self._generate_predict_point_by_threshold(prob[j], threshold=threshold)
+                cur_point, cur_point_num = self._generate_predict_point_by_threshold(prob[j], threshold=label_threshold)
                 cur_image = image[j]
                 self.target_dataset.append(cur_image, cur_point)
 
@@ -289,7 +292,7 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
                     "Batch %04d/%04d have been labeled, %.3fs/step" %
                     (
                         i,
-                        epoch_length,
+                        self.raw_epoch_length,
                         (time.time()-start_time)/50
                     )
                 )
@@ -304,7 +307,9 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
 
         for i in range(self.epoch_each_round):
             self._train_one_epoch(int(i+round_idx*self.epoch_each_round))
-            self._validate_one_epoch(int(i+round_idx*self.epoch_each_round))
+
+            test_threshold = self._compute_threshold(self.portion)
+            self._validate_one_epoch_by_threshold(int(i+round_idx*self.epoch_each_round), test_threshold)
 
         self.logger.info("Training round %2d done." % round_idx)
         self.logger.info("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
@@ -315,14 +320,6 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         stime = time.time()
 
         self.model.train()
-        self.target_dataset.set_train()
-        self.target_dataloader = InfiniteDataLoader(
-            self.target_dataset,
-            self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            drop_last=True
-        )
 
         sourceloader_iter = enumerate(self.source_dataloader)
         targetloader_iter = enumerate(self.target_dataloader)
@@ -425,11 +422,11 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         self.logger.info("Training epoch %2d done." % epoch_idx)
         self.logger.info("-----------------------------------------------------")
 
-    def _validate_one_epoch(self, epoch_idx):
+    def _validate_one_epoch_by_threshold(self, epoch_idx, threshold):
         self.logger.info("*****************************************************")
         self.logger.info("Validating epoch %2d begin:" % epoch_idx)
 
-        self._test_model_general(epoch_idx)
+        self._test_model_general(epoch_idx, threshold)
 
         illum_homo_moving_acc = self.illum_homo_acc_mov.average()
         view_homo_moving_acc = self.view_homo_acc_mov.average()
@@ -457,7 +454,7 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
 
-    def _test_model_general(self, epoch_idx):
+    def _test_model_general(self, epoch_idx, threshold):
 
         self.model.eval()
         # 重置测评算子参数
@@ -473,7 +470,7 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         count = 0
         skip = 0
 
-        self.logger.info("Test, detection_threshold=%.4f" % self.detection_threshold)
+        self.logger.info("Test, detection_threshold=%.4f" % threshold)
 
         for i, data in enumerate(self.test_dataset):
             first_image = data['first_image']
@@ -499,8 +496,10 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
             second_prob = prob_pair[1, 0]
 
             # 得到对应的预测点
-            first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
-            second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+            first_point, first_point_num = self._generate_predict_point(
+                first_prob, threshold=threshold, top_k=self.top_k)  # [n,2]
+            second_point, second_point_num = self._generate_predict_point(
+                second_prob, threshold=threshold, top_k=self.top_k)  # [m,2]
 
             # 若未能检测出点，则跳过这一对测试样本
             if first_point_num == 0 or second_point_num == 0:
@@ -636,8 +635,8 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
 
         return point, point_num
 
-    def _generate_predict_point(self, prob, scale=None, top_k=0):
-        point_idx = np.where(prob > self.detection_threshold)
+    def _generate_predict_point(self, prob, threshold, scale=None, top_k=0):
+        point_idx = np.where(prob > threshold)
         prob = prob[point_idx]
         sorted_idx = np.argsort(prob)[::-1]
         if sorted_idx.shape[0] >= top_k:
