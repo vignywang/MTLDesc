@@ -24,14 +24,15 @@ class MegPointSelfTrainingParameters(BasicParameters):
         super(MegPointSelfTrainingParameters, self).__init__()
         self.ckpt_root = './megpoint_ckpt'
         self.log_root = './megpoint_log'
-        # self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_new_0.0010_64/model_59.pt"
-        self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_new_0.0010_64/model_05.pt"
+        self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_new_0.0010_64/model_59.pt"
+        # self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_new_0.0010_64/model_05.pt"
 
         # training相关
-        self.round_num = 100
-        self.epoch_each_round = 5
+        self.round_num = 10  # 100
+        self.epoch_each_round = 10  # 2
         self.raw_batch_size = 32
-        self.initial_portion = 0.002  # 每一轮按1%递增，最高0.005
+        self.initial_portion = 0.002  # 每一轮按40%递增，最高0.01
+        # self.initial_portion = 0.002  # 每一轮按1%递增，最高0.005
         self.src_detector_weight = 0.2
         self.tgt_detector_weight = 1 - self.src_detector_weight
 
@@ -85,6 +86,7 @@ class MegPointSelfTrainingParameters(BasicParameters):
 
     def initialize(self):
         super(MegPointSelfTrainingParameters, self).initialize()
+        self.logger.info("epoch_each_round: %d" % self.epoch_each_round)
         self.logger.info("raw_batch_size: %d" % self.raw_batch_size)
         self.logger.info(
             "src_detector_weight=%.2f, tgt_detector_weight=%.2f" % (

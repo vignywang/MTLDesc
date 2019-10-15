@@ -106,18 +106,18 @@ class MegPointTrainerTester(object):
     def _validate_one_epoch(self, epoch_idx):
         raise NotImplementedError
 
-    def _load_model_params(self, ckpt_file):
+    def _load_model_params(self, model, ckpt_file):
         if ckpt_file is None:
             print("Please input correct checkpoint file dir!")
             return False
 
         self.logger.info("Load pretrained model %s " % ckpt_file)
-        model_dict = self.model.state_dict()
+        model_dict = model.state_dict()
         pretrain_dict = torch.load(ckpt_file, map_location=self.device)
         model_dict.update(pretrain_dict)
-        self.model.load_state_dict(model_dict)
+        model.load_state_dict(model_dict)
 
-        return True
+        return model
 
 
 class MegPointSeflTrainingTrainer(MegPointTrainerTester):
@@ -182,9 +182,10 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
 
         # 初始化模型
         self.model = STMegPointNet()
+        self.initial_model = STMegPointNet()
 
         # 恢复预训练的模型
-        self._load_model_params(params.magicpoint_ckpt)
+        self.initial_model = self._load_model_params(model=self.initial_model, ckpt_file=params.magicpoint_ckpt)
 
         # 初始化loss算子
         self.detector_loss = torch.nn.CrossEntropyLoss(reduction='none')
@@ -193,7 +194,9 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         # 若有多gpu设置则加载多gpu
         if self.multi_gpus:
             self.model = torch.nn.DataParallel(self.model)
+            self.initial_model = torch.nn.DataParallel(self.initial_model)
         self.model = self.model.to(self.device)
+        self.initial_model = self.initial_model.to(self.device)
 
         # 初始化优化器算子
         self.model_optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
@@ -226,8 +229,8 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         end_time = time.time()
         self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
 
-    def _compute_threshold(self, portion):
-        self.model.eval()
+    def _compute_threshold(self, model, portion):
+        model.eval()
         # 计算每一张图像的关键点的概率图，并统计所有的概率
         self.logger.info("Begin to compute threshold of portion: %.4f" % portion)
         partial_idx = int(self.raw_batch_size*self.params.height*self.params.width*portion)
@@ -235,7 +238,7 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         all_prob = np.empty((0,))
         for i, data in enumerate(self.target_raw_dataloader):
             image = data["image"].to(self.device)
-            _, prob, _ = self.model(image)  # [bt,64,h/8,w/8]
+            _, prob, _ = model(image)  # [bt,64,h/8,w/8]
             prob = f.pixel_shuffle(prob, 8)
             prob = spatial_nms(prob, kernel_size=int(self.nms_threshold * 2 + 1)).squeeze().reshape((-1,))  # [bt*h*w]
             prob, _ = torch.sort(prob, descending=True)
@@ -263,11 +266,19 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         self.logger.info("-----------------------------------------------------")
         self.logger.info("Start to label the whole target data")
 
-        self.model.eval()
+        if round_idx == 0:
+            self.logger.info("Use initial model to label.")
+            model = self.initial_model
+        else:
+            self.logger.info("Use on-training model to label.")
+            model = self.model
+
+        model.eval()
 
         # 根据当前的round数计算当前的portion
-        self.portion = min(self.initial_portion*1.01**round_idx, 0.015)
-        label_threshold = self._compute_threshold(self.portion)
+        self.portion = min(self.initial_portion*1.4**round_idx, 0.01)
+        # self.portion = min(self.initial_portion*1.01**round_idx, 0.015)
+        label_threshold = self._compute_threshold(model, self.portion)
 
         # 再次对数据集中每一张图像进行预测且标注
         self.logger.info("Begin to label all target data by threshold: %.4f" % label_threshold)
@@ -275,7 +286,7 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         start_time = time.time()
         for i, data in enumerate(self.target_raw_dataloader):
             image = data["image"].to(self.device)
-            _, prob, _ = self.model(image)
+            _, prob, _ = model(image)
             image = ((image + 1) * 255. / 2.).to(torch.uint8).squeeze().cpu().numpy()
             prob = f.pixel_shuffle(prob, 8)
             prob = spatial_nms(prob, kernel_size=int(self.nms_threshold * 2 + 1)).squeeze().detach().cpu().numpy()
@@ -308,7 +319,7 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         for i in range(self.epoch_each_round):
             self._train_one_epoch(int(i+round_idx*self.epoch_each_round))
 
-            test_threshold = self._compute_threshold(self.portion)
+            test_threshold = self._compute_threshold(self.model, self.portion)
             self._validate_one_epoch_by_threshold(int(i+round_idx*self.epoch_each_round), test_threshold)
 
         self.logger.info("Training round %2d done." % round_idx)

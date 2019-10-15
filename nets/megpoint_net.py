@@ -32,8 +32,8 @@ class BaseMegPointNet(nn.Module):
         self.convDb = nn.Conv2d(c5, d1, kernel_size=1, stride=1, padding=0)
 
         # batch normalization
-        self.bnPa = nn.BatchNorm2d(c5, affine=False)
-        self.bnDa = nn.BatchNorm2d(c5, affine=False)
+        self.bnPa = nn.BatchNorm2d(c5)
+        self.bnDa = nn.BatchNorm2d(c5)
 
         self.softmax = nn.Softmax(dim=1)
         self.tanh = nn.Tanh()
@@ -104,6 +104,14 @@ class STMegPointNet(BaseMegPointNet):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x = self.relu(self.conv1a(x))
@@ -125,6 +133,79 @@ class STMegPointNet(BaseMegPointNet):
 
         # descriptor head
         cDa = self.relu(self.convDa(feature))
+        desc = self.convDb(cDa)
+        dn = torch.norm(desc, p=2, dim=1, keepdim=True)
+        desc = desc.div(dn)
+
+        return logit, prob, desc
+
+
+class STBNMegPointNet(nn.Module):
+
+    def __init__(self):
+        super(STBNMegPointNet, self).__init__()
+        self.relu = torch.nn.ReLU(inplace=True)
+        self.pool = torch.nn.MaxPool2d(kernel_size=2, stride=2)
+        c1, c2, c3, c4, c5, d1 = 64, 64, 128, 128, 256, 256
+        # Shared Encoder.
+        self.conv1a = nn.Conv2d(1, c1, kernel_size=3, stride=1, padding=1)
+        self.bn1a = nn.BatchNorm2d(c1)
+        self.conv1b = nn.Conv2d(c1, c1, kernel_size=3, stride=1, padding=1)
+        self.bn1b = nn.BatchNorm2d(c1)
+        self.conv2a = nn.Conv2d(c1, c2, kernel_size=3, stride=1, padding=1)
+        self.bn2a = nn.BatchNorm2d(c2)
+        self.conv2b = nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1)
+        self.bn2b = nn.BatchNorm2d(c2)
+        self.conv3a = nn.Conv2d(c2, c3, kernel_size=3, stride=1, padding=1)
+        self.bn3a = nn.BatchNorm2d(c3)
+        self.conv3b = nn.Conv2d(c3, c3, kernel_size=3, stride=1, padding=1)
+        self.bn3b = nn.BatchNorm2d(c3)
+        self.conv4a = nn.Conv2d(c3, c4, kernel_size=3, stride=1, padding=1)
+        self.bn4a = nn.BatchNorm2d(c4)
+        self.conv4b = nn.Conv2d(c4, c4, kernel_size=3, stride=1, padding=1)
+        self.bn4b = nn.BatchNorm2d(c4)
+        # Detector Head.
+        self.convPa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
+        self.bnPa = nn.BatchNorm2d(c5)
+        self.convPb = nn.Conv2d(c5, 65, kernel_size=1, stride=1, padding=0)
+        # Descriptor Head.
+        self.convDa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
+        self.bnDa = nn.BatchNorm2d(c5)
+        self.convDb = nn.Conv2d(c5, d1, kernel_size=1, stride=1, padding=0)
+
+        for m in self.modules():
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.BatchNorm2d):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.Linear):
+                    nn.init.normal_(m.weight, 0, 0.01)
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        x = self.relu(self.bn1a(self.conv1a(x)))
+        x = self.relu(self.bn1b(self.conv1b(x)))
+        x = self.pool(x)
+        x = self.relu(self.bn2a(self.conv2a(x)))
+        x = self.relu(self.bn2b(self.conv2b(x)))
+        x = self.pool(x)
+        x = self.relu(self.bn3a(self.conv3a(x)))
+        x = self.relu(self.bn3b(self.conv3b(x)))
+        x = self.pool(x)
+        x = self.relu(self.bn4a(self.conv4a(x)))
+        feature = self.relu(self.bn4b(self.conv4b(x)))
+
+        # detect head
+        cPa = self.relu(self.bnPa(self.convPa(feature)))
+        logit = self.convPb(cPa)
+        prob = self.softmax(logit)[:, :-1, :, :]
+
+        # descriptor head
+        cDa = self.relu(self.bnDa(self.convDa(feature)))
         desc = self.convDb(cDa)
         dn = torch.norm(desc, p=2, dim=1, keepdim=True)
         desc = desc.div(dn)
