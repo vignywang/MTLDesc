@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as f
 
-# from torchvision.models import ResNet
+from torchvision.models import ResNet
 
 
 class BaseMegPointNet(nn.Module):
@@ -107,8 +107,21 @@ class STMegPointNet(BaseMegPointNet):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
+                if m.affine:
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
+
+    def reinitialize(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                m.reset_parameters()
             elif isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
@@ -149,42 +162,58 @@ class STBNMegPointNet(nn.Module):
         c1, c2, c3, c4, c5, d1 = 64, 64, 128, 128, 256, 256
         # Shared Encoder.
         self.conv1a = nn.Conv2d(1, c1, kernel_size=3, stride=1, padding=1)
-        self.bn1a = nn.BatchNorm2d(c1)
+        self.bn1a = nn.BatchNorm2d(c1, affine=False)
         self.conv1b = nn.Conv2d(c1, c1, kernel_size=3, stride=1, padding=1)
-        self.bn1b = nn.BatchNorm2d(c1)
+        self.bn1b = nn.BatchNorm2d(c1, affine=False)
         self.conv2a = nn.Conv2d(c1, c2, kernel_size=3, stride=1, padding=1)
-        self.bn2a = nn.BatchNorm2d(c2)
+        self.bn2a = nn.BatchNorm2d(c2, affine=False)
         self.conv2b = nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1)
-        self.bn2b = nn.BatchNorm2d(c2)
+        self.bn2b = nn.BatchNorm2d(c2, affine=False)
         self.conv3a = nn.Conv2d(c2, c3, kernel_size=3, stride=1, padding=1)
-        self.bn3a = nn.BatchNorm2d(c3)
+        self.bn3a = nn.BatchNorm2d(c3, affine=False)
         self.conv3b = nn.Conv2d(c3, c3, kernel_size=3, stride=1, padding=1)
-        self.bn3b = nn.BatchNorm2d(c3)
+        self.bn3b = nn.BatchNorm2d(c3, affine=False)
         self.conv4a = nn.Conv2d(c3, c4, kernel_size=3, stride=1, padding=1)
-        self.bn4a = nn.BatchNorm2d(c4)
+        self.bn4a = nn.BatchNorm2d(c4, affine=False)
         self.conv4b = nn.Conv2d(c4, c4, kernel_size=3, stride=1, padding=1)
-        self.bn4b = nn.BatchNorm2d(c4)
+        self.bn4b = nn.BatchNorm2d(c4, affine=False)
         # Detector Head.
         self.convPa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
-        self.bnPa = nn.BatchNorm2d(c5)
+        self.bnPa = nn.BatchNorm2d(c5, affine=False)
         self.convPb = nn.Conv2d(c5, 65, kernel_size=1, stride=1, padding=0)
         # Descriptor Head.
         self.convDa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
-        self.bnDa = nn.BatchNorm2d(c5)
+        self.bnDa = nn.BatchNorm2d(c5, affine=False)
         self.convDb = nn.Conv2d(c5, d1, kernel_size=1, stride=1, padding=0)
 
+        self.softmax = nn.Softmax(dim=1)
+
         for m in self.modules():
-            for m in self.modules():
-                if isinstance(m, nn.Conv2d):
-                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                    if m.bias is not None:
-                        nn.init.constant_(m.bias, 0)
-                elif isinstance(m, nn.BatchNorm2d):
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                if m.affine:
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
-                elif isinstance(m, nn.Linear):
-                    nn.init.normal_(m.weight, 0, 0.01)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+
+    def reinitialize(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                m.reset_parameters()
+            #     nn.init.constant_(m.weight, 1)
+            #     nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x = self.relu(self.bn1a(self.conv1a(x)))

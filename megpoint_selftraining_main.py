@@ -28,10 +28,13 @@ class MegPointSelfTrainingParameters(BasicParameters):
         # self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_new_0.0010_64/model_05.pt"
 
         # training相关
-        self.round_num = 10  # 100
-        self.epoch_each_round = 10  # 2
+        self.round_num = 100
+        self.epoch_each_round = 5  # 2
         self.raw_batch_size = 32
         self.initial_portion = 0.002  # 每一轮按40%递增，最高0.01
+        self.max_portion = 0.01
+        self.use_bn = False
+        self.reinitialize_each_round = True
         # self.initial_portion = 0.002  # 每一轮按1%递增，最高0.005
         self.src_detector_weight = 0.2
         self.tgt_detector_weight = 1 - self.src_detector_weight
@@ -82,18 +85,35 @@ class MegPointSelfTrainingParameters(BasicParameters):
         parser.add_argument("--log_freq", type=int, default=100)
         parser.add_argument("--lr", type=float, default=0.001)
         parser.add_argument("--prefix", type=str, default='adaption')
+
+        parser.add_argument("--round_num", type=int, default=100)
+        parser.add_argument("--epoch_each_round", type=int, default=5)
+        parser.add_argument("--use_bn", type=int, default=0)
+        parser.add_argument("--reinitialize_each_round", type=int, default=0)
+        parser.add_argument("--initial_portion", type=float, default=0.002)
+        parser.add_argument("--max_portion", type=float, default=0.01)
         return parser.parse_args()
 
     def initialize(self):
         super(MegPointSelfTrainingParameters, self).initialize()
+        self.logger.info("------------------------------------------")
+        self.logger.info("self-training important params:")
+
+        self.use_bn = bool(self.use_bn)
+        self.reinitialize_each_round = bool(self.reinitialize_each_round)
+
+        self.logger.info("round_num: %d" % self.round_num)
         self.logger.info("epoch_each_round: %d" % self.epoch_each_round)
-        self.logger.info("raw_batch_size: %d" % self.raw_batch_size)
+        self.logger.info("use_bn: %s" % self.use_bn)
+        self.logger.info("reinitialize_each_round: %s" % self.reinitialize_each_round)
+        self.logger.info("epoch_each_round: %d" % self.epoch_each_round)
         self.logger.info(
             "src_detector_weight=%.2f, tgt_detector_weight=%.2f" % (
                 self.src_detector_weight,
                 self.tgt_detector_weight
             )
         )
+        self.logger.info("------------------------------------------")
 
 
 def main():

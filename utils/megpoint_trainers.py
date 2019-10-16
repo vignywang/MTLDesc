@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 
 from nets.megpoint_net import MegPointNet
 from nets.megpoint_net import STMegPointNet
+from nets.megpoint_net import STBNMegPointNet
 from nets.megpoint_net import Discriminator
 
 from data_utils.megpoint_dataset import AdaptionDataset, LabelGenerator
@@ -129,10 +130,17 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         self.round_num = params.round_num
         self.epoch_each_round = params.epoch_each_round
         self.raw_batch_size = params.raw_batch_size * self.gpu_count
+
         self.initial_portion = params.initial_portion
+        self.max_portion = params.max_portion
+        self.inc_portion = (self.max_portion - self.initial_portion) * 2. / float(self.round_num)
         self.portion = self.initial_portion
+
         self.src_detector_weight = params.src_detector_weight
         self.tgt_detector_weight = params.tgt_detector_weight
+
+        self.use_bn = params.use_bn
+        self.reinitialize_each_round = params.reinitialize_each_round
 
         # 初始化源数据与目标数据
         self.source_dataset = SyntheticAdversarialDataset(params)
@@ -181,7 +189,13 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         self.general_matcher = Matcher('float')
 
         # 初始化模型
-        self.model = STMegPointNet()
+        if self.use_bn:
+            self.logger.info("Initialize BN model.")
+            self.model = STBNMegPointNet()
+        else:
+            self.logger.info("Initialize model.")
+            self.model = STMegPointNet()
+
         self.initial_model = STMegPointNet()
 
         # 恢复预训练的模型
@@ -198,11 +212,8 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         self.model = self.model.to(self.device)
         self.initial_model = self.initial_model.to(self.device)
 
-        # 初始化优化器算子
-        self.model_optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-
         # 初始化学习率调整算子
-        self.model_scheduler = torch.optim.lr_scheduler.StepLR(self.model_optimizer, step_size=100, gamma=0.1)
+        # self.model_scheduler = torch.optim.lr_scheduler.StepLR(self.model_optimizer, step_size=100, gamma=0.1)
 
     @staticmethod
     def _compute_masked_loss(unmasked_loss, mask):
@@ -276,7 +287,7 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         model.eval()
 
         # 根据当前的round数计算当前的portion
-        self.portion = min(self.initial_portion*1.4**round_idx, 0.01)
+        self.portion = min(self.initial_portion + self.inc_portion*round_idx, self.max_portion)
         # self.portion = min(self.initial_portion*1.01**round_idx, 0.015)
         label_threshold = self._compute_threshold(model, self.portion)
 
@@ -315,6 +326,16 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
     def _train_one_round(self, round_idx):
         self.logger.info("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
         self.logger.info("Start to train round %2d:" % round_idx)
+
+        if self.reinitialize_each_round:
+            self.logger.info("Reinitialize the whole network parameters")
+            if self.multi_gpus:
+                self.model.module.reinitialize()
+            else:
+                self.model.reinitialize()
+
+        self.logger.info("Reinitialize the Adam optimizer")
+        self.model_optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
         for i in range(self.epoch_each_round):
             self._train_one_epoch(int(i+round_idx*self.epoch_each_round))
