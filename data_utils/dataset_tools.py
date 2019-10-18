@@ -62,9 +62,12 @@ class HomographyAugmentation(object):
         self.do_translation = do_translation
         self.allow_artifacts = allow_artifacts
 
-    def __call__(self, image, points, return_homo=False):
+    def __call__(self, image, points, mask=None, return_homo=False):
         homography = self.sample()
-        image, mask = self._compute_warped_image_and_mask(image, homography)
+        if mask is None:
+            image, mask = self._compute_warped_image_and_mask(image, homography)
+        else:
+            image, mask = self._compute_warped_image_and_mask(image, homography, mask)
         points = self._warp_keypoints(points, homography)
         if return_homo:
             return image, mask, points, homography
@@ -76,11 +79,15 @@ class HomographyAugmentation(object):
         image, mask = self._compute_warped_image_and_mask(image, homography)
         return image, mask, homography
 
-    def _compute_warped_image_and_mask(self, image, homography):
+    def _compute_warped_image_and_mask(self, image, homography, mask=None):
         dsize = (self.width, self.height)
-        org_mask = np.ones_like(image, dtype=np.float)
         warped_image = cv.warpPerspective(image, homography, dsize=dsize, flags=cv.INTER_LINEAR)
-        warped_mask = cv.warpPerspective(org_mask, homography, dsize=dsize, flags=cv.INTER_LINEAR)
+        if mask is None:
+            org_mask = np.ones_like(image, dtype=np.float)
+            warped_mask = cv.warpPerspective(org_mask, homography, dsize=dsize, flags=cv.INTER_LINEAR)
+        else:
+            mask = mask.astype(np.float)
+            warped_mask = cv.warpPerspective(mask, homography, dsize=dsize, flags=cv.INTER_LINEAR)
         valid_mask = warped_mask.astype(np.uint8)
 
         return warped_image, valid_mask
