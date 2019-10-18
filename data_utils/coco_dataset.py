@@ -488,19 +488,22 @@ class COCOMegPointSelfTrainingDataset(Dataset):
         self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014', 'resized_images')
         self.image_list = self._format_file_list()
         self.point_memory_list = []
+        self.mask_memory_list = []
         self.image_memory_list = []
         self.homography = HomographyAugmentation(**params.homography_params)
         self.photometric = PhotometricAugmentation(**params.photometric_params)
         self.center_grid = self._generate_center_grid()
 
-    def append(self, image, point):
+    def append(self, image, point, mask):
         # 输入的图像应该是uint8类型的
         self.image_memory_list.append(image)
         self.point_memory_list.append(point)
+        self.mask_memory_list.append(mask)
 
     def reset(self):
         self.image_memory_list = []
         self.point_memory_list = []
+        self.mask_memory_list = []
 
     def __len__(self):
         return len(self.image_list)
@@ -510,14 +513,15 @@ class COCOMegPointSelfTrainingDataset(Dataset):
 
         image = self.image_memory_list[idx]
         point = self.point_memory_list[idx]
-        org_mask = np.ones_like(image)
+        org_mask = self.mask_memory_list[idx]
 
         # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
         if torch.rand([]).item() < 0.5:
             warped_image, warped_org_mask, warped_point, homography = \
             image.copy(), org_mask.copy(), point.copy(), np.eye(3)
         else:
-            warped_image, warped_org_mask, warped_point, homography = self.homography(image, point, return_homo=True)
+            warped_image, warped_org_mask, warped_point, homography = self.homography(
+                image, point, mask=org_mask, return_homo=True)
 
         # 1、对图像的相关处理
         if torch.rand([]).item() < 0.5:
@@ -541,17 +545,19 @@ class COCOMegPointSelfTrainingDataset(Dataset):
 
         # 2.2 得到第一副图点和标签的最终输出
         label = self._convert_points_to_label(point).to(torch.long)
-        mask = space_to_depth(org_mask).to(torch.uint8)
-        mask = torch.all(mask, dim=0).to(torch.float)
+        mask = org_mask.to(torch.float)
 
         # 2.3 得到第二副图点和标签的最终输出
         warped_label = self._convert_points_to_label(warped_point).to(torch.long)
-        warped_mask = space_to_depth(warped_org_mask).to(torch.uint8)
-        warped_mask = torch.all(warped_mask, dim=0).to(torch.float)
+        warped_mask = warped_org_mask.to(torch.float)
 
-        # 3、对构造描述子loss有关关系的计算
-        # 3.1 得到第二副图中有效描述子的掩膜
-        warped_valid_mask = warped_mask.reshape((-1,))
+        # 2.4 将第二副图的mask转换成描述子的mask，这个mask会被用来计算下面描述子间有效的对应关系
+        warped_valid_mask = space_to_depth(warped_org_mask).to(torch.uint8)
+        warped_valid_mask = torch.all(warped_valid_mask, dim=0).to(torch.float)
+
+        # # 3、对构造描述子loss有关关系的计算
+        # # 3.1 得到第二副图中有效描述子的掩膜
+        warped_valid_mask = warped_valid_mask.reshape((-1,))
 
         matched_idx, matched_valid, not_search_mask = self.generate_corresponding_relationship(
             homography, warped_valid_mask)
@@ -573,15 +579,11 @@ class COCOMegPointSelfTrainingDataset(Dataset):
         }
 
     def _convert_points_to_label(self, points):
-
+        # 非关键点的标签为0，关键点的标签为1，无效点为2
         height = self.height
         width = self.width
-        n_height = int(height / 8)
-        n_width = int(width / 8)
-        assert n_height * 8 == height and n_width * 8 == width
-
         num_pt = points.shape[0]
-        label = torch.zeros((height * width))
+        label = torch.zeros((height*width))
         if num_pt > 0:
             points_h, points_w = torch.split(points, 1, dim=1)
             points_idx = points_w + points_h * width
@@ -589,11 +591,7 @@ class COCOMegPointSelfTrainingDataset(Dataset):
         else:
             label = label.reshape((height, width))
 
-        dense_label = space_to_depth(label)
-        dense_label = torch.cat((dense_label, 0.5 * torch.ones((1, n_height, n_width))), dim=0)  # [65, 30, 40]
-        sparse_label = torch.argmax(dense_label, dim=0)  # [30,40]
-
-        return sparse_label
+        return label
 
     def _format_file_list(self):
         dataset_dir = self.dataset_dir
@@ -675,16 +673,65 @@ class COCOMegPointSelfTrainingDataset(Dataset):
             return warped_center_grid
 
 
-class COCOMegPointRawDataset(Dataset):
+class COCOMegPointSelfTrainingOnlyImageDataset(COCOMegPointSelfTrainingDataset):
 
     def __init__(self, params):
+        super(COCOMegPointSelfTrainingOnlyImageDataset, self).__init__(params)
+
+    def __getitem__(self, idx):
+        assert (len(self.point_memory_list) != 0) and (len(self.image_memory_list) != 0)
+
+        image = self.image_memory_list[idx]
+        point = self.point_memory_list[idx]
+        org_mask = self.mask_memory_list[idx]
+
+        # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        if torch.rand([]).item() > 0.1:
+            image, org_mask, point, homography = self.homography(image, point, mask=org_mask, return_homo=True)
+
+        # 1、对图像的相关处理
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        image = image*2./255. - 1.
+
+        # 2、对点和标签的相关处理
+        # 2.1 输入的点标签和掩膜的预处理
+        point = np.abs(np.floor(point)).astype(np.int)
+        point = torch.from_numpy(point)
+        org_mask = torch.from_numpy(org_mask)
+
+        label = self._convert_points_to_label(point).to(torch.long)
+        # 标签为1的点一定是有效点，但是由于点变换与掩膜变换不统一，可能有效点的掩膜反而无效，因此要将有效点生成的掩膜与整体掩膜结合
+        hyber_mask = (org_mask == 1) | (label == 1)
+        mask = torch.where(
+            hyber_mask, torch.ones_like(label), torch.zeros_like(label)
+        ).to(torch.float)
+
+        new_label = torch.where(
+            mask == 1, label, torch.ones_like(label) * 2
+        )
+
+        # 4、返回样本
+        return {
+            "image": image,
+            "mask": mask,
+            "label": label,
+            "new_label": new_label
+        }
+
+
+class COCOMegPointRawDataset(Dataset):
+
+    def __init__(self, params, postfix="resized_images"):
         self.params = params
         self.height = params.height
         self.width = params.width
         self.n_height = int(self.height/8)
         self.n_width = int(self.width/8)
-        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014', 'resized_images')
-        self.image_list = self._format_file_list()
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014', postfix)
+        self.image_list, self.image_name_list = self._format_file_list()
 
     def __len__(self):
         return len(self.image_list)
@@ -694,8 +741,51 @@ class COCOMegPointRawDataset(Dataset):
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
         image = (image * 2. / 255.) - 1.
+
+        name = self.image_name_list[idx]
         return {
-            "image": image
+            "image": image,
+            "name": name
+        }
+
+    def _format_file_list(self):
+        image_list = glob.glob(os.path.join(self.dataset_dir, "*.jpg"))
+        image_list = sorted(image_list)
+        image_name_list = []
+        for image in image_list:
+            image_name = (image.split('/')[-1]).split('.')[0]
+            image_name_list.append(image_name)
+        return image_list, image_name_list
+
+
+class COCOMegPointDebugDataset(Dataset):
+
+    def __init__(self, params, read_mask=False, postfix="resized_images"):
+        self.params = params
+        self.read_mask = read_mask
+        self.height = params.height
+        self.width = params.width
+        self.n_height = int(self.height/8)
+        self.n_width = int(self.width/8)
+        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014', postfix)
+        self.image_list, self.point_list, self.mask_list = self._format_file_list()
+
+    def __len__(self):
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        point = np.load(self.point_list[idx])
+
+        mask = None
+        if self.read_mask:
+            mask = np.load(self.mask_list[idx])
+
+        return {
+            "image": image,
+            "point": point,
+            "mask": mask
         }
 
     def _format_file_list(self):
@@ -703,11 +793,18 @@ class COCOMegPointRawDataset(Dataset):
         org_image_list = glob.glob(os.path.join(dataset_dir, "*.jpg"))
         org_image_list = sorted(org_image_list)
         image_list = []
+        point_list = []
+        mask_list = []
         for org_image_dir in org_image_list:
+            name = (org_image_dir.split('/')[-1]).split('.')[0]
+            point_dir = os.path.join(dataset_dir, name + '.npy')
+            if self.read_mask:
+                mask_dir = os.path.join(dataset_dir, name + "_mask.npy")
+                mask_list.append(mask_dir)
             image_list.append(org_image_dir)
+            point_list.append(point_dir)
 
-        return image_list
-
+        return image_list, point_list, mask_list
 
 
 class COCOMegPointAdversarialDataset(Dataset):
