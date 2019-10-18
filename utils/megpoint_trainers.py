@@ -16,18 +16,22 @@ from nets.megpoint_net import MegPointNet
 from nets.megpoint_net import STMegPointNet
 from nets.megpoint_net import STBNMegPointNet
 from nets.megpoint_net import Discriminator
+from nets.megpoint_net import EncoderDecoderMegPoint
 
 from data_utils.megpoint_dataset import AdaptionDataset, LabelGenerator
 from data_utils.coco_dataset import COCOMegPointAdaptionDataset
 from data_utils.coco_dataset import COCOMegPointAdversarialDataset
 from data_utils.coco_dataset import COCOMegPointSelfTrainingDataset
+from data_utils.coco_dataset import COCOMegPointSelfTrainingOnlyImageDataset
 from data_utils.coco_dataset import COCOMegPointRawDataset
 from data_utils.synthetic_dataset import SyntheticAdversarialDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
+from data_utils.synthetic_dataset import SyntheticEncoderDecoderDataset
 from data_utils.hpatch_dataset import HPatchDataset
 from data_utils.dataset_tools import HomographyAugmentation
 from data_utils.dataset_tools import InfiniteDataLoader
 
+from utils.trainers import MagicPointSynthetic
 from utils.evaluation_tools import RepeatabilityCalculator
 from utils.evaluation_tools import MovingAverage
 from utils.evaluation_tools import PointStatistics
@@ -37,6 +41,62 @@ from utils.evaluation_tools import mAPCalculator
 from utils.utils import spatial_nms
 from utils.utils import DescriptorTripletLoss
 from utils.utils import Matcher
+
+
+class MagicPointEncoderDecoderTrainer(MagicPointSynthetic):
+
+    def __init__(self, params):
+        super(MagicPointEncoderDecoderTrainer, self).__init__(params=params)
+
+        loss_weight = torch.tensor((1, 1), dtype=torch.float, device=self.device)
+        self.cross_entropy_loss = torch.nn.CrossEntropyLoss(weight=loss_weight, reduction='none')
+
+    def _initialize_model(self):
+        # 初始化EncoderDecoder类型的网络
+        self.model = EncoderDecoderMegPoint(only_detector=True)
+        if self.multi_gpus:
+            self.model = torch.nn.DataParallel(self.model)
+        self.model = self.model.to(self.device)
+
+    def _initialize_dataset(self):
+        train_dataset = SyntheticEncoderDecoderDataset(self.params)
+        val_dataset = SyntheticValTestDataset(self.params, 'validation')
+        test_dataset = SyntheticValTestDataset(self.params, 'validation', add_noise=True)
+        return train_dataset, val_dataset, test_dataset
+
+    def _test_func(self, dataset):
+        self.model.eval()
+        self.mAP_calculator.reset()
+
+        start_time = time.time()
+        count = 0
+
+        for i, data in enumerate(dataset):
+            image = data['image']
+            gt_point = data['gt_point']
+            gt_point = gt_point.numpy()
+
+            image = image.to(self.device).unsqueeze(dim=0)
+            # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
+            _, prob = self.model(image)
+            # 将概率图展开为原始图像大小
+            is_prob = prob[:, 1:2, :, :]
+            max_prob, _ = torch.max(prob, dim=1)
+            is_prob = torch.where(is_prob == max_prob, is_prob, torch.zeros_like(is_prob))
+            # 进行非极大值抑制
+            is_prob = spatial_nms(is_prob)
+            is_prob = is_prob.detach().cpu().numpy()[0, 0]
+            self.mAP_calculator.update(is_prob, gt_point)
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
+                start_time = time.time()
+            count += 1
+            # if count % 1000 == 0:
+            #     break
+
+        mAP, test_data = self.mAP_calculator.compute_mAP()
+
+        return mAP, test_data, count
 
 
 class MegPointTrainerTester(object):
@@ -131,20 +191,28 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         self.epoch_each_round = params.epoch_each_round
         self.raw_batch_size = params.raw_batch_size * self.gpu_count
 
-        self.initial_portion = params.initial_portion
-        self.max_portion = params.max_portion
-        self.inc_portion = (self.max_portion - self.initial_portion) * 2. / float(self.round_num)
-        self.portion = self.initial_portion
+        self.initial_point_portion = params.initial_point_portion
+        self.initial_nopoint_portion = params.initial_nopoint_portion
+        self.max_point_portion = params.max_point_portion
+        self.max_nopoint_portion = params.max_nopoint_portion
+        self.inc_point_portion = (self.max_point_portion - self.initial_point_portion) * 2. / float(self.round_num)
+        self.inc_nopoint_portion = (self.max_nopoint_portion - self.initial_nopoint_portion) * 2. / float(self.round_num)
+        self.point_portion = self.initial_point_portion
+        self.nopoint_portion = self.initial_nopoint_portion
 
         self.src_detector_weight = params.src_detector_weight
         self.tgt_detector_weight = params.tgt_detector_weight
 
         self.use_bn = params.use_bn
+        self.only_detector = params.only_detector
         self.reinitialize_each_round = params.reinitialize_each_round
 
         # 初始化源数据与目标数据
-        self.source_dataset = SyntheticAdversarialDataset(params)
-        self.target_dataset = COCOMegPointSelfTrainingDataset(params)
+        self.source_dataset = SyntheticEncoderDecoderDataset(params)
+        if self.only_detector:
+            self.target_dataset = COCOMegPointSelfTrainingOnlyImageDataset(params)
+        else:
+            self.target_dataset = COCOMegPointSelfTrainingDataset(params)
         self.target_raw_dataset = COCOMegPointRawDataset(params)
 
         self.epoch_length = min(
@@ -193,16 +261,24 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
             self.logger.info("Initialize BN model.")
             self.model = STBNMegPointNet()
         else:
-            self.logger.info("Initialize model.")
-            self.model = STMegPointNet()
+            # self.model = STMegPointNet()
+            if self.only_detector:
+                self.logger.info("Initialize only detector model.")
+                self.model = EncoderDecoderMegPoint(only_detector=True)
+            else:
+                self.logger.info("Initialize normal model.")
+                self.model = STMegPointNet()
 
-        self.initial_model = STMegPointNet()
+        self.initial_model = EncoderDecoderMegPoint(only_detector=True)
 
         # 恢复预训练的模型
         self.initial_model = self._load_model_params(model=self.initial_model, ckpt_file=params.magicpoint_ckpt)
 
         # 初始化loss算子
-        self.detector_loss = torch.nn.CrossEntropyLoss(reduction='none')
+        # detector_weight = torch.tensor((1, 1), device=self.device, dtype=torch.float)
+        # self.logger.info("The detector_loss_weight is: %d: %d" % (detector_weight[0].item(), detector_weight[1].item()))
+
+        self.detector_loss = torch.nn.CrossEntropyLoss(ignore_index=2)
         self.descriptor_loss = DescriptorTripletLoss(device=self.device)
 
         # 若有多gpu设置则加载多gpu
@@ -211,6 +287,8 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
             self.initial_model = torch.nn.DataParallel(self.initial_model)
         self.model = self.model.to(self.device)
         self.initial_model = self.initial_model.to(self.device)
+
+        self.model_optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
         # 初始化学习率调整算子
         # self.model_scheduler = torch.optim.lr_scheduler.StepLR(self.model_optimizer, step_size=100, gamma=0.1)
@@ -240,21 +318,57 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         end_time = time.time()
         self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
 
-    def _compute_threshold(self, model, portion):
+    def _compute_threshold(self, model, point_portion, nopoint_portion, only_point_threshold=False):
         model.eval()
         # 计算每一张图像的关键点的概率图，并统计所有的概率
-        self.logger.info("Begin to compute threshold of portion: %.4f" % portion)
-        partial_idx = int(self.raw_batch_size*self.params.height*self.params.width*portion)
+        self.logger.info("Begin to compute threshold of point_portion: %.4f" % point_portion)
+        self.logger.info("Begin to compute threshold of nopoint_portion: %.4f" % nopoint_portion)
+        point_partial_idx = int(self.raw_batch_size*self.params.height*self.params.width*point_portion)
+        nopoint_partial_idx = int(self.raw_batch_size*self.params.height*self.params.width*nopoint_portion)
         start_time = time.time()
-        all_prob = np.empty((0,))
+
+        all_is_prob = []
+        all_is_count = 0
+        all_is_not_prob = []
+        all_is_not_count = 0
+        is_threshold = 2
+        is_not_threshold = 2
+
         for i, data in enumerate(self.target_raw_dataloader):
             image = data["image"].to(self.device)
-            _, prob, _ = model(image)  # [bt,64,h/8,w/8]
-            prob = f.pixel_shuffle(prob, 8)
-            prob = spatial_nms(prob, kernel_size=int(self.nms_threshold * 2 + 1)).squeeze().reshape((-1,))  # [bt*h*w]
-            prob, _ = torch.sort(prob, descending=True)
-            prob = prob[:partial_idx]
-            all_prob = np.concatenate((all_prob, prob.detach().cpu().numpy()))
+            results = model(image)  # [bt,2,h,w]
+            prob = results[1]
+
+            # is_not_prob代表不是关键点的概率， is_prob代表是关键点的概率
+            is_not_prob, is_prob = torch.chunk(prob, 2, dim=1)
+            predict, _ = torch.max(prob, dim=1, keepdim=True)  # [bt,1,h,w]
+
+            if not only_point_threshold:
+                # 统计预测出不是关键点的像素的个数，并记录它们的概率排序
+                select_is_not_count = torch.where(
+                    is_not_prob == predict, torch.ones_like(is_not_prob), torch.zeros_like(is_not_prob)
+                )
+                all_is_not_count += torch.sum(select_is_not_count)
+
+                select_is_not_prob = torch.where(
+                    is_not_prob == predict, is_not_prob, torch.zeros_like(is_not_prob)
+                ).squeeze().reshape((-1,))  # [bt*h*w]
+                select_is_not_prob, _ = torch.sort(select_is_not_prob, descending=True)
+                select_is_not_prob = select_is_not_prob[:nopoint_partial_idx]
+                all_is_not_prob.append(select_is_not_prob.detach().cpu().numpy())
+
+            # 统计预测出是关键点的像素的个数，并记录它们的概率排序
+            select_is_count = torch.where(
+                is_prob == predict, torch.ones_like(is_prob), torch.zeros_like(is_prob)
+            )
+            all_is_count += torch.sum(select_is_count)
+
+            select_is_prob = torch.where(
+                is_prob == predict, is_prob, torch.zeros_like(is_prob)
+            ).squeeze().reshape((-1,))
+            select_is_prob, _ = torch.sort(select_is_prob, descending=True)
+            select_is_prob = select_is_prob[:point_partial_idx]
+            all_is_prob.append(select_is_prob.detach().cpu().numpy())
 
             if i % 50 == 0:
                 self.logger.info(
@@ -267,11 +381,25 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
                 )
                 start_time = time.time()
 
-        all_prob = np.sort(all_prob)
-        threshold = all_prob[0]
-        self.logger.info("Computing Done! the threshold is: %.4f" % threshold)
+        all_is_prob = np.concatenate(all_is_prob, axis=0)
+        is_idx = int(all_is_count * point_portion)
+        is_idx = all_is_prob.size - is_idx - 1
+        is_threshold = np.partition(all_is_prob, kth=is_idx)[is_idx]
 
-        return threshold
+        if not only_point_threshold:
+            all_is_not_prob = np.concatenate(all_is_not_prob, axis=0)
+            is_not_idx = int(all_is_not_count * nopoint_portion)
+            is_not_idx = all_is_not_prob.size - is_not_idx - 1
+            is_not_threshold = np.partition(all_is_not_prob, kth=is_not_idx)[is_not_idx]
+
+        self.logger.info("Computing Done!")
+        self.logger.info("The is keypoint threshold is: %.4f" % is_threshold)
+
+        if not only_point_threshold:
+            self.logger.info("The is not keypoint threshold is: %.4f" % is_not_threshold)
+            return is_threshold, is_not_threshold
+        else:
+            return is_threshold
 
     def _label_one_round(self, round_idx):
         self.logger.info("-----------------------------------------------------")
@@ -287,27 +415,46 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         model.eval()
 
         # 根据当前的round数计算当前的portion
-        self.portion = min(self.initial_portion + self.inc_portion*round_idx, self.max_portion)
-        # self.portion = min(self.initial_portion*1.01**round_idx, 0.015)
-        label_threshold = self._compute_threshold(model, self.portion)
+        self.point_portion = min(
+            self.initial_point_portion + self.inc_point_portion*round_idx, self.max_point_portion)
+        self.nopoint_portion = min(
+            self.initial_nopoint_portion + self.inc_nopoint_portion*round_idx, self.max_nopoint_portion)
+        is_threshold, is_not_threshold = self._compute_threshold(model, self.point_portion, self.nopoint_portion)
+        # is_threshold = 0.9089
+        # is_not_threshold = 0.95  # 1.0
 
         # 再次对数据集中每一张图像进行预测且标注
-        self.logger.info("Begin to label all target data by threshold: %.4f" % label_threshold)
+        self.logger.info("Begin to label all target data by is_threshold & is_not_threshold: %.4f,%.4f" % (
+            is_threshold, is_not_threshold
+        ))
+
         self.target_dataset.reset()
         start_time = time.time()
         for i, data in enumerate(self.target_raw_dataloader):
             image = data["image"].to(self.device)
-            _, prob, _ = model(image)
-            image = ((image + 1) * 255. / 2.).to(torch.uint8).squeeze().cpu().numpy()
-            prob = f.pixel_shuffle(prob, 8)
-            prob = spatial_nms(prob, kernel_size=int(self.nms_threshold * 2 + 1)).squeeze().detach().cpu().numpy()
-            batch_size = prob.shape[0]
+            results = model(image)
+            prob = results[1]
 
+            is_not_prob, is_prob = torch.chunk(prob, 2, dim=1)
+
+            is_valid_mask = torch.where(
+                torch.ge(is_prob, is_threshold), torch.ones_like(is_prob), torch.zeros_like(is_prob))
+            is_not_valid_mask = torch.where(
+                torch.ge(is_not_prob, is_not_threshold), torch.ones_like(is_not_prob), torch.zeros_like(is_not_prob)
+            )
+            valid_mask = (is_valid_mask + is_not_valid_mask).squeeze().detach().cpu().numpy()  # [bt,h,w]
+
+            is_prob = spatial_nms(is_prob, kernel_size=int(self.nms_threshold * 2 + 1)).squeeze().detach().cpu().numpy()
+            image = ((image + 1) * 255. / 2.).to(torch.uint8).squeeze().cpu().numpy()
+
+            batch_size = prob.shape[0]
             for j in range(batch_size):
                 # 得到对应的预测点
-                cur_point, cur_point_num = self._generate_predict_point_by_threshold(prob[j], threshold=label_threshold)
+                cur_point, cur_point_num = self._generate_predict_point_by_threshold(
+                    is_prob[j], threshold=is_threshold)
                 cur_image = image[j]
-                self.target_dataset.append(cur_image, cur_point)
+                cur_mask = valid_mask[j]
+                self.target_dataset.append(cur_image, cur_point, cur_mask)
 
             if i % 50 == 0:
                 self.logger.info(
@@ -334,17 +481,114 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
             else:
                 self.model.reinitialize()
 
-        self.logger.info("Reinitialize the Adam optimizer")
-        self.model_optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        # self.logger.info("Reinitialize the Adam optimizer")
+        # self.model_optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
         for i in range(self.epoch_each_round):
-            self._train_one_epoch(int(i+round_idx*self.epoch_each_round))
-
-            test_threshold = self._compute_threshold(self.model, self.portion)
-            self._validate_one_epoch_by_threshold(int(i+round_idx*self.epoch_each_round), test_threshold)
+            if self.only_detector:
+                self._train_one_epoch_only_detector(int(i+round_idx*self.epoch_each_round))
+                test_threshold = self._compute_threshold(self.model, self.point_portion, self.nopoint_portion, True)
+                self._validate_one_epoch_by_threshold_only_detector(
+                    int(i + round_idx * self.epoch_each_round), test_threshold)
+            else:
+                self._train_one_epoch(int(i+round_idx*self.epoch_each_round))
+                test_threshold = self._compute_threshold(self.model, self.point_portion, self.nopoint_portion, True)
+                self._validate_one_epoch_by_threshold(int(i + round_idx * self.epoch_each_round), test_threshold)
 
         self.logger.info("Training round %2d done." % round_idx)
         self.logger.info("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+
+    def _train_one_epoch_only_detector(self, epoch_idx):
+        self.logger.info("-----------------------------------------------------")
+        self.logger.info("Start to train epoch %2d:" % epoch_idx)
+        stime = time.time()
+
+        self.model.train()
+
+        sourceloader_iter = enumerate(self.source_dataloader)
+        targetloader_iter = enumerate(self.target_dataloader)
+        for i in range(self.epoch_length):
+
+            self.model_optimizer.zero_grad()
+
+            _, src_data = sourceloader_iter.__next__()
+            _, tgt_data = targetloader_iter.__next__()
+
+            # 1、读取带标签的源数据并训练关键点检测算子
+            src_image = src_data["image"].to(self.device)
+            src_label = src_data["new_label"].to(self.device)
+            # src_label = src_data["label"].to(self.device)
+            # src_mask = src_data["mask"].to(self.device)
+
+            # 送入网络统一运算，充分利用GPU并行计算
+            src_results = self.model(src_image)
+            src_logit = src_results[0]
+
+            # 计算关键点检测loss
+            # unmasked_detector_loss = self.detector_loss(src_logit, src_label)
+            # src_detector_loss = self._compute_masked_loss(unmasked_detector_loss, src_mask)
+            src_detector_loss = self.detector_loss(src_logit, src_label)
+            src_loss = self.src_detector_weight * src_detector_loss
+
+            if torch.isnan(src_detector_loss):
+                self.logger.error("detector_loss is nan!")
+                assert False
+            src_loss.backward()
+
+            # 2、读取伪标签的目标数据同时计算描述子loss，关键点检测算子
+            tgt_image = tgt_data['image'].to(self.device)
+            tgt_label = tgt_data['new_label'].to(self.device)
+            # tgt_label = tgt_data['label'].to(self.device)
+            # tgt_mask = tgt_data['mask'].to(self.device)
+
+            tgt_results = self.model(tgt_image)
+            tgt_logit = tgt_results[0]
+
+            # unmasked_detector_loss = self.detector_loss(tgt_logit, tgt_label)
+            # tgt_detector_loss = self._compute_masked_loss(unmasked_detector_loss, tgt_mask)
+            tgt_detector_loss = self.detector_loss(tgt_logit, tgt_label)
+
+            tgt_loss = self.tgt_detector_weight * tgt_detector_loss
+
+            if torch.isnan(tgt_loss):
+                self.logger.error("tgt_loss is nan!")
+                assert False
+            tgt_loss.backward()
+
+            # 更新网络参数
+            self.model_optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                step = int(i + epoch_idx*self.epoch_length)
+
+                src_detector_loss_val = src_detector_loss.item()
+                tgt_detector_loss_val = tgt_detector_loss.item()
+
+                self.summary_writer.add_scalar("detector_loss/src", src_detector_loss_val, global_step=step)
+                self.summary_writer.add_scalar("detector_loss/tgt", tgt_detector_loss_val, global_step=step)
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: "
+                    "src_detector_loss = %.4f, "
+                    "tgt_detector_loss = %.4f, "
+                    "%.2fs/step. " % (
+                        epoch_idx,
+                        i,
+                        self.epoch_length,
+                        src_detector_loss_val,
+                        tgt_detector_loss_val,
+                        (time.time() - stime) / self.params.log_freq,
+                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
+        self.logger.info("Training epoch %2d done." % epoch_idx)
+        self.logger.info("-----------------------------------------------------")
 
     def _train_one_epoch(self, epoch_idx):
         self.logger.info("-----------------------------------------------------")
@@ -368,7 +612,8 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
             src_mask = src_data["mask"].to(self.device)
 
             # 送入网络统一运算，充分利用GPU并行计算
-            src_logit, *_ = self.model(src_image)
+            src_results = self.model(src_image)
+            src_logit = src_results[0]
 
             # 计算关键点检测loss
             unmasked_detector_loss = self.detector_loss(src_logit, src_label)
@@ -398,11 +643,13 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
             tgt_image_pair = torch.cat((tgt_image, tgt_warped_image), dim=0)
             tgt_label_pair = torch.cat((tgt_label, tgt_warped_label), dim=0)
             tgt_mask_pair = torch.cat((tgt_mask, tgt_warped_mask), dim=0)
-            tgt_logit_pair, _, tgt_desp_pair = self.model(tgt_image_pair)
+            tgt_results = self.model(tgt_image_pair)
 
+            tgt_logit_pair = tgt_results[0]
             unmasked_detector_loss = self.detector_loss(tgt_logit_pair, tgt_label_pair)
             tgt_detector_loss = self._compute_masked_loss(unmasked_detector_loss, tgt_mask_pair)
 
+            tgt_desp_pair = tgt_results[2]
             tgt_desp_0, tgt_desp_1 = torch.split(tgt_desp_pair, shape[0], dim=0)
 
             tgt_desp_loss = self.descriptor_loss(
@@ -516,10 +763,12 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
             # image_pair /= 255.
             image_pair = image_pair * 2. / 255. - 1.
 
-            _, prob_pair, desp_pair = self.model(image_pair)
+            results = self.model(image_pair)
+            prob_pair = results[1][:, 1:2, :, :]
             prob_pair = f.pixel_shuffle(prob_pair, 8)
             prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold * 2 + 1))
 
+            desp_pair = results[2]
             desp_pair = desp_pair.detach().cpu().numpy()
             first_desp = desp_pair[0]
             second_desp = desp_pair[1]
@@ -617,6 +866,115 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         self.summary_writer.add_scalar("viewpoint/Mean_Matching_Accuracy", view_match_acc, epoch_idx)
         self.summary_writer.add_scalar("viewpoint/Repeatability", view_repeat, epoch_idx)
 
+    def _validate_one_epoch_by_threshold_only_detector(self, epoch_idx, threshold):
+        self.logger.info("*****************************************************")
+        self.logger.info("Validating epoch %2d begin:" % epoch_idx)
+
+        self._test_model_general_only_detector(epoch_idx, threshold)
+
+        illum_repeat_moving_acc = self.illum_repeat_mov.average()
+        view_repeat_moving_acc = self.view_repeat_mov.average()
+
+        current_size = self.view_repeat_mov.current_size()
+
+        mAP, test_data, count = self._test_func(self.synthetic_test_dataset)
+        self.logger.info("The mean Average Precision : %.4f of %d samples" % (mAP, count))
+
+        self.logger.info("---------------------------------------------")
+        self.logger.info("Moving Average of %d models:" % current_size)
+        self.logger.info("illum_repeat_moving_acc=%.4f, view_repeat_moving_acc=%.4f" %
+                         (illum_repeat_moving_acc, view_repeat_moving_acc))
+        self.logger.info("---------------------------------------------")
+        self.logger.info("Validating epoch %2d done." % epoch_idx)
+        self.logger.info("*****************************************************")
+
+    def _test_model_general_only_detector(self, epoch_idx, threshold):
+
+        self.model.eval()
+        # 重置测评算子参数
+        self.illum_repeat.reset()
+        self.view_repeat.reset()
+        self.point_statistics.reset()
+
+        start_time = time.time()
+        count = 0
+        skip = 0
+
+        self.logger.info("Test, detection_threshold=%.4f" % threshold)
+
+        for i, data in enumerate(self.test_dataset):
+            first_image = data['first_image']
+            second_image = data['second_image']
+            gt_homography = data['gt_homography']
+            image_type = data['image_type']
+
+            image_pair = np.stack((first_image, second_image), axis=0)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            # debug released mode use
+            # image_pair /= 255.
+            image_pair = image_pair * 2. / 255. - 1.
+
+            results = self.model(image_pair)
+            prob_pair = results[1]
+            keypoint_prob_pair = prob_pair[:, 1:2, :, :]
+            predict, _ = torch.max(prob_pair, dim=1, keepdim=True)
+            prob_pair = torch.where(
+                predict == keypoint_prob_pair, keypoint_prob_pair, torch.zeros_like(keypoint_prob_pair)
+            )  # 非预测点的概率值置为0
+
+            prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold * 2 + 1))
+
+            prob_pair = prob_pair.detach().cpu().numpy()
+            first_prob = prob_pair[0, 0]
+            second_prob = prob_pair[1, 0]
+
+            # 得到对应的预测点
+            first_point, first_point_num = self._generate_predict_point(
+                first_prob, threshold=threshold, top_k=self.top_k)  # [n,2]
+            second_point, second_point_num = self._generate_predict_point(
+                second_prob, threshold=threshold, top_k=self.top_k)  # [m,2]
+
+            # 若未能检测出点，则跳过这一对测试样本
+            if first_point_num == 0 or second_point_num == 0:
+                skip += 1
+                continue
+
+            # 对单样本进行测评
+            if image_type == 'illumination':
+                self.illum_repeat.update(first_point, second_point, gt_homography)
+
+            elif image_type == 'viewpoint':
+                self.view_repeat.update(first_point, second_point, gt_homography)
+
+            else:
+                print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
+                      "Please check !")
+                assert False
+
+            # 统计检测的点的数目
+            self.point_statistics.update((first_point_num+second_point_num)/2.)
+
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time() - start_time)))
+                start_time = time.time()
+            count += 1
+
+        # 计算各自的重复率以及总的重复率
+        illum_repeat, view_repeat, total_repeat = self._compute_total_metric(self.illum_repeat,
+                                                                             self.view_repeat)
+        self.illum_repeat_mov.push(illum_repeat)
+        self.view_repeat_mov.push(view_repeat)
+
+        # 统计最终的检测点数目的平均值和方差
+        point_avg, point_std = self.point_statistics.average()
+
+        self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_repeat, view_repeat, total_repeat))
+        self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
+
+        self.summary_writer.add_scalar("illumination/Repeatability", illum_repeat, epoch_idx)
+        self.summary_writer.add_scalar("viewpoint/Repeatability", view_repeat, epoch_idx)
+
     def _test_func(self, dataset):
         self.model.eval()
         self.mAP_calculator.reset()
@@ -631,9 +989,9 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
 
             image = image.to(self.device).unsqueeze(dim=0)
             # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
-            _, prob, _ = self.model(image)
+            results = self.model(image)
+            prob = results[1][:, 1:2, :, :]
             # 将概率图展开为原始图像大小
-            prob = f.pixel_shuffle(prob, 8)
             # 进行非极大值抑制
             prob = spatial_nms(prob)
             prob = prob.detach().cpu().numpy()[0, 0]
@@ -655,7 +1013,8 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         view_acc, view_sum, view_num = view_metric.average()
         return illum_acc, view_acc, (illum_sum+view_sum)/(illum_num+view_num+1e-4)
 
-    def _generate_predict_point_by_threshold(self, prob, threshold):
+    @staticmethod
+    def _generate_predict_point_by_threshold(prob, threshold):
         point_idx = np.where(prob > threshold)
 
         if point_idx[0].size == 0:
