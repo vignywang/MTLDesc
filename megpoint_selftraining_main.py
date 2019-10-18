@@ -24,19 +24,22 @@ class MegPointSelfTrainingParameters(BasicParameters):
         super(MegPointSelfTrainingParameters, self).__init__()
         self.ckpt_root = './megpoint_ckpt'
         self.log_root = './megpoint_log'
-        self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_new_0.0010_64/model_59.pt"
-        # self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_new_0.0010_64/model_05.pt"
+        self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_ed_0.0010_32/model_59.pt"
+        # self.magicpoint_ckpt = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_ed_0.0010_32/model_09.pt"
 
         # training相关
-        self.round_num = 100
+        self.round_num = 50
         self.epoch_each_round = 5  # 2
         self.raw_batch_size = 32
-        self.initial_portion = 0.002  # 每一轮按40%递增，最高0.01
-        self.max_portion = 0.01
+        self.initial_point_portion = 0.2  # 阈值排序为前20%的点才会标注为关键点
+        self.initial_nopoint_portion = 0.5  # 阈值排序为前50%的点会被标注为非关键点，因为非关键点容易判断，信赖度较高，因此范围取的大
+        self.max_point_portion = 0.5
+        self.max_nopoint_portion = 0.8
         self.use_bn = False
+        self.only_detector = False
         self.reinitialize_each_round = True
         # self.initial_portion = 0.002  # 每一轮按1%递增，最高0.005
-        self.src_detector_weight = 0.2
+        self.src_detector_weight = 0.5
         self.tgt_detector_weight = 1 - self.src_detector_weight
 
         # homography & photometric relating params using in training
@@ -89,9 +92,12 @@ class MegPointSelfTrainingParameters(BasicParameters):
         parser.add_argument("--round_num", type=int, default=100)
         parser.add_argument("--epoch_each_round", type=int, default=5)
         parser.add_argument("--use_bn", type=int, default=0)
+        parser.add_argument("--only_detector", type=int, default=0)
         parser.add_argument("--reinitialize_each_round", type=int, default=0)
-        parser.add_argument("--initial_portion", type=float, default=0.002)
-        parser.add_argument("--max_portion", type=float, default=0.01)
+        parser.add_argument("--initial_point_portion", type=float, default=0.2)
+        parser.add_argument("--initial_nopoint_portion", type=float, default=0.5)
+        parser.add_argument("--max_point_portion", type=float, default=0.5)
+        parser.add_argument("--max_nopoint_portion", type=float, default=0.8)
         return parser.parse_args()
 
     def initialize(self):
@@ -100,11 +106,13 @@ class MegPointSelfTrainingParameters(BasicParameters):
         self.logger.info("self-training important params:")
 
         self.use_bn = bool(self.use_bn)
+        self.only_detector = bool(self.only_detector)
         self.reinitialize_each_round = bool(self.reinitialize_each_round)
 
         self.logger.info("round_num: %d" % self.round_num)
         self.logger.info("epoch_each_round: %d" % self.epoch_each_round)
         self.logger.info("use_bn: %s" % self.use_bn)
+        self.logger.info("only_detector: %s" % self.only_detector)
         self.logger.info("reinitialize_each_round: %s" % self.reinitialize_each_round)
         self.logger.info("epoch_each_round: %d" % self.epoch_each_round)
         self.logger.info(
