@@ -60,8 +60,12 @@ class SyntheticTrainDataset(Dataset):
         mask = space_to_depth(org_mask).to(torch.uint8)
         mask = torch.all(mask, dim=0).to(torch.float)
 
+        new_label = torch.where(
+            mask == 1, label, torch.ones_like(label) * 77
+        )
+
         # sample = {"cv_image": cv_image_keypoint}
-        sample = {"image": image, "label": label, "mask": mask}
+        sample = {"image": image, "label": label, "mask": mask, "new_label": new_label}
         return sample
 
     def convert_points_to_label(self, points):

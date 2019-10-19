@@ -579,11 +579,15 @@ class COCOMegPointSelfTrainingDataset(Dataset):
         }
 
     def _convert_points_to_label(self, points):
-        # 非关键点的标签为0，关键点的标签为1，无效点为2
+
         height = self.height
         width = self.width
+        n_height = int(height / 8)
+        n_width = int(width / 8)
+        assert n_height * 8 == height and n_width * 8 == width
+
         num_pt = points.shape[0]
-        label = torch.zeros((height*width))
+        label = torch.zeros((height * width))
         if num_pt > 0:
             points_h, points_w = torch.split(points, 1, dim=1)
             points_idx = points_w + points_h * width
@@ -591,7 +595,11 @@ class COCOMegPointSelfTrainingDataset(Dataset):
         else:
             label = label.reshape((height, width))
 
-        return label
+        dense_label = space_to_depth(label)
+        dense_label = torch.cat((dense_label, 0.5 * torch.ones((1, n_height, n_width))), dim=0)  # [65, 30, 40]
+        sparse_label = torch.argmax(dense_label, dim=0)  # [30,40]
+
+        return sparse_label
 
     def _format_file_list(self):
         dataset_dir = self.dataset_dir
@@ -703,14 +711,11 @@ class COCOMegPointSelfTrainingOnlyImageDataset(COCOMegPointSelfTrainingDataset):
         org_mask = torch.from_numpy(org_mask)
 
         label = self._convert_points_to_label(point).to(torch.long)
-        # 标签为1的点一定是有效点，但是由于点变换与掩膜变换不统一，可能有效点的掩膜反而无效，因此要将有效点生成的掩膜与整体掩膜结合
-        hyber_mask = (org_mask == 1) | (label == 1)
-        mask = torch.where(
-            hyber_mask, torch.ones_like(label), torch.zeros_like(label)
-        ).to(torch.float)
+        mask = space_to_depth(org_mask).to(torch.uint8)
+        mask = torch.all(mask, dim=0).to(torch.float)
 
         new_label = torch.where(
-            mask == 1, label, torch.ones_like(label) * 2
+            mask == 1, label, torch.ones_like(label) * 77
         )
 
         # 4、返回样本
