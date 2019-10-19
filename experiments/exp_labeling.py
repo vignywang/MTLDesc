@@ -60,7 +60,7 @@ def generate_predict_point_by_threshold(prob, threshold):
     return point, point_num
 
 
-def statistic_labeling(idx, threshold=True):
+def statistic_labeling(idx, has_threshold=True):
 
     params = SimpleParams()
     raw_dataset = COCOMegPointRawDataset(params)
@@ -101,66 +101,24 @@ def statistic_labeling(idx, threshold=True):
         start_time = time.time()
 
         all_point_region_prob = []
-        all_point_region_count = 0
-        all_nopoint_region_prob = []
-        all_nopoint_region_count = 0
         all_point_prob = []
-        all_point_count = 0
 
         for i, data in enumerate(data_loader):
             image = data["image"].to(device)
             results = model(image)  # [bt,2,h,w]
-            logit = results[0]
-            prob = f.softmax(logit, dim=1)  # [bt,65,h,w]
-            max_prob, _ = torch.max(prob, dim=1)
+            point_prob = results[1]
 
-            # point_region_prob代表有点区域，nopoint_region_prob代表无点区域
-            point_prob = prob[:, :64, :, :]
-            nopoint_region_prob = prob[:, 64, :, :]  # [bt,h,w]
-            point_region_prob = 1 - nopoint_region_prob
-
-            # 统计预测出无点的区域的个数，以及概率
-            select_nopoint_region_count = torch.where(
-                nopoint_region_prob == max_prob,
-                torch.ones_like(nopoint_region_prob),
-                torch.zeros_like(nopoint_region_prob)
-            )
-            all_nopoint_region_count += torch.sum(select_nopoint_region_count)
-
-            select_nopoint_region_prob = torch.where(
-                nopoint_region_prob == max_prob,
-                nopoint_region_prob,
-                torch.zeros_like(nopoint_region_prob)
-            ).squeeze().reshape((-1,))  # [bt*h*w]
-
-            select_nopoint_region_prob, _ = torch.sort(select_nopoint_region_prob, descending=True)
-            select_nopoint_region_prob = select_nopoint_region_prob[:region_partial_idx]
-            all_nopoint_region_prob.append(select_nopoint_region_prob.detach().cpu().numpy())
+            point_region_prob = point_prob.sum(dim=1)
+            point_prob = f.pixel_shuffle(point_prob, 8)
 
             # 统计预测出有点的区域的个数，以及概率
-            select_point_region_count = torch.where(
-                nopoint_region_prob == max_prob,
-                torch.zeros_like(point_region_prob),
-                torch.ones_like(point_region_prob)
-            )
-            all_point_region_count += torch.sum(select_point_region_count)
-
-            select_point_region_prob = torch.where(
-                nopoint_region_prob == max_prob,
-                torch.zeros_like(point_region_prob),
-                point_region_prob
-            ).squeeze().reshape((-1,))
+            select_point_region_prob = point_region_prob.reshape((-1,))
             select_point_region_prob, _ = torch.sort(select_point_region_prob, descending=True)
             select_point_region_prob = select_point_region_prob[:region_partial_idx]
             all_point_region_prob.append(select_point_region_prob.detach().cpu().numpy())
 
             # 统计处点区域中预测点的概率，其个数应与有点区域数目相等
-            all_point_count = all_point_region_count * 64
-            select_point_prob = torch.where(
-                (nopoint_region_prob == max_prob).unsqueeze(dim=1).repeat((1, 64, 1, 1)),
-                torch.zeros_like(point_prob),
-                point_prob
-            ).reshape((-1,))  # [bt*h*w]
+            select_point_prob = point_prob.squeeze().reshape((-1,))  # [bt*h*w]
             select_point_prob, _ = torch.sort(select_point_prob, descending=True)
             select_point_prob = select_point_prob[:point_partial_idx]
             all_point_prob.append(select_point_prob.detach().cpu().numpy())
@@ -176,54 +134,41 @@ def statistic_labeling(idx, threshold=True):
                 )
                 start_time = time.time()
 
-        all_nopoint_region_prob = np.concatenate(all_nopoint_region_prob, axis=0)
-        nopoint_region_idx = int(all_nopoint_region_count * region_portion)
-        nopoint_region_idx = all_nopoint_region_prob.size - nopoint_region_idx - 1
-        nopoint_region_threshold = np.partition(all_nopoint_region_prob, kth=nopoint_region_idx)[nopoint_region_idx]
-
         all_point_region_prob = np.concatenate(all_point_region_prob, axis=0)
-        point_region_idx = int(all_point_region_count * region_portion)
+        point_region_idx = int(all_point_region_prob.size * region_portion)
         point_region_idx = all_point_region_prob.size - point_region_idx - 1
         point_region_threshold = np.partition(all_point_region_prob, kth=point_region_idx)[point_region_idx]
 
         all_point_prob = np.concatenate(all_point_prob, axis=0)
-        point_idx = int(all_point_count * point_portion)
+        point_idx = int(all_point_prob.size * point_portion)
         point_idx = all_point_prob.size - point_idx - 1
         point_threshold = np.partition(all_point_prob, kth=point_idx)[point_idx]
 
         print("Computing Done!")
-        print("The nopoint_region_threshold is: %.4f" % nopoint_region_threshold)
         print("The point_region_threshold is: %.4f" % point_region_threshold)
         print("The point_threshold is: %.4f" % point_threshold)
 
-        return nopoint_region_threshold, point_region_threshold, point_threshold
+        return point_region_threshold, point_threshold
 
-    if not threshold:
-        nopoint_region_threshold, point_region_threshold, point_threshold = compute_threshold(
-            model, region_portion=0.5, point_portion=0.2)
+    if has_threshold:
+        point_region_threshold, point_threshold = params.label_threshold[idx]
     else:
-        nopoint_region_threshold, point_region_threshold, point_threshold = params.label_threshold[idx]
-
+        point_region_threshold, point_threshold = compute_threshold(model, region_portion=0.5, point_portion=0.05)
     # 再次对数据集中每一张图像进行预测且标注
-    print("Begin to label all target data by nopoint_region_threshold, point_region_threshold, "
+    print("Begin to label all target data by point_region_threshold, "
           "point_threshold")
-    print("%.4f, %.4f, %.4f" % (nopoint_region_threshold, point_region_threshold, point_threshold))
+    print("%.4f, %.4f" % (point_region_threshold, point_threshold))
     start_time = time.time()
     count = 0
     for i, data in enumerate(data_loader):
         image = data["image"].to(device)
         name = data["name"]
         results = model(image)
-        logit = results[0]
-        prob = f.softmax(logit, dim=1)
+        point_prob = results[1]
+        point_region_prob = point_prob.sum(dim=1)
 
-        point_prob = prob[:, :64, :, :]
         point_prob = f.pixel_shuffle(point_prob, 8)  # [bt,1,h,w]
-        point_prob = spatial_nms(
-            point_prob, kernel_size=int(nms_threshold * 2 + 1))
-
-        nopoint_region_prob = prob[:, 64, :, :]
-        point_region_prob = 1. - nopoint_region_prob
+        point_prob = spatial_nms(point_prob, kernel_size=int(nms_threshold * 2 + 1))
 
         point_region_mask = torch.where(
             torch.ge(point_region_prob, point_region_threshold),
@@ -232,25 +177,14 @@ def statistic_labeling(idx, threshold=True):
         ).unsqueeze(dim=1).repeat((1, 64, 1, 1))
         point_region_mask = f.pixel_shuffle(point_region_mask, 8)
 
-        nopoint_region_mask = torch.where(
-            torch.ge(nopoint_region_prob, nopoint_region_threshold),
-            torch.ones_like(nopoint_region_prob),
-            torch.zeros_like(nopoint_region_prob)
-        ).unsqueeze(dim=1).repeat((1, 64, 1, 1))
-        nopoint_region_mask = f.pixel_shuffle(nopoint_region_mask, 8)
-
-        valid_mask = torch.where(
-            (point_region_mask == 1) | (nopoint_region_mask == 1),
-            torch.ones_like(point_region_mask),
-            torch.zeros_like(point_region_mask)
-        )
+        valid_mask = point_region_mask
 
         point_prob = (point_prob * valid_mask).squeeze().detach().cpu().numpy()
         valid_mask = valid_mask.squeeze().detach().cpu().numpy()
 
         image = ((image + 1) * 255. / 2.).to(torch.uint8).squeeze().cpu().numpy()
 
-        batch_size = prob.shape[0]
+        batch_size = point_prob.shape[0]
         for j in range(batch_size):
             # 得到对应的预测点
             cur_point, cur_point_num = generate_predict_point_by_threshold(
@@ -344,15 +278,16 @@ def contrast():
         cv.waitKey()
 
 if __name__ == "__main__":
-    # for i in range(2):
-    statistic_labeling(0)
+    for i in range(2):
+    # a = 0.0965, 0.0377
+        statistic_labeling(i, False)
     # image = cv.imread("/data/MegPoint/dataset/coco/train2014/st_image_pseudo_point_0/image_00003.jpg")
     # cv.imshow("image", image)
     # cv.waitKey()
 
     # read_image_point_and_show()
 
-    # contrast()
+    contrast()
 
 
 
