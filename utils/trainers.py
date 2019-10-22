@@ -401,6 +401,7 @@ class SuperPoint(TrainerTester):
 
         # debug use
         # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24_3/model_49.pt"
+        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24_3_scale/model_49.pt"
         # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/binary/superpoint_triplet_tanh_bn_0.0010_24/model_99.pt"
         # self._load_model_params(ckpt_file)
 
