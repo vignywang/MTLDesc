@@ -30,14 +30,20 @@ class SimpleParams(object):
 
         self.megpoint_ckpt = [
             "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/synthetic_new_0.0010_64/model_59.pt",
-            "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/only_detector_re_50_0.0010_48/model_49.pt",
-            # "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/st_setting_3_0.0010_16/model_04.pt",
-            # "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/st_setting_3_0.0010_16/model_09.pt"
+            "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/only_detector_new_50_0.0010_48/model_49.pt",
+            "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/only_detector_new_50_0.0010_48/model_99.pt",
         ]
 
         self.label_threshold = [
-            [0.9961, 0.9444, 0.0106],
-            [0.9997, 0.9487, 0.0032]
+            [0.0964, 0.0989],  # portion 0.50,0.05
+            [0.0451, 0.1006],  # portion 0.52,0.05
+            [0.0474, 0.0956]  # portion 0.54,0.05
+        ]
+
+        self.portion = [
+            [0.50, 0.05],
+            [0.52, 0.05],
+            [0.54, 0.05]
         ]
 
         self.colors = [
@@ -278,9 +284,8 @@ def contrast():
         cv.waitKey()
 
 if __name__ == "__main__":
-    for i in range(2):
-    # a = 0.0965, 0.0377
-        statistic_labeling(i, False)
+    for i in range(3):
+        statistic_labeling(i, True)
     # image = cv.imread("/data/MegPoint/dataset/coco/train2014/st_image_pseudo_point_0/image_00003.jpg")
     # cv.imshow("image", image)
     # cv.waitKey()
