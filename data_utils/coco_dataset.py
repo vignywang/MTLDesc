@@ -669,6 +669,40 @@ class COCOSuperPointStatisticDataset(Dataset):
             return warped_center_grid
 
 
+class COCOMegPointStatisticDataset(COCOSuperPointStatisticDataset):
+
+    def __init__(self, params):
+        super(COCOMegPointStatisticDataset, self).__init__(params)
+        self.sample_num = params.sample_num
+
+    def __getitem__(self, idx):
+
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+
+        warped_images = []
+        for i in range(self.sample_num):
+            warped_image, *_ = self.homography.warp(image)
+            warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
+            warped_image = warped_image * 2. / 255. - 1.
+            warped_images.append(warped_image)
+
+        warped_images = torch.cat(warped_images, dim=0)
+
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        image = image*2./255. - 1.
+
+        # if torch.rand([]).item() < 0.5:
+        #     image = self.photometric(image)
+        # if torch.rand([]).item() < 0.5:
+        #     warped_image = self.photometric(warped_image)
+
+        # 4、返回样本
+        return {
+            "image": image,
+            "warped_images": warped_images,
+        }
+
+
 class COCOMegPointSelfTrainingDataset(Dataset):
 
     def __init__(self, params):
