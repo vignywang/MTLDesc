@@ -36,6 +36,7 @@ class MegPointSelfTrainingParameters(BasicParameters):
         self.initial_point_portion = 0.05
         self.max_region_portion = 0.6
         self.max_point_portion = 0.08
+        self.only_target_dataset = False
         self.only_detector = False
         self.reinitialize_each_round = True
         # self.initial_portion = 0.002  # 每一轮按1%递增，最高0.005
@@ -92,6 +93,7 @@ class MegPointSelfTrainingParameters(BasicParameters):
         parser.add_argument("--round_num", type=int, default=100)
         parser.add_argument("--epoch_each_round", type=int, default=5)
         parser.add_argument("--only_detector", type=int, default=0)
+        parser.add_argument("--only_target_dataset", type=int, default=0)
         parser.add_argument("--reinitialize_each_round", type=int, default=0)
         parser.add_argument("--initial_region_portion", type=float, default=0.5)
         parser.add_argument("--initial_point_portion", type=float, default=0.2)
@@ -104,11 +106,13 @@ class MegPointSelfTrainingParameters(BasicParameters):
         self.logger.info("------------------------------------------")
         self.logger.info("self-training important params:")
 
+        self.only_target_dataset = bool(self.only_target_dataset)
         self.only_detector = bool(self.only_detector)
         self.reinitialize_each_round = bool(self.reinitialize_each_round)
 
         self.logger.info("round_num: %d" % self.round_num)
         self.logger.info("epoch_each_round: %d" % self.epoch_each_round)
+        self.logger.info("only_target_detector: %s" % self.only_target_dataset)
         self.logger.info("only_detector: %s" % self.only_detector)
         self.logger.info("reinitialize_each_round: %s" % self.reinitialize_each_round)
         self.logger.info("epoch_each_round: %d" % self.epoch_each_round)

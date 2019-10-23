@@ -209,6 +209,7 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
         self.src_detector_weight = params.src_detector_weight
         self.tgt_detector_weight = params.tgt_detector_weight
 
+        self.only_target_dataset = params.only_target_dataset
         self.only_detector = params.only_detector
         self.reinitialize_each_round = params.reinitialize_each_round
 
@@ -484,30 +485,31 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
 
             self.model_optimizer.zero_grad()
 
-            _, src_data = sourceloader_iter.__next__()
+            if not self.only_target_dataset:
+                _, src_data = sourceloader_iter.__next__()
+
+                # 1、读取带标签的源数据并训练关键点检测算子
+                src_image = src_data["image"].to(self.device)
+                src_label = src_data["new_label"].to(self.device)
+                # src_label = src_data["label"].to(self.device)
+                # src_mask = src_data["mask"].to(self.device)
+
+                # 送入网络统一运算，充分利用GPU并行计算
+                src_results = self.model(src_image)
+                src_logit = src_results[0]
+
+                # 计算关键点检测loss
+                # unmasked_detector_loss = self.detector_loss(src_logit, src_label)
+                # src_detector_loss = self._compute_masked_loss(unmasked_detector_loss, src_mask)
+                src_detector_loss = self.detector_loss(src_logit, src_label)
+                src_loss = self.src_detector_weight * src_detector_loss
+
+                if torch.isnan(src_detector_loss):
+                    self.logger.error("detector_loss is nan!")
+                    assert False
+                src_loss.backward()
+
             _, tgt_data = targetloader_iter.__next__()
-
-            # 1、读取带标签的源数据并训练关键点检测算子
-            src_image = src_data["image"].to(self.device)
-            src_label = src_data["new_label"].to(self.device)
-            # src_label = src_data["label"].to(self.device)
-            # src_mask = src_data["mask"].to(self.device)
-
-            # 送入网络统一运算，充分利用GPU并行计算
-            src_results = self.model(src_image)
-            src_logit = src_results[0]
-
-            # 计算关键点检测loss
-            # unmasked_detector_loss = self.detector_loss(src_logit, src_label)
-            # src_detector_loss = self._compute_masked_loss(unmasked_detector_loss, src_mask)
-            src_detector_loss = self.detector_loss(src_logit, src_label)
-            src_loss = self.src_detector_weight * src_detector_loss
-
-            if torch.isnan(src_detector_loss):
-                self.logger.error("detector_loss is nan!")
-                assert False
-            src_loss.backward()
-
             # 2、读取伪标签的目标数据同时计算描述子loss，关键点检测算子
             tgt_image = tgt_data['image'].to(self.device)
             tgt_label = tgt_data['new_label'].to(self.device)
@@ -535,7 +537,10 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
 
                 step = int(i + epoch_idx*self.epoch_length)
 
-                src_detector_loss_val = src_detector_loss.item()
+                if not self.only_target_dataset:
+                    src_detector_loss_val = src_detector_loss.item()
+                else:
+                    src_detector_loss_val = 0
                 tgt_detector_loss_val = tgt_detector_loss.item()
 
                 self.summary_writer.add_scalar("detector_loss/src", src_detector_loss_val, global_step=step)
