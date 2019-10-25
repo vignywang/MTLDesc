@@ -297,9 +297,7 @@ class COCOSuperPointTrainDataset(Dataset):
         # cv_image_keypoint = draw_image_keypoints(image, point)
 
         # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
-        # if np.random.rand() < 1.0:  # debug use
         if torch.rand([]).item() < 0.5:
-        # if np.random.rand() < 0.5:
              warped_image, warped_org_mask, warped_point, homography = \
              image.copy(), org_mask.copy(), point.copy(), np.eye(3)
         else:
@@ -309,10 +307,8 @@ class COCOSuperPointTrainDataset(Dataset):
 
         # 1、对图像的相关处理
         if torch.rand([]).item() < 0.5:
-        # if np.random.rand() < 0.5:
             image = self.photometric(image)
         if torch.rand([]).item() < 0.5:
-        # if np.random.rand() < 0.5:
             warped_image = self.photometric(warped_image)
 
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
@@ -333,6 +329,11 @@ class COCOSuperPointTrainDataset(Dataset):
         label = self._convert_points_to_label(point).to(torch.long)
         mask = space_to_depth(org_mask).to(torch.uint8)
         mask = torch.all(mask, dim=0).to(torch.float)
+        # point_mask = torch.where(
+        #     label == 64,
+        #     torch.zeros_like(label),
+        #     torch.ones_like(label)
+        # ).to(torch.float).reshape((-1,))  # 只有关键点区域是1
 
         # 2.3 得到第二副图点和标签的最终输出
         warped_label = self._convert_points_to_label(warped_point).to(torch.long)
@@ -350,32 +351,41 @@ class COCOSuperPointTrainDataset(Dataset):
         matched_idx = None
         matched_valid = None
         not_search_mask = None
-        warped_grid = None
-        matched_grid = None
         if self.loss_type == 'pairwise':
             descriptor_mask = self._generate_descriptor_mask(homography)
             descriptor_mask = torch.from_numpy(descriptor_mask)
         else:
-            matched_idx, matched_valid, not_search_mask, warped_grid, matched_grid, warped_valid_mask = \
-                self.generate_corresponding_relationship(homography, warped_valid_mask)
+            matched_idx, matched_valid, not_search_mask = self.generate_corresponding_relationship(
+                homography, warped_valid_mask)
+
             matched_idx = torch.from_numpy(matched_idx)
             matched_valid = torch.from_numpy(matched_valid).to(torch.float)
             not_search_mask = torch.from_numpy(not_search_mask)
-            warped_grid = torch.from_numpy(warped_grid)
-            matched_grid = torch.from_numpy(matched_grid)
-            warped_valid_mask = torch.from_numpy(warped_valid_mask)
 
         # 4、返回样本
         if self.loss_type == 'pairwise':
-            return {'image': image, 'mask': mask, 'label': label,
-                    'warped_image': warped_image, 'warped_mask': warped_mask, 'warped_label': warped_label,
-                    'descriptor_mask': descriptor_mask, 'warped_valid_mask': warped_valid_mask}
+            return {
+                'image': image,
+                'mask': mask,
+                'label': label,
+                'warped_image': warped_image,
+                'warped_mask': warped_mask,
+                'warped_label': warped_label,
+                'descriptor_mask': descriptor_mask,
+                'warped_valid_mask': warped_valid_mask
+            }
         else:
-            return {'image': image, 'mask': mask, 'label': label,
-                    'warped_image': warped_image, 'warped_mask': warped_mask, 'warped_label': warped_label,
-                    'matched_idx': matched_idx, 'matched_valid': matched_valid,
-                    'not_search_mask': not_search_mask,
-                    'warped_grid': warped_grid, 'matched_grid': matched_grid, 'warped_valid_mask': warped_valid_mask}
+            return {
+                'image': image,
+                'mask': mask,
+                'label': label,
+                'warped_image': warped_image,
+                'warped_mask': warped_mask,
+                'warped_label': warped_label,
+                'matched_idx': matched_idx,
+                'matched_valid': matched_valid,
+                'not_search_mask': not_search_mask,
+            }
 
     def _convert_points_to_label(self, points):
 
@@ -438,29 +448,38 @@ class COCOSuperPointTrainDataset(Dataset):
 
         return mask
 
-    def generate_corresponding_relationship(self, homography, valid_mask):
+    def generate_corresponding_relationship(self, homography, valid_mask, point_mask=None):
 
+        # 1、得到当前所有描述子的中心点，以及它们经过单应变换后的中心点位置
         center_grid, warped_center_grid = self.__compute_warped_center_grid(homography)
 
+        # 2、计算所有投影点与固定点的距离，从中找出匹配点，匹配点满足两者距离小于8
         dist = np.linalg.norm(warped_center_grid[:, np.newaxis, :]-center_grid[np.newaxis, :, :], axis=2)
         nearest_idx = np.argmin(dist, axis=1)
         nearest_dist = np.min(dist, axis=1)
         matched_valid = nearest_dist < 8.
 
+        # 3、得到匹配点的坐标，并计算匹配点与匹配点间的距离，太近的非匹配点不会作为负样本出现在loss中
         matched_grid = center_grid[nearest_idx, :]
         diff = np.linalg.norm(matched_grid[:, np.newaxis, :] - matched_grid[np.newaxis, :, :], axis=2)
-
-        # nearest = diff < 8.
         nearest = diff < 16.
+
+        # 4、根据当前匹配的idx得到无效点的mask
         valid_mask = valid_mask.numpy().astype(np.bool)
         valid_mask = valid_mask[nearest_idx]
         invalid = ~valid_mask[np.newaxis, :]
 
+        # 5、得到不用搜索的区域mask，被mask的点要么太近，要么无效
         not_search_mask = (nearest | invalid).astype(np.float32)
-        matched_valid = matched_valid & valid_mask
-        valid_mask = valid_mask.astype(np.float32)
 
-        return nearest_idx, matched_valid, not_search_mask, warped_center_grid, matched_grid, valid_mask
+        # 6、得到有效匹配的mask，满足（1）有匹配点（2）匹配点有效（3）其本身是关键点
+        point_mask = point_mask.numpy().astype(np.bool)
+        if point_mask is not None:
+            matched_valid = matched_valid & valid_mask & point_mask
+        else:
+            matched_valid = matched_valid & valid_mask
+
+        return nearest_idx, matched_valid, not_search_mask
 
     def __compute_warped_center_grid(self, homography, return_org_center_grid=True):
 
