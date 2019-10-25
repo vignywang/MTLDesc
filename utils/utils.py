@@ -143,7 +143,7 @@ class DescriptorTripletLoss(object):
         loss_total *= matched_valid
 
         valid_num = torch.sum(matched_valid, dim=1)
-        loss = torch.mean(torch.sum(loss_total, dim=1)/valid_num)
+        loss = torch.mean(torch.sum(loss_total, dim=1)/(valid_num + 1.))
 
         if debug_use:
             positive_dist = torch.mean(torch.sum(positive_pair*matched_valid, dim=1)/valid_num)
