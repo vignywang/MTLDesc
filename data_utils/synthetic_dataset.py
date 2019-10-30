@@ -8,6 +8,7 @@ import cv2 as cv
 import numpy as np
 
 import torch
+import torch.nn.functional as f
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
@@ -90,6 +91,136 @@ class SyntheticTrainDataset(Dataset):
         sparse_label = torch.argmax(dense_label, dim=0)  # [30,40]
 
         return sparse_label
+
+    def _format_file_list(self):
+        dataset_dir = self.dataset_dir
+        subfloder_dir = os.path.join(dataset_dir, "*")
+        subfloder_list = glob.glob(subfloder_dir)
+        subfloder_list = sorted(subfloder_list, key=lambda x: x.split('/')[-1])
+        image_list = []
+        point_list = []
+
+        for subfloder in subfloder_list:
+            subimage_dir = os.path.join(subfloder, "images/training/*.png")
+            subpoint_dir = os.path.join(subfloder, "points/training/*.npy")
+            subimage_list = glob.glob(subimage_dir)
+            subpoint_list = glob.glob(subpoint_dir)
+            subimage_list = sorted(subimage_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
+            subpoint_list = sorted(subpoint_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
+            image_list += subimage_list
+            point_list += subpoint_list
+
+        return image_list, point_list
+
+
+class SyntheticHeatmapDataset(Dataset):
+
+    def __init__(self, params):
+        self.params = params
+        self.height = params.height
+        self.width = params.width
+        self.downsample_scale = 1
+        self.sigma = 5
+        self.g_kernel_size = 31
+        self.g_paddings = self.g_kernel_size // 2
+        self.dataset_dir = params.synthetic_dataset_dir
+        self.image_list, self.point_list = self._format_file_list()
+        self.homography_augmentation = HomographyAugmentation()
+        self.photometric_augmentation = PhotometricAugmentation()
+
+        self.localmap = self._generate_local_gaussian_map()
+
+    def __len__(self):
+        assert len(self.image_list) == len(self.point_list)
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        point = np.load(self.point_list[idx])
+
+        mask = np.ones_like(image)
+        if np.random.rand() >= 0.1:
+            image, mask, point = self.homography_augmentation(image, point)
+            image = self.photometric_augmentation(image)
+
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        image = image*2./255. - 1.  # scale到[-1,1]之间
+
+        # todo:
+        mask = torch.from_numpy(cv.resize(
+            mask,
+            dsize=(int(self.width/self.downsample_scale), int(self.height/self.downsample_scale)),
+            interpolation=cv.INTER_LINEAR
+        )).to(torch.float)
+        heatmap = self._convert_points_to_heatmap(points=point)
+
+        # debug show
+        # self._debug_show(heatmap, image)
+
+        sample = {"image": image, "mask": mask, "heatmap": heatmap}
+        return sample
+
+    def _debug_show(self, heatmap, image):
+        heatmap = heatmap.numpy() * 100
+        heatmap = cv.resize(heatmap, dsize=(self.width, self.height), interpolation=cv.INTER_LINEAR)
+        heatmap = cv.applyColorMap(heatmap.astype(np.uint8), colormap=cv.COLORMAP_BONE).astype(np.float)
+        image = (image.squeeze().numpy() + 1) * 255 / 2
+        hyper_image = np.clip(heatmap + image[:, :, np.newaxis], 0, 255).astype(np.uint8)
+        cv.imshow("heat&image", hyper_image)
+        cv.waitKey()
+
+    def _convert_points_to_heatmap(self, points):
+        height = int(self.height / self.downsample_scale)
+        width = int(self.width / self.downsample_scale)
+        assert height * self.downsample_scale == self.height and width * self.downsample_scale == self.width
+
+        localmap = self.localmap.clone()
+        padded_heatmap = torch.zeros(
+            (height+self.g_paddings*2, width+self.g_paddings*2), dtype=torch.float)
+
+        num_pt = points.shape[0]
+        if num_pt > 0:
+            for i in range(num_pt):
+                pt = points[i]
+                pt_y, pt_x = pt
+                pt_y = int(pt_y // self.downsample_scale)  # 对真值点位置进行下采样,这里有量化误差
+                pt_x = int(pt_x // self.downsample_scale)
+
+                pt_y = np.clip(pt_y, 0, height)
+                pt_x = np.clip(pt_x, 0, width)
+
+                cur_localmap = padded_heatmap[pt_y: pt_y+self.g_kernel_size, pt_x: pt_x + self.g_kernel_size]
+                cur_localmap = torch.where(localmap >= cur_localmap, localmap, cur_localmap)
+                padded_heatmap[pt_y: pt_y+self.g_kernel_size, pt_x: pt_x + self.g_kernel_size] = cur_localmap
+
+            heatmap = padded_heatmap[self.g_paddings: self.g_paddings+height, self.g_paddings: self.g_paddings+width]
+        else:
+            heatmap = torch.zeros((height, width), dtype=torch.float)
+
+        return heatmap
+
+    def _generate_local_gaussian_map(self):
+        g_width = self.g_kernel_size
+        g_height = self.g_kernel_size
+
+        center_x = int(g_width / 2)
+        center_y = int(g_height / 2)
+        center = np.array((center_x, center_y))  # [2]
+
+        coords_x = np.linspace(0, g_width-1, g_width)
+        coords_y = np.linspace(0, g_height-1, g_height)
+
+        coords = np.stack((
+            np.tile(coords_x[np.newaxis, :], (g_height, 1)),
+            np.tile(coords_y[:, np.newaxis], (1, g_width))),
+            axis=2
+        )  # [g_kernel_size,g_kernel_size,2]
+
+        exponent = np.sum(np.square(coords - center), axis=2) / (2. * self.sigma * self.sigma)  # [13,13]
+        localmap = np.exp(-exponent).astype(np.float32)
+        localmap = torch.from_numpy(localmap)
+
+        return localmap
 
     def _format_file_list(self):
         dataset_dir = self.dataset_dir
