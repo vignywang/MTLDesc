@@ -72,6 +72,7 @@ class TrainerTester(object):
         # 初始化summary writer
         self.summary_writer = SummaryWriter(self.ckpt_dir)
 
+        self.model = None
         self._initialize_model()
 
         # 初始化优化器算子
@@ -114,10 +115,16 @@ class TrainerTester(object):
             return False
 
         self.logger.info("Load pretrained model %s " % ckpt_file)
-        model_dict = self.model.state_dict()
-        pretrain_dict = torch.load(ckpt_file, map_location=self.device)
-        model_dict.update(pretrain_dict)
-        self.model.load_state_dict(model_dict)
+        if not self.multi_gpus:
+            model_dict = self.model.state_dict()
+            pretrain_dict = torch.load(ckpt_file, map_location=self.device)
+            model_dict.update(pretrain_dict)
+            self.model.load_state_dict(model_dict)
+        else:
+            model_dict = self.model.module.state_dict()
+            pretrain_dict = torch.load(ckpt_file, map_location=self.device)
+            model_dict.update(pretrain_dict)
+            self.model.module.load_state_dict(model_dict)
 
         return True
 
