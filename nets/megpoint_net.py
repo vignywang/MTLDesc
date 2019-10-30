@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as f
 
 from torchvision.models import ResNet
+from torchvision.models import VGG
 
 
 class BaseMegPointNet(nn.Module):
@@ -304,11 +305,10 @@ class Discriminator(nn.Module):
         return logit
 
 
-class EncoderDecoderMegPoint(nn.Module):
+class MegPointHeatmap(nn.Module):
 
-    def __init__(self, only_detector=False):
-        super(EncoderDecoderMegPoint, self).__init__()
-        self.only_detector = only_detector
+    def __init__(self):
+        super(MegPointHeatmap, self).__init__()
         self.relu = nn.ReLU(inplace=True)
         self.tanh = nn.Tanh()
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
@@ -323,17 +323,15 @@ class EncoderDecoderMegPoint(nn.Module):
         self.conv4a = nn.Conv2d(c3, c4, kernel_size=3, stride=1, padding=1)
         self.conv4b = nn.Conv2d(c4, c4, kernel_size=3, stride=1, padding=1)
 
-        # Descriptor head
-        self.convDa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
-        self.convDb = nn.Conv2d(c5, d1, kernel_size=1, stride=1, padding=0)
-
         # Decoder.
-        self.upconv3a = nn.Conv2d(c4, c3, kernel_size=3, stride=1, padding=1)
-        self.upconv3b = nn.Conv2d(c3, c2, kernel_size=3, stride=1, padding=1)
-        self.upconv2a = nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1)
-        self.upconv2b = nn.Conv2d(c2, c1, kernel_size=3, stride=1, padding=1)
-        self.upconv1a = nn.Conv2d(c1, c1, kernel_size=3, stride=1, padding=1)
-        self.upconv1b = nn.Conv2d(c1, 2, kernel_size=3, stride=1, padding=1)
+        self.upconv3a = nn.Conv2d(c4, c4, kernel_size=3, stride=1, padding=1)
+        self.upconv3b = nn.Conv2d(c4, c3, kernel_size=3, stride=1, padding=1)
+        self.upconv2a = nn.Conv2d(c3, c3, kernel_size=3, stride=1, padding=1)
+        self.upconv2b = nn.Conv2d(c3, c2, kernel_size=3, stride=1, padding=1)
+        self.upconv1a = nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1)
+        self.upconv1b = nn.Conv2d(c2, c1, kernel_size=3, stride=1, padding=1)
+
+        self.pred = nn.Conv2d(c1, 1, kernel_size=1, stride=1, padding=0)
 
         self.soffmax = nn.Softmax(dim=1)
 
@@ -373,24 +371,17 @@ class EncoderDecoderMegPoint(nn.Module):
         ux = self.relu(self.upconv3a(ux))
         ux = self.relu(self.upconv3b(ux))
 
-        ux = f.interpolate(ux, scale_factor=2, mode='bilinear', align_corners=True)
+        ux = f.interpolate(ux, scale_factor=2, mode="bilinear", align_corners=True)
         ux = self.relu(self.upconv2a(ux))
         ux = self.relu(self.upconv2b(ux))
 
         ux = f.interpolate(ux, scale_factor=2, mode="bilinear", align_corners=True)
         ux = self.relu(self.upconv1a(ux))
-        logit = self.upconv1b(ux)
-        prob = self.soffmax(logit)
+        ux = self.relu(self.upconv1b(ux))
 
-        if not self.only_detector:
-            # descriptor head
-            cDa = self.relu(self.convDa(feature))
-            descriptor = self.convDb(cDa)
-            dn = torch.norm(descriptor, p=2, dim=1, keepdim=True)
-            descriptor = descriptor.div(dn)
-            return logit, prob, descriptor
-        else:
-            return logit, prob
+        pred = self.pred(ux)
+
+        return pred
 
 
 class HardDetectionModule(nn.Module):
