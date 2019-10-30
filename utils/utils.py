@@ -453,3 +453,22 @@ class DescriptorTripletLogSigmoidLoss(object):
         triplet_loss = torch.mean(torch.sum(triplet_loss, dim=1)/match_valid_num)
 
         return triplet_loss
+
+
+class PointHeatmapMSELoss(object):
+
+    def __init__(self):
+        self.unmasked_mse = torch.nn.MSELoss(reduction="none")
+
+    def __call__(self, heatmap_pred, heatmap_gt, mask):
+        """
+        用heatmap计算关键点的loss
+        """
+        unmasked_loss = self.unmasked_mse(heatmap_pred, heatmap_gt)
+        valid_num = torch.sum(mask, dim=(1, 2))
+        masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
+        masked_loss = masked_loss / (valid_num + 1)
+        loss = torch.mean(masked_loss)
+        return loss
+
+
