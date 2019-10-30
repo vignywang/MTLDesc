@@ -14,9 +14,8 @@ from torch.utils.data import DataLoader
 
 from nets.megpoint_net import MegPointNet
 from nets.megpoint_net import STMegPointNet
-from nets.megpoint_net import STBNMegPointNet
 from nets.megpoint_net import Discriminator
-from nets.megpoint_net import EncoderDecoderMegPoint
+from nets.megpoint_net import MegPointHeatmap
 
 from data_utils.megpoint_dataset import AdaptionDataset, LabelGenerator
 from data_utils.coco_dataset import COCOMegPointAdaptionDataset
@@ -25,9 +24,9 @@ from data_utils.coco_dataset import COCOMegPointSelfTrainingDataset
 from data_utils.coco_dataset import COCOMegPointSelfTrainingOnlyImageDataset
 from data_utils.coco_dataset import COCOMegPointRawDataset
 from data_utils.synthetic_dataset import SyntheticTrainDataset
+from data_utils.synthetic_dataset import SyntheticHeatmapDataset
 from data_utils.synthetic_dataset import SyntheticAdversarialDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
-from data_utils.synthetic_dataset import SyntheticEncoderDecoderDataset
 from data_utils.hpatch_dataset import HPatchDataset
 from data_utils.dataset_tools import HomographyAugmentation
 from data_utils.dataset_tools import InfiniteDataLoader
@@ -42,28 +41,74 @@ from utils.evaluation_tools import mAPCalculator
 from utils.utils import spatial_nms
 from utils.utils import DescriptorTripletLoss
 from utils.utils import Matcher
+from utils.utils import PointHeatmapMSELoss
 
 
-class MagicPointEncoderDecoderTrainer(MagicPointSynthetic):
+class MagicPointResnetTrainer(MagicPointSynthetic):
 
     def __init__(self, params):
-        super(MagicPointEncoderDecoderTrainer, self).__init__(params=params)
+        super(MagicPointResnetTrainer, self).__init__(params=params)
 
-        loss_weight = torch.tensor((1, 1), dtype=torch.float, device=self.device)
-        self.cross_entropy_loss = torch.nn.CrossEntropyLoss(weight=loss_weight, reduction='none')
+        self.point_loss = PointHeatmapMSELoss()
 
     def _initialize_model(self):
-        # 初始化EncoderDecoder类型的网络
-        self.model = EncoderDecoderMegPoint(only_detector=True)
+        self.model = MegPointHeatmap()
+
+        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/synthetic_heatmap_relu_0.0010_32/model_01.pt"
+        # self._load_model_params(ckpt_file)
+
         if self.multi_gpus:
             self.model = torch.nn.DataParallel(self.model)
         self.model = self.model.to(self.device)
 
     def _initialize_dataset(self):
-        train_dataset = SyntheticEncoderDecoderDataset(self.params)
+        train_dataset = SyntheticHeatmapDataset(self.params)
         val_dataset = SyntheticValTestDataset(self.params, 'validation')
         test_dataset = SyntheticValTestDataset(self.params, 'validation', add_noise=True)
         return train_dataset, val_dataset, test_dataset
+
+    def _train_one_epoch(self, epoch_idx):
+        self.model.train()
+
+        self.logger.info("-----------------------------------------------------")
+        self.logger.info("Training epoch %2d begin:" % epoch_idx)
+
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+            image = data['image'].to(self.device)
+            mask = data['mask'].to(self.device)
+            heatmap_gt = data["heatmap"].to(self.device)
+
+            heatmap_pred = self.model(image)[:, 0, :, :]
+            loss = self.point_loss(heatmap_pred, heatmap_gt, mask)
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                loss_val = loss.item()
+                self.summary_writer.add_scalar('loss', loss_val)
+                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f,"
+                                 " one step cost %.4fs. "
+                                 % (epoch_idx, i, self.epoch_length, loss_val,
+                                    (time.time() - stime) / self.params.log_freq,
+                                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
+        self.logger.info("Training epoch %2d done." % epoch_idx)
+        self.logger.info("-----------------------------------------------------")
 
     def _test_func(self, dataset):
         self.model.eval()
@@ -78,16 +123,12 @@ class MagicPointEncoderDecoderTrainer(MagicPointSynthetic):
             gt_point = gt_point.numpy()
 
             image = image.to(self.device).unsqueeze(dim=0)
-            # 得到原始的经压缩的概率图，概率图每个通道64维，对应空间每个像素是否为关键点的概率
-            _, prob = self.model(image)
-            # 将概率图展开为原始图像大小
-            is_prob = prob[:, 1:2, :, :]
-            max_prob, _ = torch.max(prob, dim=1)
-            is_prob = torch.where(is_prob == max_prob, is_prob, torch.zeros_like(is_prob))
-            # 进行非极大值抑制
-            is_prob = spatial_nms(is_prob)
-            is_prob = is_prob.detach().cpu().numpy()[0, 0]
-            self.mAP_calculator.update(is_prob, gt_point)
+            heatmap = self.model(image)
+
+            heatmap = spatial_nms(heatmap)
+            heatmap = heatmap.detach().cpu().numpy()[0, 0]
+
+            self.mAP_calculator.update(heatmap, gt_point)
             if i % 10 == 0:
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time()-start_time)))
                 start_time = time.time()
