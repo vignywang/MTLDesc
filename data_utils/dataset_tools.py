@@ -7,8 +7,6 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from data_utils.coco_dataset import COCODebugDataset
-
 
 class InfiniteDataLoader(DataLoader):
     def __init__(self, *args, **kwargs):
@@ -441,6 +439,8 @@ def contrast_show_different_dataset(dataset_dir_0, dataset_dir_1, show_num=100):
         dataset_dir_1: 第二个数据集的根目录
         show_num: 表示要显示的数目，default 100
     """
+    from data_utils.coco_dataset import COCODebugDataset
+
     st_dataset = COCODebugDataset(dataset_dir_0)
     su_dataset = COCODebugDataset(dataset_dir_1)
 
