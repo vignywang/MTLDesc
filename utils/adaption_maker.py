@@ -8,7 +8,7 @@ import cv2 as cv
 import torch
 import torch.nn.functional as f
 
-from nets.superpoint_net import SuperPointNet
+from nets.superpoint_net import SuperPointNetFloat
 from data_utils.dataset_tools import HomographyAugmentation
 from data_utils.coco_dataset import COCOAdaptionDataset
 from utils.utils import spatial_nms
@@ -43,7 +43,7 @@ class AdaptionMaker(object):
         val_dataset = COCOAdaptionDataset(params, 'val2014')
 
         # 初始化模型
-        model = SuperPointNet()
+        model = SuperPointNetFloat()
         # 从预训练的模型中恢复参数
         model_dict = model.state_dict()
         pretrain_dict = torch.load(self.ckpt_file)
@@ -119,7 +119,7 @@ class AdaptionMaker(object):
             prob_list = []
             for img in batched_image_list:
                 img = img.to(self.device)
-                _, _, prob = self.model(img)
+                _, _, prob, _ = self.model(img)
                 prob_list.append(prob)
 
             # 将概率图展开为原始图像大小
