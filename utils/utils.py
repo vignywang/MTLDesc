@@ -472,3 +472,62 @@ class PointHeatmapMSELoss(object):
         return loss
 
 
+def interpolation(image, homo):
+    """
+    对批图像进行单应变换，输入要求image与homo的batch数目相等，插值方式采用双线性插值，空白区域补零
+    Args:
+        image: [bt,c,h,w]
+        homo: [bt,3,3]
+
+    Returns:插值后的图像
+
+    """
+    bt, _, height, width = image.shape
+    device = image.device
+    inv_homo = torch.inverse(homo)
+
+    coords_x = torch.arange(0, width, dtype=torch.float, requires_grad=False)
+    coords_y = torch.arange(0, height, dtype=torch.float, requires_grad=False)
+    ones = torch.ones((height, width), dtype=torch.float, requires_grad=False)
+    org_coords = torch.stack(
+        (coords_x.unsqueeze(dim=0).repeat(height, 1),
+         coords_y.unsqueeze(dim=1).repeat((1, width)),
+         ones), dim=2
+    ).reshape((height * width, 3)).unsqueeze(dim=0).repeat((bt, 1, 1)).to(device)
+
+    warped_coords = torch.bmm(inv_homo.unsqueeze(dim=1).repeat(1, height * width, 1, 1).reshape((-1, 3, 3)),
+                              org_coords.reshape((-1, 3, 1))).squeeze().reshape((bt, height * width, 3))
+    warped_coords_x = warped_coords[:, :, 0] / warped_coords[:, :, 2]
+    warped_coords_y = warped_coords[:, :, 1] / warped_coords[:, :, 2]
+
+    x0 = torch.floor(warped_coords_x)
+    x1 = x0 + 1.
+    y0 = torch.floor(warped_coords_y)
+    y1 = y0 + 1.
+
+    x0_safe = torch.clamp(x0, 0, width - 1)  # [bt*num,h*w]
+    x1_safe = torch.clamp(x1, 0, width - 1)
+    y0_safe = torch.clamp(y0, 0, height - 1)
+    y1_safe = torch.clamp(y1, 0, height - 1)
+
+    idx_00 = (x0_safe + y0_safe * width).to(torch.long)  # [bt*num,h*w]
+    idx_01 = (x0_safe + y1_safe * width).to(torch.long)
+    idx_10 = (x1_safe + y0_safe * width).to(torch.long)
+    idx_11 = (x1_safe + y1_safe * width).to(torch.long)
+
+    d_x = warped_coords_x - x0_safe
+    d_y = warped_coords_y - y0_safe
+    d_1_x = x1_safe - warped_coords_x
+    d_1_y = y1_safe - warped_coords_y
+
+    image = image.reshape((bt, height * width))  # [bt*num,h*w]
+    img_00 = torch.gather(image, dim=1, index=idx_00)
+    img_01 = torch.gather(image, dim=1, index=idx_01)
+    img_10 = torch.gather(image, dim=1, index=idx_10)
+    img_11 = torch.gather(image, dim=1, index=idx_11)
+
+    bilinear_img = (img_00 * d_1_x * d_1_y + img_01 * d_1_x * d_y + img_10 * d_x * d_1_y + img_11 * d_x * d_y).reshape(
+        (bt, 1, height, width)
+    )
+
+    return bilinear_img
