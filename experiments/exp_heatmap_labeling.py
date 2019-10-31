@@ -9,7 +9,7 @@ import numpy as np
 import cv2 as cv
 from torch.utils.data import DataLoader
 
-from data_utils.coco_dataset import COCOMegPointRawDataset
+from data_utils.coco_dataset import COCORawDataset
 from data_utils.dataset_tools import HomographyAugmentation
 from data_utils.dataset_tools import contrast_show_different_dataset
 from nets.megpoint_net import MegPointHeatmap
@@ -29,7 +29,7 @@ class Labeler(object):
         self.adaption_num = params.adaption_num
 
         # 初始化相关数据集
-        self.raw_dataset = COCOMegPointRawDataset(
+        self.raw_dataset = COCORawDataset(
             coco_dataset_dir=params.dataset_dir
         )
         self.data_loader = DataLoader(
