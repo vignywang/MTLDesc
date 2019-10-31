@@ -16,34 +16,6 @@ from data_utils.dataset_tools import draw_image_keypoints
 from data_utils.dataset_tools import space_to_depth
 
 
-class COCORawDataset(Dataset):
-
-    def __init__(self, dataset_dir):
-        self.height = 240
-        self.width = 320
-        self.dataset_dir = os.path.join(dataset_dir, 'train2014', 'images')
-        self.image_file_list = self._format_file_list()
-
-    def __len__(self):
-        return len(self.image_file_list)
-
-    def __getitem__(self, idx):
-        image = cv.imread(self.image_file_list[idx], flags=cv.IMREAD_GRAYSCALE)
-        image = cv.resize(image, (self.width, self.height), interpolation=cv.INTER_LINEAR)
-
-        return image
-
-    def _format_file_list(self, num_limits=False):
-        image_list = glob.glob(os.path.join(self.dataset_dir, "*.jpg"))
-        image_list = sorted(image_list)
-        if num_limits:
-            length = 1000
-        else:
-            length = len(image_list)
-        image_list = image_list[:length]
-        return image_list
-
-
 class COCOMegPointAdaptionDataset(Dataset):
 
     def __init__(self, params):
@@ -972,15 +944,14 @@ class COCOMegPointSelfTrainingOnlyImageDataset(COCOMegPointSelfTrainingDataset):
         }
 
 
-class COCOMegPointRawDataset(Dataset):
+class COCORawDataset(Dataset):
 
-    def __init__(self, params, postfix="resized_images"):
-        self.params = params
-        self.height = params.height
-        self.width = params.width
+    def __init__(self, coco_dataset_dir, height=240, width=320, postfix="resized_images"):
+        self.height = height
+        self.width = width
         self.n_height = int(self.height/8)
         self.n_width = int(self.width/8)
-        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014', postfix)
+        self.dataset_dir = os.path.join(coco_dataset_dir, 'train2014', postfix)
         self.image_list, self.image_name_list = self._format_file_list()
 
     def __len__(self):
@@ -989,13 +960,15 @@ class COCOMegPointRawDataset(Dataset):
     def __getitem__(self, idx):
 
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        org_image = image
         image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
         image = (image * 2. / 255.) - 1.
 
         name = self.image_name_list[idx]
         return {
             "image": image,
-            "name": name
+            "org_image": org_image,
+            "name": name,
         }
 
     def _format_file_list(self):
@@ -1008,16 +981,15 @@ class COCOMegPointRawDataset(Dataset):
         return image_list, image_name_list
 
 
-class COCOMegPointDebugDataset(Dataset):
+class COCODebugDataset(Dataset):
 
-    def __init__(self, params, read_mask=False, postfix="resized_images"):
-        self.params = params
+    def __init__(self, dataset_dir, height=240, width=320, read_mask=False):
         self.read_mask = read_mask
-        self.height = params.height
-        self.width = params.width
+        self.height = height
+        self.width = width
         self.n_height = int(self.height/8)
         self.n_width = int(self.width/8)
-        self.dataset_dir = os.path.join(params.coco_dataset_dir, 'train2014', postfix)
+        self.dataset_dir = dataset_dir
         self.image_list, self.point_list, self.mask_list = self._format_file_list()
 
     def __len__(self):
