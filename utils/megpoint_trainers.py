@@ -22,7 +22,7 @@ from data_utils.coco_dataset import COCOMegPointAdaptionDataset
 from data_utils.coco_dataset import COCOMegPointAdversarialDataset
 from data_utils.coco_dataset import COCOMegPointSelfTrainingDataset
 from data_utils.coco_dataset import COCOMegPointSelfTrainingOnlyImageDataset
-from data_utils.coco_dataset import COCOMegPointRawDataset
+from data_utils.coco_dataset import COCORawDataset
 from data_utils.synthetic_dataset import SyntheticTrainDataset
 from data_utils.synthetic_dataset import SyntheticHeatmapDataset
 from data_utils.synthetic_dataset import SyntheticAdversarialDataset
@@ -44,18 +44,19 @@ from utils.utils import Matcher
 from utils.utils import PointHeatmapMSELoss
 
 
-class MagicPointResnetTrainer(MagicPointSynthetic):
+class MagicPointHeatmapTrainer(MagicPointSynthetic):
 
     def __init__(self, params):
-        super(MagicPointResnetTrainer, self).__init__(params=params)
+        super(MagicPointHeatmapTrainer, self).__init__(params=params)
 
         self.point_loss = PointHeatmapMSELoss()
 
+        # 重新初始化带l2正则项的优化器
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=1e-6)
+        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.1)
+
     def _initialize_model(self):
         self.model = MegPointHeatmap()
-
-        # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/synthetic_heatmap_relu_0.0010_32/model_01.pt"
-        # self._load_model_params(ckpt_file)
 
         if self.multi_gpus:
             self.model = torch.nn.DataParallel(self.model)
@@ -260,7 +261,7 @@ class MegPointSeflTrainingTrainer(MegPointTrainerTester):
             self.target_dataset = COCOMegPointSelfTrainingOnlyImageDataset(params)
         else:
             self.target_dataset = COCOMegPointSelfTrainingDataset(params)
-        self.target_raw_dataset = COCOMegPointRawDataset(params)
+        self.target_raw_dataset = COCORawDataset(params)
 
         self.epoch_length = min(
             (len(self.source_dataset)//self.batch_size),

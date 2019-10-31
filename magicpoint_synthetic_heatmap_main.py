@@ -6,7 +6,7 @@ import torch
 import numpy as np
 
 from basic_parameters import BasicParameters
-from utils.megpoint_trainers import MagicPointResnetTrainer
+from utils.megpoint_trainers import MagicPointHeatmapTrainer
 
 # make the result reproducible
 torch.manual_seed(3928)
@@ -32,6 +32,7 @@ class MagicPointHeatmapParameters(BasicParameters):
         parser.add_argument("--batch_size", type=int, default=32)
         parser.add_argument("--num_workers", type=int, default=8)
         parser.add_argument("--log_freq", type=int, default=100)
+        parser.add_argument("--epoch_num", type=int, default=60)
         parser.add_argument("--prefix", type=str, default='exp1')
         return parser.parse_args()
 
@@ -41,10 +42,10 @@ def main():
     params = MagicPointHeatmapParameters()
     params.initialize()
 
-    magicpoint_trainer = MagicPointResnetTrainer(params)
+    magicpoint_trainer = MagicPointHeatmapTrainer(params)
     magicpoint_trainer.train()
 
-    # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/synthetic_heatmap_0.0010_32/model_59.pt"
+    # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/synthetic_heatmap_l2_0.0010_32/model_76.pt"
     # magicpoint_trainer.test(ckpt_file)
 
 
