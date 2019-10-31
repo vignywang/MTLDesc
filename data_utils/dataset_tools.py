@@ -7,6 +7,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from data_utils.coco_dataset import COCODebugDataset
+
 
 class InfiniteDataLoader(DataLoader):
     def __init__(self, *args, **kwargs):
@@ -429,4 +431,35 @@ def debug_draw_image_keypoints(image, prob, color=(0, 255, 0), max_show=4):
             break
     all_image_point = np.concatenate(all_image_point, axis=1).transpose((2, 0, 1))
     return all_image_point
+
+
+def contrast_show_different_dataset(dataset_dir_0, dataset_dir_1, show_num=100):
+    """
+    分别读取两个数据集，其包含相同的图像，但是关键点标注不同，观察可以观察他们的差异
+    Args:
+        dataset_dir_0: 第一个数据集的根目录
+        dataset_dir_1: 第二个数据集的根目录
+        show_num: 表示要显示的数目，default 100
+    """
+    st_dataset = COCODebugDataset(dataset_dir_0)
+    su_dataset = COCODebugDataset(dataset_dir_1)
+
+    st_iter = enumerate(st_dataset)
+    su_iter = enumerate(su_dataset)
+
+    for i in range(show_num):
+        _, st_data = st_iter.__next__()
+        _, su_data = su_iter.__next__()
+
+        st_image, st_point = st_data["image"], st_data["point"]
+        su_image, su_point = su_data["image"], su_data["point"]
+
+        st_image_point = draw_image_keypoints(image=st_image, points=st_point, show=False)
+
+        su_image_point = draw_image_keypoints(image=su_image, points=su_point, show=False)
+
+        cat_image_point = np.concatenate((st_image_point, su_image_point), axis=1)
+
+        cv.imshow("cat_image_point", cat_image_point)
+        cv.waitKey()
 
