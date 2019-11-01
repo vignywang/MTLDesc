@@ -86,9 +86,8 @@ class HomographyAugmentation(object):
             org_mask = np.ones_like(image, dtype=np.float)
             warped_mask = cv.warpPerspective(org_mask, homography, dsize=dsize, flags=cv.INTER_LINEAR)
         else:
-            mask = mask.astype(np.float)
             warped_mask = cv.warpPerspective(mask, homography, dsize=dsize, flags=cv.INTER_LINEAR)
-        valid_mask = warped_mask.astype(np.uint8)
+        valid_mask = warped_mask
 
         return warped_image, valid_mask
 
