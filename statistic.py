@@ -226,7 +226,7 @@ class StatisticTools(object):
 
 
 if __name__ == "__main__":
-    setup_seed()
+    # setup_seed()
     params = StatisticParameters()
     # params.data_type = "synthetic"
     params.data_type = "coco"
