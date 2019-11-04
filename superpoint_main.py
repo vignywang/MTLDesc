@@ -108,10 +108,10 @@ def main():
     trainer.train()
 
     # debug use
-    # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24/model_49.pt"
+    # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24_3_scale/model_49.pt"
     # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth'
 
-    # trainer.test_HPatch(ckpt_file)
+    # trainer.test_HPatch_float(ckpt_file)
 
 
 if __name__ == '__main__':
