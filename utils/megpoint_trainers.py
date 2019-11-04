@@ -22,6 +22,7 @@ from data_utils.coco_dataset import COCOMegPointAdaptionDataset
 from data_utils.coco_dataset import COCOMegPointAdversarialDataset
 from data_utils.coco_dataset import COCOMegPointSelfTrainingDataset
 from data_utils.coco_dataset import COCOMegPointSelfTrainingOnlyImageDataset
+from data_utils.coco_dataset import COCOMegPointHeatmapTrainDataset
 from data_utils.coco_dataset import COCORawDataset
 from data_utils.synthetic_dataset import SyntheticTrainDataset
 from data_utils.synthetic_dataset import SyntheticHeatmapDataset
@@ -30,6 +31,7 @@ from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
 from data_utils.dataset_tools import HomographyAugmentation
 from data_utils.dataset_tools import InfiniteDataLoader
+from data_utils.dataset_tools import draw_image_keypoints
 
 from utils.trainers import MagicPointSynthetic
 from utils.evaluation_tools import RepeatabilityCalculator
@@ -80,7 +82,8 @@ class MagicPointHeatmapTrainer(MagicPointSynthetic):
             mask = data['mask'].to(self.device)
             heatmap_gt = data["heatmap"].to(self.device)
 
-            heatmap_pred = self.model(image)[:, 0, :, :]
+            results = self.model(image)
+            heatmap_pred = results[0][:, 0, :, :]
             loss = self.point_loss(heatmap_pred, heatmap_gt, mask)
 
             if torch.isnan(loss):
@@ -124,8 +127,9 @@ class MagicPointHeatmapTrainer(MagicPointSynthetic):
             gt_point = gt_point.numpy()
 
             image = image.to(self.device).unsqueeze(dim=0)
-            heatmap = self.model(image)
+            results = self.model(image)
 
+            heatmap = results[0]
             heatmap = spatial_nms(heatmap)
             heatmap = heatmap.detach().cpu().numpy()[0, 0]
 
@@ -210,18 +214,599 @@ class MegPointTrainerTester(object):
     def _validate_one_epoch(self, epoch_idx):
         raise NotImplementedError
 
-    def _load_model_params(self, model, ckpt_file):
+    def _load_model_params(self, ckpt_file):
         if ckpt_file is None:
             print("Please input correct checkpoint file dir!")
             return False
 
         self.logger.info("Load pretrained model %s " % ckpt_file)
-        model_dict = model.state_dict()
-        pretrain_dict = torch.load(ckpt_file, map_location=self.device)
-        model_dict.update(pretrain_dict)
-        model.load_state_dict(model_dict)
+        if not self.multi_gpus:
+            model_dict = self.model.state_dict()
+            pretrain_dict = torch.load(ckpt_file, map_location=self.device)
+            model_dict.update(pretrain_dict)
+            self.model.load_state_dict(model_dict)
+        else:
+            model_dict = self.model.module.state_dict()
+            pretrain_dict = torch.load(ckpt_file, map_location=self.device)
+            model_dict.update(pretrain_dict)
+            self.model.module.load_state_dict(model_dict)
 
-        return model
+
+class MegPointHeatmapTrainer(MegPointTrainerTester):
+
+    def __init__(self, params):
+        super(MegPointHeatmapTrainer, self).__init__(params)
+
+        self._initialize_dataset()
+        self._initialize_model()
+        self._initialize_optimizer()
+        self._initialize_loss()
+        self._initialize_matcher()
+        self._initialize_test_calculator(params)
+
+    def _initialize_dataset(self):
+        # 初始化数据集
+        self.train_dataset = COCOMegPointHeatmapTrainDataset(self.params)
+        self.train_dataloader = DataLoader(
+            dataset=self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            drop_last=True
+        )
+        self.epoch_length = len(self.train_dataset) // self.batch_size
+
+        # 初始化测试集
+        self.test_dataset = HPatchDataset(self.params)
+        self.test_length = len(self.test_dataset)
+
+    def _initialize_model(self):
+        # 初始化模型
+        model = MegPointHeatmap()
+        if self.multi_gpus:
+            model = torch.nn.DataParallel(model)
+        self.model = model.to(self.device)
+
+    def _initialize_loss(self):
+        # 初始化loss算子
+        # 初始化heatmap loss
+        self.point_loss = PointHeatmapMSELoss()
+
+        # 初始化描述子loss
+        self.descriptor_loss = DescriptorTripletLoss(self.device)
+
+    def _initialize_matcher(self):
+        # 初始化匹配算子
+        self.general_matcher = Matcher('float')
+
+    def _initialize_optimizer(self):
+        # 初始化网络训练优化器
+        self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr)
+
+    def _train_one_epoch(self, epoch_idx):
+        self.model.train()
+
+        self.logger.info("-----------------------------------------------------")
+        self.logger.info("Training epoch %2d begin:" % epoch_idx)
+
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data['image'].to(self.device)
+            heatmap_gt = data['heatmap'].to(self.device)
+            point_mask = data['point_mask'].to(self.device)
+
+            warped_image = data['warped_image'].to(self.device)
+            warped_heatmap_gt = data['warped_heatmap'].to(self.device)
+            warped_point_mask = data['warped_point_mask'].to(self.device)
+
+            matched_idx = data['matched_idx'].to(self.device)
+            matched_valid = data['matched_valid'].to(self.device)
+            not_search_mask = data['not_search_mask'].to(self.device)
+
+            shape = image.shape
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
+            point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
+            heatmap_pred_pair, desp_pair = self.model(image_pair)
+            heatmap_pred_pair = heatmap_pred_pair.squeeze()
+
+            point_loss = self.point_loss(heatmap_pred_pair, heatmap_gt_pair, point_mask_pair)
+
+            desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
+
+            desp_loss = self.descriptor_loss(
+                desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
+
+            loss = point_loss + desp_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                point_loss_val = point_loss.item()
+                desp_loss_val = desp_loss.item()
+                loss_val = loss.item()
+
+                self.summary_writer.add_histogram('descriptor', desp_pair)
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
+                    " one step cost %.4fs. " % (
+                        epoch_idx, i, self.epoch_length,
+                        loss_val,
+                        point_loss_val,
+                        desp_loss_val,
+                        (time.time() - stime) / self.params.log_freq,
+                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
+        self.logger.info("Training epoch %2d done." % epoch_idx)
+        self.logger.info("-----------------------------------------------------")
+
+    def _validate_one_epoch(self, epoch_idx):
+        self.logger.info("*****************************************************")
+        self.logger.info("Validating epoch %2d begin:" % epoch_idx)
+
+        self._test_func(epoch_idx)
+
+        illum_homo_moving_acc = self.illum_homo_acc_mov.average()
+        view_homo_moving_acc = self.view_homo_acc_mov.average()
+
+        illum_mma_moving_acc = self.illum_mma_mov.average()
+        view_mma_moving_acc = self.view_mma_mov.average()
+
+        illum_repeat_moving_acc = self.illum_repeat_mov.average()
+        view_repeat_moving_acc = self.view_repeat_mov.average()
+
+        current_size = self.view_mma_mov.current_size()
+
+        self.logger.info("---------------------------------------------")
+        self.logger.info("Moving Average of %d models:" % current_size)
+        self.logger.info("illum_homo_moving_acc=%.4f, view_homo_moving_acc=%.4f" %
+                         (illum_homo_moving_acc, view_homo_moving_acc))
+        self.logger.info("illum_mma_moving_acc=%.4f, view_mma_moving_acc=%.4f" %
+                         (illum_mma_moving_acc, view_mma_moving_acc))
+        self.logger.info("illum_repeat_moving_acc=%.4f, view_repeat_moving_acc=%.4f" %
+                         (illum_repeat_moving_acc, view_repeat_moving_acc))
+        self.logger.info("---------------------------------------------")
+        self.logger.info("Validating epoch %2d done." % epoch_idx)
+        self.logger.info("*****************************************************")
+
+    def test(self, ckpt_file):
+        self._load_model_params(ckpt_file)
+
+        self.model.eval()
+        # 重置测评算子参数
+        self.illum_repeat.reset()
+        self.illum_homo_acc.reset()
+        self.illum_mma.reset()
+        self.view_repeat.reset()
+        self.view_homo_acc.reset()
+        self.view_mma.reset()
+        self.point_statistics.reset()
+
+        start_time = time.time()
+        count = 0
+        skip = 0
+
+        for i, data in enumerate(self.test_dataset):
+            first_image = data['first_image']
+            second_image = data['second_image']
+            gt_homography = data['gt_homography']
+            image_type = data['image_type']
+
+            # if image_type == "illumination":
+            #     print("sikp")
+            #     skip += 1
+            #     continue
+
+            image_pair = np.stack((first_image, second_image), axis=0)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            image_pair = image_pair*2./255. - 1.
+
+            heatmap_pair, desp_pair = self.model(image_pair)
+            prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold*2+1))
+
+            desp_pair = desp_pair.detach().cpu().numpy()
+            first_desp = desp_pair[0]
+            second_desp = desp_pair[1]
+            prob_pair = prob_pair.detach().cpu().numpy()
+            first_prob = prob_pair[0, 0]
+            second_prob = prob_pair[1, 0]
+
+            # 得到对应的预测点
+            first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+            second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+
+            # debug use
+            # first_image, second_image = torch.chunk(image_pair, 2, dim=0)
+            # first_image = ((first_image.detach().cpu().squeeze() + 1) * 255. / 2.).to(torch.uint8).numpy()
+            # second_image = ((second_image.detach().cpu().squeeze() + 1) * 255. / 2.).to(torch.uint8).numpy()
+            # cat_image = np.concatenate((first_image, second_image), axis=1)
+            # f_heatmap, s_heatmap = torch.chunk(heatmap_pair, 2, dim=0)
+            # f_heatmap = f_heatmap.squeeze().detach().cpu()
+            # s_heatmap = s_heatmap.squeeze().detach().cpu()
+            # cat_heatmap = torch.cat((f_heatmap, s_heatmap), dim=1)
+            # heatmap_image = self._debug_show(cat_heatmap, cat_image, show=False)
+
+            # f_image_point = draw_image_keypoints(first_image, first_point, show=False, color=(0, 0, 255))
+            # s_image_point = draw_image_keypoints(second_image, second_point, show=False, color=(0, 0, 255))
+            # image_point = np.concatenate((f_image_point, s_image_point), axis=1)
+            # cv.imwrite("/home/zhangyuyang/tmp_images/megpoint/image_%03d.jpg" % i, image_point)
+            # heatmap_image_point = np.concatenate((heatmap_image, image_point), axis=0)
+            # cv.imshow("all", heatmap_image_point)
+            # cv.waitKey()
+
+            if first_point_num <= 4 or second_point_num <= 4:
+                print("skip this pair because there's little point!")
+                skip += 1
+                continue
+
+            # 得到点对应的描述子
+            select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
+            select_second_desp = self._generate_predict_descriptor(second_point, second_desp)
+
+            # 得到匹配点
+            matched_point = self.general_matcher(first_point, select_first_desp,
+                                                 second_point, select_second_desp)
+
+            if matched_point is None:
+                print("skip this pair because there's no match point!")
+                skip += 1
+                continue
+
+            # 计算得到单应变换
+            pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                   matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
+
+            if pred_homography is None:
+                print("skip this pair because no homo can be predicted!.")
+                skip += 1
+                continue
+
+            # 对单样本进行测评
+            if image_type == 'illumination':
+                self.illum_repeat.update(first_point, second_point, gt_homography)
+                self.illum_homo_acc.update(pred_homography, gt_homography)
+                self.illum_mma.update(gt_homography, matched_point)
+
+            elif image_type == 'viewpoint':
+                self.view_repeat.update(first_point, second_point, gt_homography)
+                self.view_homo_acc.update(pred_homography, gt_homography)
+                self.view_mma.update(gt_homography, matched_point)
+
+            else:
+                print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
+                      "Please check !")
+                assert False
+
+            # 统计检测的点的数目
+            self.point_statistics.update((first_point_num+second_point_num)/2.)
+
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time() - start_time)))
+                start_time = time.time()
+            count += 1
+            # if count % 1000 == 0:
+            #     break
+
+        # 计算各自的重复率以及总的重复率
+        illum_repeat, view_repeat, total_repeat = self._compute_total_metric(self.illum_repeat,
+                                                                             self.view_repeat)
+        self.illum_repeat_mov.push(illum_repeat)
+        self.view_repeat_mov.push(view_repeat)
+
+        # 计算估计的单应变换准确度
+        illum_homo_acc, view_homo_acc, total_homo_acc = self._compute_total_metric(self.illum_homo_acc,
+                                                                                   self.view_homo_acc)
+        self.illum_homo_acc_mov.push(illum_homo_acc)
+        self.view_homo_acc_mov.push(view_homo_acc)
+
+        # 计算匹配的准确度
+        illum_match_acc, view_match_acc, total_match_acc = self._compute_total_metric(self.illum_mma,
+                                                                                      self.view_mma)
+        self.illum_mma_mov.push(illum_match_acc)
+        self.view_mma_mov.push(view_match_acc)
+
+        # 统计最终的检测点数目的平均值和方差
+        point_avg, point_std = self.point_statistics.average()
+
+        self.logger.info("Having skiped %d test pairs" % skip)
+
+        self.logger.info("Homography Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_homo_acc, view_homo_acc, total_homo_acc))
+        self.logger.info("Mean Matching Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f " %
+                         (illum_match_acc, view_match_acc, total_match_acc))
+        self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_repeat, view_repeat, total_repeat))
+        self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
+
+    def _debug_show(self, heatmap, image, show=False):
+        heatmap = np.clip(heatmap, 0, 1)
+        heatmap = heatmap.numpy() * 150
+        # heatmap = cv.resize(heatmap, dsize=(self.width, self.height), interpolation=cv.INTER_LINEAR)
+        heatmap = cv.applyColorMap(heatmap.astype(np.uint8), colormap=cv.COLORMAP_BONE).astype(np.float)
+        # image = (image.squeeze().numpy() + 1) * 255 / 2
+        hyper_image = np.clip(heatmap + image[:, :, np.newaxis], 0, 255).astype(np.uint8)
+        if show:
+            cv.imshow("heat&image", hyper_image)
+            cv.waitKey()
+        else:
+            return hyper_image
+
+    def _test_func(self, epoch_idx):
+
+        self.model.eval()
+        # 重置测评算子参数
+        self.illum_repeat.reset()
+        self.illum_homo_acc.reset()
+        self.illum_mma.reset()
+        self.view_repeat.reset()
+        self.view_homo_acc.reset()
+        self.view_mma.reset()
+        self.point_statistics.reset()
+
+        start_time = time.time()
+        count = 0
+        skip = 0
+
+        for i, data in enumerate(self.test_dataset):
+            first_image = data['first_image']
+            second_image = data['second_image']
+            gt_homography = data['gt_homography']
+            image_type = data['image_type']
+
+            image_pair = np.stack((first_image, second_image), axis=0)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            image_pair = image_pair*2./255. - 1.
+
+            heatmap_pair, desp_pair = self.model(image_pair)
+            prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold*2+1))
+
+            desp_pair = desp_pair.detach().cpu().numpy()
+            first_desp = desp_pair[0]
+            second_desp = desp_pair[1]
+            prob_pair = prob_pair.detach().cpu().numpy()
+            first_prob = prob_pair[0, 0]
+            second_prob = prob_pair[1, 0]
+
+            # 得到对应的预测点
+            first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+            second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+
+            if first_point_num <= 4 or second_point_num <= 4:
+                print("skip this pair because there's little point!")
+                skip += 1
+                continue
+
+            # 得到点对应的描述子
+            select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
+            select_second_desp = self._generate_predict_descriptor(second_point, second_desp)
+
+            # 得到匹配点
+            matched_point = self.general_matcher(first_point, select_first_desp,
+                                                 second_point, select_second_desp)
+
+            if matched_point is None:
+                print("skip this pair because there's no match point!")
+                skip += 1
+                continue
+
+            # 计算得到单应变换
+            pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                   matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
+
+            if pred_homography is None:
+                print("skip this pair because no homo can be predicted!.")
+                skip += 1
+                continue
+
+            # 对单样本进行测评
+            if image_type == 'illumination':
+                self.illum_repeat.update(first_point, second_point, gt_homography)
+                self.illum_homo_acc.update(pred_homography, gt_homography)
+                self.illum_mma.update(gt_homography, matched_point)
+
+            elif image_type == 'viewpoint':
+                self.view_repeat.update(first_point, second_point, gt_homography)
+                self.view_homo_acc.update(pred_homography, gt_homography)
+                self.view_mma.update(gt_homography, matched_point)
+
+            else:
+                print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
+                      "Please check !")
+                assert False
+
+            # 统计检测的点的数目
+            self.point_statistics.update((first_point_num+second_point_num)/2.)
+
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time() - start_time)))
+                start_time = time.time()
+            count += 1
+            # if count % 1000 == 0:
+            #     break
+
+        # 计算各自的重复率以及总的重复率
+        illum_repeat, view_repeat, total_repeat = self._compute_total_metric(self.illum_repeat,
+                                                                             self.view_repeat)
+        self.illum_repeat_mov.push(illum_repeat)
+        self.view_repeat_mov.push(view_repeat)
+
+        # 计算估计的单应变换准确度
+        illum_homo_acc, view_homo_acc, total_homo_acc = self._compute_total_metric(self.illum_homo_acc,
+                                                                                   self.view_homo_acc)
+        self.illum_homo_acc_mov.push(illum_homo_acc)
+        self.view_homo_acc_mov.push(view_homo_acc)
+
+        # 计算匹配的准确度
+        illum_match_acc, view_match_acc, total_match_acc = self._compute_total_metric(self.illum_mma,
+                                                                                      self.view_mma)
+        self.illum_mma_mov.push(illum_match_acc)
+        self.view_mma_mov.push(view_match_acc)
+
+        # 统计最终的检测点数目的平均值和方差
+        point_avg, point_std = self.point_statistics.average()
+
+        self.logger.info("Having skiped %d test pairs" % skip)
+
+        self.logger.info("Homography Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_homo_acc, view_homo_acc, total_homo_acc))
+        self.logger.info("Mean Matching Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f " %
+                         (illum_match_acc, view_match_acc, total_match_acc))
+        self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_repeat, view_repeat, total_repeat))
+        self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
+
+        self.summary_writer.add_scalar("illumination/Homography_Accuracy", illum_homo_acc, epoch_idx)
+        self.summary_writer.add_scalar("illumination/Mean_Matching_Accuracy", illum_match_acc, epoch_idx)
+        self.summary_writer.add_scalar("illumination/Repeatability", illum_repeat, epoch_idx)
+        self.summary_writer.add_scalar("viewpoint/Homography_Accuracy", view_homo_acc, epoch_idx)
+        self.summary_writer.add_scalar("viewpoint/Mean_Matching_Accuracy", view_match_acc, epoch_idx)
+        self.summary_writer.add_scalar("viewpoint/Repeatability", view_repeat, epoch_idx)
+
+    @staticmethod
+    def _compute_total_metric(illum_metric, view_metric):
+        illum_acc, illum_sum, illum_num = illum_metric.average()
+        view_acc, view_sum, view_num = view_metric.average()
+        return illum_acc, view_acc, (illum_sum+view_sum)/(illum_num+view_num+1e-4)
+
+    def _generate_predict_point(self, prob, scale=None, top_k=0):
+        point_idx = np.where(prob > self.detection_threshold)
+
+        if len(point_idx[0]) == 0 or len(point_idx[1]) == 0:
+            point = np.empty((0, 2))
+            return point, 0
+
+        prob = prob[point_idx]
+        sorted_idx = np.argsort(prob)[::-1]
+        if sorted_idx.shape[0] >= top_k:
+            sorted_idx = sorted_idx[:top_k]
+
+        point = np.stack(point_idx, axis=1)  # [n,2]
+        top_k_point = []
+        for idx in sorted_idx:
+            top_k_point.append(point[idx])
+
+        point = np.stack(top_k_point, axis=0)
+        point_num = point.shape[0]
+
+        if scale is not None:
+            point = point*scale
+        return point, point_num
+
+    def _generate_predict_descriptor(self, point, desp):
+        point = torch.from_numpy(point).to(torch.float)  # 由于只有pytorch有gather的接口，因此将点调整为pytorch的格式
+        desp = torch.from_numpy(desp)
+        dim, h, w = desp.shape
+        desp = torch.reshape(desp, (dim, -1))
+        desp = torch.transpose(desp, dim0=1, dim1=0)  # [h*w,256]
+
+        # 下采样
+        scaled_point = point / 8
+        point_y = scaled_point[:, 0:1]  # [n,1]
+        point_x = scaled_point[:, 1:2]
+
+        x0 = torch.floor(point_x)
+        x1 = x0 + 1
+        y0 = torch.floor(point_y)
+        y1 = y0 + 1
+        x_nearest = torch.round(point_x)
+        y_nearest = torch.round(point_y)
+
+        x0_safe = torch.clamp(x0, min=0, max=w-1)
+        x1_safe = torch.clamp(x1, min=0, max=w-1)
+        y0_safe = torch.clamp(y0, min=0, max=h-1)
+        y1_safe = torch.clamp(y1, min=0, max=h-1)
+
+        x_nearest_safe = torch.clamp(x_nearest, min=0, max=w-1)
+        y_nearest_safe = torch.clamp(y_nearest, min=0, max=h-1)
+
+        idx_00 = (x0_safe + y0_safe*w).to(torch.long).repeat((1, dim))
+        idx_01 = (x0_safe + y1_safe*w).to(torch.long).repeat((1, dim))
+        idx_10 = (x1_safe + y0_safe*w).to(torch.long).repeat((1, dim))
+        idx_11 = (x1_safe + y1_safe*w).to(torch.long).repeat((1, dim))
+        idx_nearest = (x_nearest_safe + y_nearest_safe*w).to(torch.long).repeat((1, dim))
+
+        d_x = point_x - x0_safe
+        d_y = point_y - y0_safe
+        d_1_x = x1_safe - point_x
+        d_1_y = y1_safe - point_y
+
+        desp_00 = torch.gather(desp, dim=0, index=idx_00)
+        desp_01 = torch.gather(desp, dim=0, index=idx_01)
+        desp_10 = torch.gather(desp, dim=0, index=idx_10)
+        desp_11 = torch.gather(desp, dim=0, index=idx_11)
+        nearest_desp = torch.gather(desp, dim=0, index=idx_nearest)
+        bilinear_desp = desp_00*d_1_x*d_1_y + desp_01*d_1_x*d_y + desp_10*d_x*d_1_y+desp_11*d_x*d_y
+
+        # todo: 插值得到的描述子不再满足模值为1，强行归一化到模值为1，这里可能有问题
+        condition = torch.eq(torch.norm(bilinear_desp, dim=1, keepdim=True), 0)
+        interpolation_desp = torch.where(condition, nearest_desp, bilinear_desp)
+        # interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
+        # interpolation_desp = interpolation_desp/interpolation_norm
+
+        return interpolation_desp.numpy()
+
+    def _initialize_test_calculator(self, params):
+        # 初始化验证算子
+        self.logger.info('Initialize the homography accuracy calculator, correct_epsilon: %d' % self.correct_epsilon)
+        self.logger.info('Initialize the repeatability calculator, detection_threshold: %.4f, correct_epsilon: %d'
+                         % (self.detection_threshold, self.correct_epsilon))
+        self.logger.info('Top k: %d' % self.top_k)
+
+        self.illum_repeat = RepeatabilityCalculator(params.correct_epsilon)
+        self.illum_repeat_mov = MovingAverage()
+
+        self.view_repeat = RepeatabilityCalculator(params.correct_epsilon)
+        self.view_repeat_mov = MovingAverage()
+
+        self.illum_homo_acc = HomoAccuracyCalculator(params.correct_epsilon,
+                                                     params.hpatch_height, params.hpatch_width)
+        self.illum_homo_acc_mov = MovingAverage()
+
+        self.view_homo_acc = HomoAccuracyCalculator(params.correct_epsilon,
+                                                    params.hpatch_height, params.hpatch_width)
+        self.view_homo_acc_mov = MovingAverage()
+
+        self.illum_mma = MeanMatchingAccuracy(params.correct_epsilon)
+        self.illum_mma_mov = MovingAverage()
+
+        self.view_mma = MeanMatchingAccuracy(params.correct_epsilon)
+        self.view_mma_mov = MovingAverage()
+
+        # 初始化用于浮点型描述子的测试方法
+        self.illum_homo_acc_f = HomoAccuracyCalculator(params.correct_epsilon,
+                                                       params.hpatch_height, params.hpatch_width)
+        self.view_homo_acc_f = HomoAccuracyCalculator(params.correct_epsilon,
+                                                      params.hpatch_height, params.hpatch_width)
+
+        self.illum_mma_f = MeanMatchingAccuracy(params.correct_epsilon)
+        self.view_mma_f = MeanMatchingAccuracy(params.correct_epsilon)
+
+        # 初始化用于二进制描述子的测试方法
+        self.illum_homo_acc_b = HomoAccuracyCalculator(params.correct_epsilon,
+                                                       params.hpatch_height, params.hpatch_width)
+        self.view_homo_acc_b = HomoAccuracyCalculator(params.correct_epsilon,
+                                                      params.hpatch_height, params.hpatch_width)
+
+        self.illum_mma_b = MeanMatchingAccuracy(params.correct_epsilon)
+        self.view_mma_b = MeanMatchingAccuracy(params.correct_epsilon)
+
+        self.point_statistics = PointStatistics()
 
 
 class MegPointSeflTrainingTrainer(MegPointTrainerTester):
