@@ -331,7 +331,12 @@ class MegPointHeatmap(nn.Module):
         self.upconv1a = nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1)
         self.upconv1b = nn.Conv2d(c2, c1, kernel_size=3, stride=1, padding=1)
 
+        # Detector head
         self.pred = nn.Conv2d(c1, 1, kernel_size=1, stride=1, padding=0)
+
+        # Descriptor Head.
+        self.convDa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
+        self.convDb = nn.Conv2d(c5, d1, kernel_size=1, stride=1, padding=0)
 
         self.soffmax = nn.Softmax(dim=1)
 
@@ -379,9 +384,17 @@ class MegPointHeatmap(nn.Module):
         ux = self.relu(self.upconv1a(ux))
         ux = self.relu(self.upconv1b(ux))
 
+        # detector head
         pred = self.pred(ux)
 
-        return pred
+        # descriptor head
+        cDa = self.relu(self.convDa(feature))
+        cDb = self.convDb(cDa)
+
+        dn = torch.norm(cDb, p=2, dim=1, keepdim=True)
+        desp = cDb.div(dn)
+
+        return pred, desp
 
 
 class HardDetectionModule(nn.Module):
