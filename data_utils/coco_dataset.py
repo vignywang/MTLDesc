@@ -468,6 +468,237 @@ class COCOSuperPointTrainDataset(Dataset):
             return warped_center_grid
 
 
+class COCOMegPointHeatmapTrainDataset(Dataset):
+
+    def __init__(self, params, height=240, width=320):
+        self.height = params.height
+        self.width = params.width
+
+        self.downsample_scale = 1
+        self.sigma = 2
+        self.g_kernel_size = 11
+        self.g_paddings = self.g_kernel_size // 2
+
+        self.n_height = int(self.height/8)
+        self.n_width = int(self.width/8)
+        self.dataset_dir = params.dataset_dir
+        # self.params.logger.info("Initialize SuperPoint Train Dataset: %s" % self.dataset_dir)
+        self.image_list, self.point_list = self._format_file_list()
+
+        self.homography = HomographyAugmentation(**params.homography_params)
+        self.photometric = PhotometricAugmentation(**params.photometric_params)
+
+        self.center_grid = self._generate_center_grid()
+        self.localmap = self._generate_local_gaussian_map()
+
+    def __len__(self):
+        assert len(self.image_list) == len(self.point_list)
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        point = np.load(self.point_list[idx])
+        point_mask = np.ones_like(image).astype(np.float32)
+
+        # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        if torch.rand([]).item() < 0.5:
+             warped_image, warped_point_mask, warped_point, homography = \
+             image.copy(), point_mask.copy(), point.copy(), np.eye(3)
+        else:
+            warped_image, warped_point_mask, warped_point, homography = self.homography(
+                image, point, mask=point_mask, return_homo=True)
+
+        # 1、对图像增加哎噪声
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+        if torch.rand([]).item() < 0.5:
+            warped_image = self.photometric(warped_image)
+
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        point_mask = torch.from_numpy(point_mask)
+
+        warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
+        warped_point_mask = torch.from_numpy(warped_point_mask)
+
+        image = image*2./255. - 1.
+        warped_image = warped_image*2./255. - 1.
+
+        # 2.1 得到第一副图点构成的热图
+        heatmap = self._convert_points_to_heatmap(point)
+        # self._debug_show(heatmap, image)
+
+        # 2.2 得到第二副图点构成的热图
+        warped_heatmap = self._convert_points_to_heatmap(warped_point)
+
+        # 3、对构造描述子loss有关关系的计算
+        # 3.1 由变换有效点的掩膜得到有效描述子的掩膜
+        warped_valid_mask = space_to_depth(warped_point_mask).clamp(0, 1).to(torch.uint8)
+        warped_valid_mask = torch.all(warped_valid_mask, dim=0).to(torch.float)
+        warped_valid_mask = warped_valid_mask.reshape((-1,))
+
+        matched_idx, matched_valid, not_search_mask = self.generate_corresponding_relationship(
+            homography, warped_valid_mask)
+
+        matched_idx = torch.from_numpy(matched_idx)
+        matched_valid = torch.from_numpy(matched_valid).to(torch.float)
+        not_search_mask = torch.from_numpy(not_search_mask)
+
+        return {
+            'image': image,
+            'point_mask': point_mask,
+            'heatmap': heatmap,
+            'warped_image': warped_image,
+            'warped_point_mask': warped_point_mask,
+            'warped_heatmap': warped_heatmap,
+            'matched_idx': matched_idx,
+            'matched_valid': matched_valid,
+            'not_search_mask': not_search_mask,
+        }
+
+    def _debug_show(self, heatmap, image):
+        heatmap = heatmap.numpy() * 150
+        # heatmap = cv.resize(heatmap, dsize=(self.width, self.height), interpolation=cv.INTER_LINEAR)
+        heatmap = cv.applyColorMap(heatmap.astype(np.uint8), colormap=cv.COLORMAP_BONE).astype(np.float)
+        image = (image.squeeze().numpy() + 1) * 255 / 2
+        hyper_image = np.clip(heatmap + image[:, :, np.newaxis], 0, 255).astype(np.uint8)
+        cv.imshow("heat&image", hyper_image)
+        cv.waitKey()
+
+    def _convert_points_to_heatmap(self, points):
+        height = int(self.height / self.downsample_scale)
+        width = int(self.width / self.downsample_scale)
+        assert height * self.downsample_scale == self.height and width * self.downsample_scale == self.width
+
+        localmap = self.localmap.clone()
+        padded_heatmap = torch.zeros(
+            (height+self.g_paddings*2, width+self.g_paddings*2), dtype=torch.float)
+
+        num_pt = points.shape[0]
+        if num_pt > 0:
+            for i in range(num_pt):
+                pt = points[i]
+                pt_y, pt_x = pt
+                pt_y = int(pt_y // self.downsample_scale)  # 对真值点位置进行下采样,这里有量化误差
+                pt_x = int(pt_x // self.downsample_scale)
+
+                pt_y = np.clip(pt_y, 0, height)
+                pt_x = np.clip(pt_x, 0, width)
+
+                cur_localmap = padded_heatmap[pt_y: pt_y+self.g_kernel_size, pt_x: pt_x + self.g_kernel_size]
+                cur_localmap = torch.where(localmap >= cur_localmap, localmap, cur_localmap)
+                padded_heatmap[pt_y: pt_y+self.g_kernel_size, pt_x: pt_x + self.g_kernel_size] = cur_localmap
+
+            heatmap = padded_heatmap[self.g_paddings: self.g_paddings+height, self.g_paddings: self.g_paddings+width]
+        else:
+            heatmap = torch.zeros((height, width), dtype=torch.float)
+
+        return heatmap
+
+    def _generate_local_gaussian_map(self):
+        g_width = self.g_kernel_size
+        g_height = self.g_kernel_size
+
+        center_x = int(g_width / 2)
+        center_y = int(g_height / 2)
+        center = np.array((center_x, center_y))  # [2]
+
+        coords_x = np.linspace(0, g_width-1, g_width)
+        coords_y = np.linspace(0, g_height-1, g_height)
+
+        coords = np.stack((
+            np.tile(coords_x[np.newaxis, :], (g_height, 1)),
+            np.tile(coords_y[:, np.newaxis], (1, g_width))),
+            axis=2
+        )  # [g_kernel_size,g_kernel_size,2]
+
+        exponent = np.sum(np.square(coords - center), axis=2) / (2. * self.sigma * self.sigma)  # [13,13]
+        localmap = np.exp(-exponent).astype(np.float32)
+        localmap = torch.from_numpy(localmap)
+
+        return localmap
+
+    def _format_file_list(self):
+        dataset_dir = self.dataset_dir
+        org_image_list = glob.glob(os.path.join(dataset_dir, "*.jpg"))
+        org_image_list = sorted(org_image_list)
+        image_list = []
+        point_list = []
+        for org_image_dir in org_image_list:
+            name = (org_image_dir.split('/')[-1]).split('.')[0]
+            point_dir = os.path.join(dataset_dir, name + '.npy')
+            image_list.append(org_image_dir)
+            point_list.append(point_dir)
+
+        return image_list, point_list
+
+    def _generate_center_grid(self, patch_height=8, patch_width=8):
+        n_height = int(self.height/patch_height)
+        n_width = int(self.width/patch_width)
+        center_grid = []
+        for i in range(n_height):
+            for j in range(n_width):
+                h = (patch_height-1.)/2. + i*patch_height
+                w = (patch_width-1.)/2. + j*patch_width
+                center_grid.append((w, h))
+        center_grid = np.stack(center_grid, axis=0)
+        return center_grid
+
+    def _generate_descriptor_mask(self, homography):
+
+        center_grid, warped_center_grid = self.__compute_warped_center_grid(homography)
+
+        center_grid = np.expand_dims(center_grid, axis=0)  # [1,n,2]
+        warped_center_grid = np.expand_dims(warped_center_grid, axis=1)  # [n,1,2]
+
+        dist = np.linalg.norm((warped_center_grid-center_grid), axis=2)  # [n,n]
+        mask = (dist < 8.).astype(np.float32)
+
+        return mask
+
+    def generate_corresponding_relationship(self, homography, valid_mask):
+
+        # 1、得到当前所有描述子的中心点，以及它们经过单应变换后的中心点位置
+        center_grid, warped_center_grid = self.__compute_warped_center_grid(homography)
+
+        # 2、计算所有投影点与固定点的距离，从中找出匹配点，匹配点满足两者距离小于8
+        dist = np.linalg.norm(warped_center_grid[:, np.newaxis, :]-center_grid[np.newaxis, :, :], axis=2)
+        nearest_idx = np.argmin(dist, axis=1)
+        nearest_dist = np.min(dist, axis=1)
+        matched_valid = nearest_dist < 8.
+
+        # 3、得到匹配点的坐标，并计算匹配点与匹配点间的距离，太近的非匹配点不会作为负样本出现在loss中
+        matched_grid = center_grid[nearest_idx, :]
+        diff = np.linalg.norm(matched_grid[:, np.newaxis, :] - matched_grid[np.newaxis, :, :], axis=2)
+        nearest = diff < 16.
+
+        # 4、根据当前匹配的idx得到无效点的mask
+        valid_mask = valid_mask.numpy().astype(np.bool)
+        valid_mask = valid_mask[nearest_idx]
+        invalid = ~valid_mask[np.newaxis, :]
+
+        # 5、得到不用搜索的区域mask，被mask的点要么太近，要么无效
+        not_search_mask = (nearest | invalid).astype(np.float32)
+
+        matched_valid = matched_valid & valid_mask
+
+        return nearest_idx, matched_valid, not_search_mask
+
+    def __compute_warped_center_grid(self, homography, return_org_center_grid=True):
+
+        center_grid = self.center_grid.copy()  # [n,2]
+        num = center_grid.shape[0]
+        ones = np.ones((num, 1), dtype=np.float)
+        homo_center_grid = np.concatenate((center_grid, ones), axis=1)[:, :, np.newaxis]  # [n,3,1]
+        warped_homo_center_grid = np.matmul(homography, homo_center_grid)
+        warped_center_grid = warped_homo_center_grid[:, :2, 0] / warped_homo_center_grid[:, 2:, 0]  # [n,2]
+
+        if return_org_center_grid:
+            return center_grid, warped_center_grid
+        else:
+            return warped_center_grid
+
+
 class COCOSuperPointStatisticDataset(Dataset):
 
     def __init__(self, params):
