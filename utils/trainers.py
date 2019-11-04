@@ -16,6 +16,7 @@ from data_utils.coco_dataset import COCOAdaptionTrainDataset
 from data_utils.coco_dataset import COCOAdaptionValDataset
 from data_utils.coco_dataset import COCOSuperPointTrainDataset
 from data_utils.hpatch_dataset import HPatchDataset
+from data_utils.dataset_tools import draw_image_keypoints
 from nets.superpoint_net import MagicPointNet
 from nets.superpoint_net import SuperPointNetFloat
 from nets.superpoint_net import SuperPointNetBinary
@@ -449,7 +450,7 @@ class SuperPoint(TrainerTester):
 
         self.general_matcher = Matcher('float')
         self._load_model_params(ckpt_file)
-        self._test_model_general()
+        self._test_model_general(0)
 
         self.logger.info("Testing HPatch done.")
         self.logger.info("*****************************************************")
@@ -1070,6 +1071,13 @@ class SuperPoint(TrainerTester):
             # 得到对应的预测点
             first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
             second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+
+            f_image_point = draw_image_keypoints(first_image, first_point, show=False)
+            s_image_point = draw_image_keypoints(second_image, second_point, show=False)
+            image_point = np.concatenate((f_image_point, s_image_point), axis=1)
+            cv.imwrite("/home/zhangyuyang/tmp_images/superpoint/image_%03d.jpg" % i, image_point)
+            # cv.imshow("all", image_point)
+            cv.waitKey()
 
             # 得到点对应的描述子
             select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
