@@ -34,6 +34,8 @@ class MagicPointHeatmapParameters(BasicParameters):
         parser.add_argument("--log_freq", type=int, default=100)
         parser.add_argument("--epoch_num", type=int, default=60)
         parser.add_argument("--prefix", type=str, default='exp1')
+        parser.add_argument("--run_mode", type=str, default="train")
+        parser.add_argument("--ckpt_file", type=str, default="")
         return parser.parse_args()
 
 
@@ -43,10 +45,15 @@ def main():
     params.initialize()
 
     magicpoint_trainer = MagicPointHeatmapTrainer(params)
-    magicpoint_trainer.train()
 
-    # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/synthetic_heatmap_l2_0.0010_32/model_76.pt"
-    # magicpoint_trainer.test(ckpt_file)
+    if params.run_mode == "train":
+        magicpoint_trainer.train()
+
+    elif params.run_mode == "test":
+        magicpoint_trainer.test(params.ckpt_file)
+
+    else:
+        assert False
 
 
 if __name__ == '__main__':
