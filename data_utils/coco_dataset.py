@@ -470,19 +470,21 @@ class COCOSuperPointTrainDataset(Dataset):
 
 class COCOMegPointHeatmapTrainDataset(Dataset):
 
-    def __init__(self, params, height=240, width=320):
+    def __init__(self, params):
+        self.params = params
         self.height = params.height
         self.width = params.width
 
         self.downsample_scale = 1
-        self.sigma = 2
-        self.g_kernel_size = 11
+        self.sigma = 1  # 3
+        self.g_kernel_size = 1  # 15
         self.g_paddings = self.g_kernel_size // 2
+        self.params.logger.info("Heatmap Dataset, the sigma:%d, the kernel_size:%d " % (self.sigma, self.g_kernel_size))
 
         self.n_height = int(self.height/8)
         self.n_width = int(self.width/8)
         self.dataset_dir = params.dataset_dir
-        # self.params.logger.info("Initialize SuperPoint Train Dataset: %s" % self.dataset_dir)
+        self.params.logger.info("Initialize MegPoint Train Dataset: %s" % self.dataset_dir)
         self.image_list, self.point_list = self._format_file_list()
 
         self.homography = HomographyAugmentation(**params.homography_params)
