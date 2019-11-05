@@ -472,6 +472,69 @@ class PointHeatmapMSELoss(object):
         return loss
 
 
+class PointHeatmapBCELoss(object):
+
+    def __init__(self):
+        self.unmasked_bce = torch.nn.BCEWithLogitsLoss(reduction="none")
+
+    def __call__(self, heatmap_pred, heatmap_gt, mask):
+        unmasked_loss = self.unmasked_bce(heatmap_pred, heatmap_gt)
+        valid_num = torch.sum(mask, dim=(1, 2))
+        masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
+        masked_loss = masked_loss / (valid_num + 1)
+        loss = torch.mean(masked_loss)
+        return loss
+
+
+class PointHeatmapWeightedBCELoss(object):
+
+    def __init__(self, weight=200):
+        self.weight= weight
+        self.unmasked_bce = torch.nn.BCEWithLogitsLoss(reduction="none")
+
+    def __call__(self, heatmap_pred, heatmap_gt, mask):
+        """只适用one-hot的情况"""
+        sigmoid_0 = torch.sigmoid(heatmap_pred)  # 预测为关键点的概率
+        sigmoid_1 = 1. - sigmoid_0  # 预测为非关键点的概率
+
+        module_factor_0 = self.weight * heatmap_gt
+        module_factor_1 = 1. * (1 - heatmap_gt)
+
+        unmasked_loss = -(module_factor_0*torch.log(sigmoid_0+1e-4)+module_factor_1*torch.log(sigmoid_1+1e-4))
+
+        valid_num = torch.sum(mask, dim=(1, 2))
+        masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
+        masked_loss = masked_loss / (valid_num + 1)
+        loss = torch.mean(masked_loss)
+        return loss
+
+
+class PointHeatmapFocalLoss(object):
+
+    def __init__(self, gamma=2, p_ratio=0.75):
+        self.gamma = gamma
+        self.p_ratio = p_ratio
+        self.unmasked_loss = torch.nn.BCEWithLogitsLoss(reduction='none')
+
+    def __call__(self, heatmap_pred, heatmap_gt, mask):
+        """只适用one-hot的情况"""
+        sigmoid_0 = torch.sigmoid(heatmap_pred)  # 预测为关键点的概率
+        sigmoid_1 = 1. - sigmoid_0  # 预测为非关键点的概率
+
+        module_factor_0 = torch.pow(1.-sigmoid_0, self.gamma) * self.p_ratio * heatmap_gt
+        module_factor_1 = torch.pow(1.-sigmoid_1, self.gamma) * (1. - self.p_ratio) * (1 - heatmap_gt)
+        # module_factor = module_factor_0 + module_factor_1
+
+        unmasked_loss = -(module_factor_0*torch.log(sigmoid_0+1e-4)+module_factor_1*torch.log(sigmoid_1+1e-4))
+        # unmasked_loss = module_factor * self.unmasked_loss(heatmap_pred, heatmap_gt)
+
+        valid_num = torch.sum(mask, dim=(1, 2))
+        masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
+        # masked_loss = masked_loss / (valid_num + 1)
+        loss = torch.mean(masked_loss)
+        return loss
+
+
 def interpolation(image, homo):
     """
     对批图像进行单应变换，输入要求image与homo的batch数目相等，插值方式采用双线性插值，空白区域补零
