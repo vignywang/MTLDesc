@@ -397,6 +397,78 @@ class MegPointHeatmap(nn.Module):
         return pred, desp
 
 
+class MegPointShuffleHeatmap(nn.Module):
+
+    def __init__(self):
+        super(MegPointShuffleHeatmap, self).__init__()
+        self.relu = nn.ReLU(inplace=True)
+        self.tanh = nn.Tanh()
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        c1, c2, c3, c4, c5, d1 = 64, 64, 128, 128, 256, 256
+        # Encoder.
+        self.conv1a = nn.Conv2d(1, c1, kernel_size=3, stride=1, padding=1)
+        self.conv1b = nn.Conv2d(c1, c1, kernel_size=3, stride=1, padding=1)
+        self.conv2a = nn.Conv2d(c1, c2, kernel_size=3, stride=1, padding=1)
+        self.conv2b = nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1)
+        self.conv3a = nn.Conv2d(c2, c3, kernel_size=3, stride=1, padding=1)
+        self.conv3b = nn.Conv2d(c3, c3, kernel_size=3, stride=1, padding=1)
+        self.conv4a = nn.Conv2d(c3, c4, kernel_size=3, stride=1, padding=1)
+        self.conv4b = nn.Conv2d(c4, c4, kernel_size=3, stride=1, padding=1)
+
+        # Detector head
+        self.convPa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
+        self.convPb = nn.Conv2d(c5, 64, kernel_size=3, stride=1, padding=1)  # different from superpoint
+
+        # Descriptor Head.
+        self.convDa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
+        self.convDb = nn.Conv2d(c5, d1, kernel_size=1, stride=1, padding=0)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                if m.affine:
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+
+        _, _, h, w = x.shape
+        # encoder part
+        x = self.relu(self.conv1a(x))
+        x = self.relu(self.conv1b(x))
+        x = self.pool(x)
+
+        x = self.relu(self.conv2a(x))
+        x = self.relu(self.conv2b(x))
+        x = self.pool(x)
+
+        x = self.relu(self.conv3a(x))
+        x = self.relu(self.conv3b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv4a(x))
+        feature = self.relu(self.conv4b(x))
+
+        # detector head
+        cPa = self.relu(self.convPa(feature))
+        cPb = self.convPb(cPa)
+        heatmap = f.pixel_shuffle(cPb, upscale_factor=8)
+
+        # descriptor head
+        cDa = self.relu(self.convDa(feature))
+        cDb = self.convDb(cDa)
+
+        dn = torch.norm(cDb, p=2, dim=1, keepdim=True)
+        desp = cDb.div(dn)
+
+        return heatmap, desp
+
+
 class HardDetectionModule(nn.Module):
     def __init__(self, edge_threshold=5, nms_threshold=4):
         super(HardDetectionModule, self).__init__()
