@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from nets.megpoint_net import MegPointNet
 from nets.megpoint_net import STMegPointNet
 from nets.megpoint_net import Discriminator
-from nets.megpoint_net import MegPointHeatmap
+from nets.megpoint_net import MegPointShuffleHeatmap
 
 from data_utils.megpoint_dataset import AdaptionDataset, LabelGenerator
 from data_utils.coco_dataset import COCOMegPointAdaptionDataset
@@ -43,7 +43,7 @@ from utils.evaluation_tools import mAPCalculator
 from utils.utils import spatial_nms
 from utils.utils import DescriptorTripletLoss
 from utils.utils import Matcher
-from utils.utils import PointHeatmapMSELoss
+from utils.utils import PointHeatmapWeightedBCELoss
 
 
 class MagicPointHeatmapTrainer(MagicPointSynthetic):
@@ -51,14 +51,14 @@ class MagicPointHeatmapTrainer(MagicPointSynthetic):
     def __init__(self, params):
         super(MagicPointHeatmapTrainer, self).__init__(params=params)
 
-        self.point_loss = PointHeatmapMSELoss()
+        self.point_loss = PointHeatmapWeightedBCELoss(weight=200)
 
         # 重新初始化带l2正则项的优化器
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=1e-6)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.1)
 
     def _initialize_model(self):
-        self.model = MegPointHeatmap()
+        self.model = MegPointShuffleHeatmap()
 
         if self.multi_gpus:
             self.model = torch.nn.DataParallel(self.model)
@@ -130,6 +130,7 @@ class MagicPointHeatmapTrainer(MagicPointSynthetic):
             results = self.model(image)
 
             heatmap = results[0]
+            heatmap = torch.sigmoid(heatmap)
             heatmap = spatial_nms(heatmap)
             heatmap = heatmap.detach().cpu().numpy()[0, 0]
 
@@ -262,7 +263,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_model(self):
         # 初始化模型
-        model = MegPointHeatmap()
+        model = MegPointShuffleHeatmap()
         if self.multi_gpus:
             model = torch.nn.DataParallel(model)
         self.model = model.to(self.device)
@@ -270,7 +271,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
     def _initialize_loss(self):
         # 初始化loss算子
         # 初始化heatmap loss
-        self.point_loss = PointHeatmapMSELoss()
+        self.point_loss = PointHeatmapWeightedBCELoss()
 
         # 初始化描述子loss
         self.descriptor_loss = DescriptorTripletLoss(self.device)
@@ -418,6 +419,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             image_pair = image_pair*2./255. - 1.
 
             heatmap_pair, desp_pair = self.model(image_pair)
+            heatmap_pair = torch.sigmoid(heatmap_pair)  # 用BCEloss
             prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold*2+1))
 
             desp_pair = desp_pair.detach().cpu().numpy()
@@ -574,6 +576,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             image_pair = image_pair*2./255. - 1.
 
             heatmap_pair, desp_pair = self.model(image_pair)
+            heatmap_pair = torch.sigmoid(heatmap_pair)
             prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold*2+1))
 
             desp_pair = desp_pair.detach().cpu().numpy()
