@@ -120,8 +120,8 @@ class SyntheticHeatmapDataset(Dataset):
         self.height = params.height
         self.width = params.width
         self.downsample_scale = 1
-        self.sigma = 5
-        self.g_kernel_size = 31
+        self.sigma = 1  # 3
+        self.g_kernel_size = 1  # 15
         self.g_paddings = self.g_kernel_size // 2
         self.dataset_dir = params.synthetic_dataset_dir
         self.image_list, self.point_list = self._format_file_list()
@@ -472,55 +472,6 @@ class SyntheticSuperPointStatisticDataset(Dataset):
             return center_grid, warped_center_grid
         else:
             return warped_center_grid
-
-
-class SyntheticEncoderDecoderDataset(SyntheticTrainDataset):
-
-    def __init__(self, params):
-        super(SyntheticEncoderDecoderDataset, self).__init__(params=params)
-
-    def __getitem__(self, idx):
-
-        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
-        point = np.load(self.point_list[idx])
-
-        org_mask = np.ones_like(image, dtype=np.float)
-        if torch.rand([]).item() >= 0.1:
-            image, org_mask, point = self.homography_augmentation(image, point)
-            image = self.photometric_augmentation(image)
-
-        # 将亚像素精度处的点的位置去小数到整数
-        point = np.abs(np.floor(point)).astype(np.int)
-
-        # 将它们转换成tensor
-        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
-        image = image * 2. / 255. - 1.  # scale到[-1,1]之间
-        org_mask = torch.from_numpy(org_mask)
-        point = torch.from_numpy(point)
-
-        # 由点的位置生成训练所需label
-        label = self.convert_points_to_label(point).to(torch.long)
-        mask = torch.where(org_mask == 1, torch.ones_like(org_mask), torch.zeros_like(org_mask)).to(torch.float)
-
-        invalid_label = torch.ones_like(label) * 2
-        new_label = torch.where(mask == 1, label, invalid_label)
-        sample = {"image": image, "label": label, "mask": mask, "new_label": new_label}
-
-        return sample
-
-    def convert_points_to_label(self, points):
-        height = self.height
-        width = self.width
-        num_pt = points.shape[0]
-        label = torch.zeros((height*width))
-        if num_pt > 0:
-            points_h, points_w = torch.split(points, 1, dim=1)
-            points_idx = points_w + points_h * width
-            label = label.scatter_(dim=0, index=points_idx[:, 0], value=1.0).reshape((height, width))
-        else:
-            label = label.reshape((height, width))
-
-        return label
 
 
 class SyntheticValTestDataset(Dataset):
