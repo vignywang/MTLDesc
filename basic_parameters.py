@@ -41,6 +41,7 @@ class BasicParameters(object):
         self.nms_threshold = 4
 
         # HPatch validate/test relating params
+        self.homo_pred_mode = "RANSAC"
         self.detection_threshold = 0.005
         self.correct_epsilon = 3
         self.top_k = 1000
@@ -123,6 +124,7 @@ class BasicParameters(object):
         self.logger.info('learning rate is %.4f' % self.lr)
         self.logger.info('number worker is %d' % self.num_workers)
         self.logger.info('prefix is %s' % self.prefix)
+        self.logger.info("homography prediction mode: %s" % self.homo_pred_mode)
 
     @staticmethod
     def my_parser():
