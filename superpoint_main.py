@@ -95,6 +95,9 @@ class SuperPointParameters(BasicParameters):
         parser.add_argument("--loss_type", type=str, default='triplet')
         parser.add_argument("--output_type", type=str, default='float')
         parser.add_argument("--log_freq", type=int, default=100)
+        # test related
+        parser.add_argument("--run_mode", type=str, default="train")
+        parser.add_argument("--ckpt_file", type=str, default="")
 
         return parser.parse_args()
 
@@ -105,7 +108,11 @@ def main():
     params.initialize()
 
     trainer = SuperPoint(params)
-    trainer.train()
+
+    if params.run_mode == "train":
+        trainer.train()
+    elif params.run_mode == "test":
+        trainer.test_HPatch_float(params.ckpt_file)
 
     # debug use
     # ckpt_file = "/home/zhangyuyang/project/development/MegPoint/superpoint_ckpt/good_results/superpoint_triplet_0.0010_24_3_scale/model_49.pt"
