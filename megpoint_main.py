@@ -78,6 +78,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--detection_threshold", type=float, default=0.1)
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
+        parser.add_argument("--homo_pred_mode", type=str, default="RANSAC")
 
         return parser.parse_args()
 
