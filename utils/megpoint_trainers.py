@@ -162,6 +162,7 @@ class MegPointTrainerTester(object):
         self.nms_threshold = params.nms_threshold
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
+        self.homo_pred_mode = params.homo_pred_mode
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda !')
             self.device = torch.device('cuda:0')
@@ -471,9 +472,14 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 continue
 
             # 计算得到单应变换
-            pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
-                                                   matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
-
+            if self.homo_pred_mode == "RANSAC":
+                pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                       matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
+            elif self.homo_pred_mode == "LMEDS":
+                pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                       matched_point[1][:, np.newaxis, ::-1], cv.LMEDS)
+            else:
+                assert False
             if pred_homography is None:
                 print("skip this pair because no homo can be predicted!.")
                 skip += 1

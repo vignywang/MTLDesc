@@ -55,6 +55,7 @@ class TrainerTester(object):
         self.nms_threshold = params.nms_threshold
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
+        self.homo_pred_mode = params.homo_pred_mode
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda !')
             self.device = torch.device('cuda:0')
@@ -1055,7 +1056,7 @@ class SuperPoint(TrainerTester):
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
             # debug released mode use
             # image_pair /= 255.
-            image_pair = image_pair*2./255. - 1.
+            # image_pair = image_pair*2./255. - 1.
 
             _, desp_pair, prob_pair, _ = self.model(image_pair)
             prob_pair = f.pixel_shuffle(prob_pair, 8)
@@ -1092,9 +1093,14 @@ class SuperPoint(TrainerTester):
                                                  second_point, select_second_desp)
 
             # 计算得到单应变换
-            pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
-                                                   matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
-
+            if self.homo_pred_mode == "RANSAC":
+                pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                       matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
+            elif self.homo_pred_mode == "LMEDS":
+                pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                       matched_point[1][:, np.newaxis, ::-1], cv.LMEDS)
+            else:
+                assert False
             # 对单样本进行测评
             if image_type == 'illumination':
                 self.illum_repeat.update(first_point, second_point, gt_homography)
@@ -1222,10 +1228,18 @@ class SuperPoint(TrainerTester):
                                                   second_point, select_second_desp_b)
 
             # 计算得到单应变换
-            pred_homography_f, _ = cv.findHomography(matched_point_f[0][:, np.newaxis, ::-1],
-                                                     matched_point_f[1][:, np.newaxis, ::-1], cv.RANSAC)
-            pred_homography_b, _ = cv.findHomography(matched_point_b[0][:, np.newaxis, ::-1],
-                                                     matched_point_b[1][:, np.newaxis, ::-1], cv.RANSAC)
+            if self.homo_pred_mode == "RANSAC":
+                pred_homography_f, _ = cv.findHomography(matched_point_f[0][:, np.newaxis, ::-1],
+                                                         matched_point_f[1][:, np.newaxis, ::-1], cv.RANSAC)
+                pred_homography_b, _ = cv.findHomography(matched_point_b[0][:, np.newaxis, ::-1],
+                                                         matched_point_b[1][:, np.newaxis, ::-1], cv.RANSAC)
+            elif self.homo_pred_mode == "LMEDS":
+                pred_homography_f, _ = cv.findHomography(matched_point_f[0][:, np.newaxis, ::-1],
+                                                         matched_point_f[1][:, np.newaxis, ::-1], cv.LMEDS)
+                pred_homography_b, _ = cv.findHomography(matched_point_b[0][:, np.newaxis, ::-1],
+                                                         matched_point_b[1][:, np.newaxis, ::-1], cv.LMEDS)
+            else:
+                assert False
 
             # 对单样本进行测评
             if image_type == 'illumination':
