@@ -672,7 +672,7 @@ class COCOMegPointHeatmapTrainDataset(Dataset):
         # 3、得到匹配点的坐标，并计算匹配点与匹配点间的距离，太近的非匹配点不会作为负样本出现在loss中
         matched_grid = center_grid[nearest_idx, :]
         diff = np.linalg.norm(matched_grid[:, np.newaxis, :] - matched_grid[np.newaxis, :, :], axis=2)
-        nearest = diff < 16.
+        nearest = diff < 8.
 
         # 4、根据当前匹配的idx得到无效点的mask
         valid_mask = valid_mask.numpy().astype(np.bool)
