@@ -99,6 +99,7 @@ class SuperPointParameters(BasicParameters):
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
         parser.add_argument("--homo_pred_mode", type=str, default="RANSAC")
+        parser.add_argument("--match_mode", type=str, default="NN")  # choose from NN,NNT,NNR
 
         return parser.parse_args()
 

@@ -79,6 +79,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
         parser.add_argument("--homo_pred_mode", type=str, default="RANSAC")
+        parser.add_argument("--match_mode", type=str, default="NN")
 
         return parser.parse_args()
 
@@ -105,6 +106,8 @@ def main():
     elif params.run_mode == "test":
         megpoint_trainer.test(params.ckpt_file)
 
+    # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_01_0.0010_24/model_59.pt
+    # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_heatmap_00_0.0010_24/model_99.pt
 
 if __name__ == '__main__':
     main()
