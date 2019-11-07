@@ -96,6 +96,7 @@ class HomoAccuracyCalculator(object):
         accuracy = (diff <= self.epsilon).astype(np.float)
         self.sum_accuracy += accuracy
         self.sum_sample_num += 1
+        return accuracy.astype(np.bool)
 
     def _generate_corner(self):
         pt_00 = np.array((0, 0, 1), dtype=np.float)
@@ -113,9 +114,15 @@ class MeanMatchingAccuracy(object):
         self.sum_accuracy = 0
         self.sum_sample_num = 0
 
+        # 不匹配点间距离统计相关
+        self.sum_outlier_ratio = [0, 0, 0, 0, 0]
+
     def reset(self):
         self.sum_accuracy = 0
         self.sum_sample_num = 0
+
+        # 不匹配点间距离统计相关
+        self.sum_outlier_ratio = [0, 0, 0, 0, 0]
 
     def update(self, gt_homography, matched_point):
         """
@@ -146,12 +153,39 @@ class MeanMatchingAccuracy(object):
         dist_src = np.linalg.norm(tgt_point - project_src_point, axis=1)
         dist_tgt = np.linalg.norm(src_point - project_tgt_point, axis=1)
 
+        dist_all = np.concatenate((dist_src, dist_tgt))
+        self.statistic_dist(dist_all)
+
         correct_src = (dist_src <= self.epsilon)
         correct_tgt = (dist_tgt <= self.epsilon)
         correct = (correct_src & correct_tgt).astype(np.float)
         correct_ratio = np.mean(correct)
         self.sum_accuracy += correct_ratio
         self.sum_sample_num += 1
+
+    def statistic_dist(self, dist):
+        """
+        统计不匹配的点间距离的分布情况,分别统计[0,e/2], (e/2,e], (e,2e], (2e,4e], (4e,+)五个区间中分布的百分比
+        Args:
+            dist: [n,] n个不匹配点间的距离
+        """
+        count_0 = (dist <= 0.5*self.epsilon).astype(np.float)
+        count_1 = ((dist > 0.5*self.epsilon) & (dist <= self.epsilon)).astype(np.float)
+        count_2 = ((dist > self.epsilon) & (dist <= 2*self.epsilon)).astype(np.float)  # (e,2e]
+        count_3 = ((dist > 2*self.epsilon) & (dist <= 4*self.epsilon)).astype(np.float)  # (2e,4e]
+        count_4 = (dist > 4*self.epsilon).astype(np.float)  # (4e,+)
+
+        ratio_0 = np.mean(count_0)
+        ratio_1 = np.mean(count_1)
+        ratio_2 = np.mean(count_2)
+        ratio_3 = np.mean(count_3)
+        ratio_4 = np.mean(count_4)
+
+        self.sum_outlier_ratio[0] += ratio_0
+        self.sum_outlier_ratio[1] += ratio_1
+        self.sum_outlier_ratio[2] += ratio_2
+        self.sum_outlier_ratio[3] += ratio_3
+        self.sum_outlier_ratio[4] += ratio_4
 
     def average(self):
         """
@@ -160,6 +194,19 @@ class MeanMatchingAccuracy(object):
         if self.sum_sample_num == 0:
             return 0, 0, 0
         return self.sum_accuracy/self.sum_sample_num, self.sum_accuracy, self.sum_sample_num
+
+    def average_outlier(self):
+        """
+        返回outlier重投影误差在各个区间的比例
+        """
+        if self.sum_sample_num == 0:
+            return 0, 0, 0, 0, 0
+        avg_ratio_0 = self.sum_outlier_ratio[0] / self.sum_sample_num
+        avg_ratio_1 = self.sum_outlier_ratio[1] / self.sum_sample_num
+        avg_ratio_2 = self.sum_outlier_ratio[2] / self.sum_sample_num
+        avg_ratio_3 = self.sum_outlier_ratio[3] / self.sum_sample_num
+        avg_ratio_4 = self.sum_outlier_ratio[4] / self.sum_sample_num
+        return avg_ratio_0, avg_ratio_1, avg_ratio_2, avg_ratio_3, avg_ratio_4
 
 
 class RepeatabilityCalculator(object):
