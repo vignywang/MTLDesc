@@ -28,6 +28,8 @@ from utils.evaluation_tools import MeanMatchingAccuracy
 from utils.evaluation_tools import PointStatistics
 from utils.evaluation_tools import MovingAverage
 from utils.utils import spatial_nms, Matcher
+from utils.utils import NearestNeighborThresholdMatcher
+from utils.utils import NearestNeighborRatioMatcher
 from utils.utils import DescriptorHingeLoss
 from utils.utils import DescriptorTripletLoss
 from utils.utils import DescriptorTripletLogSigmoidLoss
@@ -56,6 +58,7 @@ class TrainerTester(object):
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
         self.homo_pred_mode = params.homo_pred_mode
+        self.match_mode = params.match_mode
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda !')
             self.device = torch.device('cuda:0')
@@ -367,7 +370,19 @@ class SuperPoint(TrainerTester):
         self.binary_matcher = Matcher('binary')
 
         if self.output_type == 'float':
-            self.general_matcher = Matcher('float')
+            if self.match_mode == "NN":
+                self.logger.info("Initialize matcher of Nearest Neighbor.")
+                self.general_matcher = Matcher('float')
+            elif self.match_mode == "NNT":
+                self.logger.info("Initialize matcher of Nearest Neighbor Threshold of %.2f." % 1.0)
+                self.general_matcher = NearestNeighborThresholdMatcher(threshold=1.0)
+            elif self.match_mode == "NNR":
+                self.logger.info("Initialize matcher of Nearest Neighbor Ratio of %.2f" % 0.9)
+                self.general_matcher = NearestNeighborRatioMatcher(ratio=0.9)
+            else:
+                self.logger.error("Unrecognized match_mode of %s!" % self.match_mode)
+                assert False
+
             if self.loss_type == 'pairwise_f':
                 self.descriptor_loss = DescriptorHingeLoss(device=self.device)
                 self._train_func = self._train_use_pairwise_loss
@@ -449,7 +464,19 @@ class SuperPoint(TrainerTester):
         self.logger.info("The correct thereshold: %d" % self.correct_epsilon)
         self.logger.info("The top k: %d" % self.top_k)
 
-        self.general_matcher = Matcher('float')
+        if self.match_mode == "NN":
+            self.logger.info("Initialize matcher of Nearest Neighbor.")
+            self.general_matcher = Matcher('float')
+        elif self.match_mode == "NNT":
+            self.logger.info("Initialize matcher of Nearest Neighbor Threshold of %.2f." % 1.0)
+            self.general_matcher = NearestNeighborThresholdMatcher(threshold=1.0)
+        elif self.match_mode == "NNR":
+            self.logger.info("Initialize matcher of Nearest Neighbor Ratio of %.2f" % 0.9)
+            self.general_matcher = NearestNeighborRatioMatcher(ratio=0.9)
+        else:
+            self.logger.error("Unrecognized match_mode of %s!" % self.match_mode)
+            assert False
+
         self._load_model_params(ckpt_file)
         self._test_model_general(0)
 
@@ -1421,8 +1448,8 @@ class SuperPoint(TrainerTester):
         # todo: 插值得到的描述子不再满足模值为1，强行归一化到模值为1，这里可能有问题
         condition = torch.eq(torch.norm(bilinear_desp, dim=1, keepdim=True), 0)
         interpolation_desp = torch.where(condition, nearest_desp, bilinear_desp)
-        # interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
-        # interpolation_desp = interpolation_desp/interpolation_norm
+        interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
+        interpolation_desp = interpolation_desp/interpolation_norm
 
         return interpolation_desp.numpy()
 

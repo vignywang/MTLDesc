@@ -43,6 +43,8 @@ from utils.evaluation_tools import mAPCalculator
 from utils.utils import spatial_nms
 from utils.utils import DescriptorTripletLoss
 from utils.utils import Matcher
+from utils.utils import NearestNeighborThresholdMatcher
+from utils.utils import NearestNeighborRatioMatcher
 from utils.utils import PointHeatmapWeightedBCELoss
 
 
@@ -163,6 +165,7 @@ class MegPointTrainerTester(object):
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
         self.homo_pred_mode = params.homo_pred_mode
+        self.match_mode = params.match_mode
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda !')
             self.device = torch.device('cuda:0')
@@ -279,7 +282,18 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_matcher(self):
         # 初始化匹配算子
-        self.general_matcher = Matcher('float')
+        if self.match_mode == "NN":
+            self.logger.info("Initialize matcher of Nearest Neighbor.")
+            self.general_matcher = Matcher('float')
+        elif self.match_mode == "NNT":
+            self.logger.info("Initialize matcher of Nearest Neighbor Threshold of %.2f." % 1.0)
+            self.general_matcher = NearestNeighborThresholdMatcher(threshold=1.0)
+        elif self.match_mode == "NNR":
+            self.logger.info("Initialize matcher of Nearest Neighbor Ratio of %.2f" % 0.9)
+            self.general_matcher = NearestNeighborRatioMatcher(ratio=0.9)
+        else:
+            self.logger.error("Unrecognized match_mode of %s!" % self.match_mode)
+            assert False
 
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
@@ -836,8 +850,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         # todo: 插值得到的描述子不再满足模值为1，强行归一化到模值为1，这里可能有问题
         condition = torch.eq(torch.norm(bilinear_desp, dim=1, keepdim=True), 0)
         interpolation_desp = torch.where(condition, nearest_desp, bilinear_desp)
-        # interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
-        # interpolation_desp = interpolation_desp/interpolation_norm
+        interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
+        interpolation_desp = interpolation_desp/interpolation_norm
 
         return interpolation_desp.numpy()
 
