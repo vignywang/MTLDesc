@@ -337,7 +337,6 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 desp_loss_val = desp_loss.item()
                 loss_val = loss.item()
 
-                self.summary_writer.add_histogram('descriptor', desp_pair)
                 self.logger.info(
                     "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
                     " one step cost %.4fs. " % (
