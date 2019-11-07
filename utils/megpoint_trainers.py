@@ -399,9 +399,13 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.view_mma.reset()
         self.point_statistics.reset()
 
+        self.illum_bad_mma.reset()
+        self.view_bad_mma.reset()
+
         start_time = time.time()
         count = 0
         skip = 0
+        bad = 0
 
         for i, data in enumerate(self.test_dataset):
             first_image = data['first_image']
@@ -487,13 +491,21 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # 对单样本进行测评
             if image_type == 'illumination':
                 self.illum_repeat.update(first_point, second_point, gt_homography)
-                self.illum_homo_acc.update(pred_homography, gt_homography)
+                correct = self.illum_homo_acc.update(pred_homography, gt_homography)
                 self.illum_mma.update(gt_homography, matched_point)
+
+                if not correct:
+                    self.illum_bad_mma.update(gt_homography, matched_point)
+                    bad += 1
 
             elif image_type == 'viewpoint':
                 self.view_repeat.update(first_point, second_point, gt_homography)
-                self.view_homo_acc.update(pred_homography, gt_homography)
+                correct = self.view_homo_acc.update(pred_homography, gt_homography)
                 self.view_mma.update(gt_homography, matched_point)
+
+                if not correct:
+                    self.view_bad_mma.update(gt_homography, matched_point)
+                    bad += 1
 
             else:
                 print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
@@ -513,20 +525,19 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         # 计算各自的重复率以及总的重复率
         illum_repeat, view_repeat, total_repeat = self._compute_total_metric(self.illum_repeat,
                                                                              self.view_repeat)
-        self.illum_repeat_mov.push(illum_repeat)
-        self.view_repeat_mov.push(view_repeat)
-
         # 计算估计的单应变换准确度
         illum_homo_acc, view_homo_acc, total_homo_acc = self._compute_total_metric(self.illum_homo_acc,
                                                                                    self.view_homo_acc)
-        self.illum_homo_acc_mov.push(illum_homo_acc)
-        self.view_homo_acc_mov.push(view_homo_acc)
-
         # 计算匹配的准确度
         illum_match_acc, view_match_acc, total_match_acc = self._compute_total_metric(self.illum_mma,
                                                                                       self.view_mma)
-        self.illum_mma_mov.push(illum_match_acc)
-        self.view_mma_mov.push(view_match_acc)
+
+        # 计算匹配外点的分布情况
+        illum_dis, view_dis = self._compute_match_outlier_distribution(self.illum_mma,
+                                                                       self.view_mma)
+
+        illum_bad_dis, view_bad_dis = self._compute_match_outlier_distribution(self.illum_bad_mma,
+                                                                               self.view_bad_mma)
 
         # 统计最终的检测点数目的平均值和方差
         point_avg, point_std = self.point_statistics.average()
@@ -540,6 +551,24 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
                          (illum_repeat, view_repeat, total_repeat))
         self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
+
+        # self.logger.info("Bad Illumination Matching Distribution:"
+        #                  " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+        #                  (illum_bad_dis[0], illum_bad_dis[1], illum_bad_dis[2],
+        #                   illum_bad_dis[3], illum_bad_dis[4]))
+        self.logger.info("Bad Viewpoint Matching Distribution:"
+                         " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+                         (view_bad_dis[0], view_bad_dis[1], view_bad_dis[2],
+                          view_bad_dis[3], view_bad_dis[4]))
+
+        # self.logger.info("Illumination Matching Distribution:"
+        #                  " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+        #                  (illum_dis[0], illum_dis[1], illum_dis[2],
+        #                   illum_dis[3], illum_dis[4]))
+        self.logger.info("Viewpoint Matching Distribution:"
+                         " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+                         (view_dis[0], view_dis[1], view_dis[2],
+                          view_dis[3], view_dis[4]))
 
     def _debug_show(self, heatmap, image, show=False):
         heatmap = np.clip(heatmap, 0, 1)
@@ -566,9 +595,13 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.view_mma.reset()
         self.point_statistics.reset()
 
+        self.illum_bad_mma.reset()
+        self.view_bad_mma.reset()
+
         start_time = time.time()
         count = 0
         skip = 0
+        bad = 0
 
         for i, data in enumerate(self.test_dataset):
             first_image = data['first_image']
@@ -625,13 +658,21 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # 对单样本进行测评
             if image_type == 'illumination':
                 self.illum_repeat.update(first_point, second_point, gt_homography)
-                self.illum_homo_acc.update(pred_homography, gt_homography)
+                correct = self.illum_homo_acc.update(pred_homography, gt_homography)
                 self.illum_mma.update(gt_homography, matched_point)
+
+                if not correct:
+                    self.illum_bad_mma.update(gt_homography, matched_point)
+                    bad += 1
 
             elif image_type == 'viewpoint':
                 self.view_repeat.update(first_point, second_point, gt_homography)
-                self.view_homo_acc.update(pred_homography, gt_homography)
+                correct = self.view_homo_acc.update(pred_homography, gt_homography)
                 self.view_mma.update(gt_homography, matched_point)
+
+                if not correct:
+                    self.view_bad_mma.update(gt_homography, matched_point)
+                    bad += 1
 
             else:
                 print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
@@ -666,6 +707,13 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.illum_mma_mov.push(illum_match_acc)
         self.view_mma_mov.push(view_match_acc)
 
+        # 计算匹配外点的分布情况
+        illum_dis, view_dis = self._compute_match_outlier_distribution(self.illum_mma,
+                                                                       self.view_mma)
+
+        illum_bad_dis, view_bad_dis = self._compute_match_outlier_distribution(self.illum_bad_mma,
+                                                                               self.view_bad_mma)
+
         # 统计最终的检测点数目的平均值和方差
         point_avg, point_std = self.point_statistics.average()
 
@@ -679,6 +727,24 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                          (illum_repeat, view_repeat, total_repeat))
         self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
 
+        # self.logger.info("Bad Illumination Matching Distribution:"
+        #                  " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+        #                  (illum_bad_dis[0], illum_bad_dis[1], illum_bad_dis[2],
+        #                   illum_bad_dis[3], illum_bad_dis[4]))
+        self.logger.info("Bad Viewpoint Matching Distribution:"
+                         " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+                         (view_bad_dis[0], view_bad_dis[1], view_bad_dis[2],
+                          view_bad_dis[3], view_bad_dis[4]))
+
+        # self.logger.info("Illumination Matching Distribution:"
+        #                  " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+        #                  (illum_dis[0], illum_dis[1], illum_dis[2],
+        #                   illum_dis[3], illum_dis[4]))
+        self.logger.info("Viewpoint Matching Distribution:"
+                         " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+                         (view_dis[0], view_dis[1], view_dis[2],
+                          view_dis[3], view_dis[4]))
+
         self.summary_writer.add_scalar("illumination/Homography_Accuracy", illum_homo_acc, epoch_idx)
         self.summary_writer.add_scalar("illumination/Mean_Matching_Accuracy", illum_match_acc, epoch_idx)
         self.summary_writer.add_scalar("illumination/Repeatability", illum_repeat, epoch_idx)
@@ -691,6 +757,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         illum_acc, illum_sum, illum_num = illum_metric.average()
         view_acc, view_sum, view_num = view_metric.average()
         return illum_acc, view_acc, (illum_sum+view_sum)/(illum_num+view_num+1e-4)
+
+    @staticmethod
+    def _compute_match_outlier_distribution(illum_metric, view_metric):
+        illum_distribution = illum_metric.average_outlier()
+        view_distribution = view_metric.average_outlier()
+        return illum_distribution, view_distribution
 
     def _generate_predict_point(self, prob, scale=None, top_k=0):
         point_idx = np.where(prob > self.detection_threshold)
@@ -795,6 +867,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         self.view_mma = MeanMatchingAccuracy(params.correct_epsilon)
         self.view_mma_mov = MovingAverage()
+
+        # 初始化专门用于估计的单应变换较差的点匹配情况统计的算子
+        self.view_bad_mma = MeanMatchingAccuracy(params.correct_epsilon)
+        self.illum_bad_mma = MeanMatchingAccuracy(params.correct_epsilon)
 
         # 初始化用于浮点型描述子的测试方法
         self.illum_homo_acc_f = HomoAccuracyCalculator(params.correct_epsilon,
