@@ -25,7 +25,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.ckpt_root = './megpoint_ckpt'
         self.log_root = './megpoint_log'
 
-        self.detection_threshold = 0.1
+        self.detection_threshold = 0.9
         self.dataset_dir = None
 
         # homography & photometric relating params using in training
@@ -75,7 +75,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--log_freq", type=int, default=50)
         parser.add_argument("--lr", type=float, default=0.001)
         parser.add_argument("--prefix", type=str, default='exp')
-        parser.add_argument("--detection_threshold", type=float, default=0.1)
+        parser.add_argument("--detection_threshold", type=float, default=0.9)
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
         parser.add_argument("--homo_pred_mode", type=str, default="RANSAC")
