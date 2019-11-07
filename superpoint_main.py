@@ -98,6 +98,7 @@ class SuperPointParameters(BasicParameters):
         # test related
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
+        parser.add_argument("--homo_pred_mode", type=str, default="RANSAC")
 
         return parser.parse_args()
 
