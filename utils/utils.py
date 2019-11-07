@@ -426,6 +426,91 @@ class Matcher(object):
         return dist_0_1
 
 
+class NearestNeighborThresholdMatcher(object):
+
+    def __init__(self, threshold=1.0):
+        self.threshold = threshold
+
+    def __call__(self, point_0, desp_0, point_1, desp_1):
+        dist_0_1 = self._compute_desp_dist(desp_0, desp_1)  # [n,m]
+        dist_1_0 = dist_0_1.transpose((1, 0))  # [m,n]
+        nearest_idx_0_1 = np.argmin(dist_0_1, axis=1)  # [n]
+        nearest_idx_1_0 = np.argmin(dist_1_0, axis=1)  # [m]
+        matched_src = []
+        matched_tgt = []
+
+        for i, idx_0_1 in enumerate(nearest_idx_0_1):
+            if i == nearest_idx_1_0[idx_0_1]:
+                m_dist = dist_0_1[i, idx_0_1]
+                if m_dist > self.threshold:
+                    continue
+                matched_src.append(point_0[i])
+                matched_tgt.append(point_1[idx_0_1])
+
+        if len(matched_src) <= 4:
+            print("There exist too little matches")
+            # assert False
+            return None
+        if len(matched_src) != 0:
+            matched_src = np.stack(matched_src, axis=0)
+            matched_tgt = np.stack(matched_tgt, axis=0)
+        return matched_src, matched_tgt
+
+    @staticmethod
+    def _compute_desp_dist(desp_0, desp_1):
+        # desp_0:[n,256], desp_1:[m,256]
+        square_norm_0 = (np.linalg.norm(desp_0, axis=1, keepdims=True)) ** 2  # [n,1]
+        square_norm_1 = (np.linalg.norm(desp_1, axis=1, keepdims=True).transpose((1, 0))) ** 2  # [1,m]
+        xty = np.matmul(desp_0, desp_1.transpose((1, 0)))  # [n,m]
+        dist = np.sqrt((square_norm_0 + square_norm_1 - 2 * xty + 1e-4))
+        return dist
+
+
+class NearestNeighborRatioMatcher(object):
+
+    def __init__(self, ratio=0.7):
+        self.ratio = ratio
+
+    def __call__(self, point_0, desp_0, point_1, desp_1):
+        dist_0_1 = self._compute_desp_dist(desp_0, desp_1)  # [n,m]
+        dist_1_0 = dist_0_1.transpose((1, 0))  # [m,n]
+        nearest_idx_0_1 = np.argmin(dist_0_1, axis=1)  # [n]
+        nearest_idx_1_0 = np.argmin(dist_1_0, axis=1)  # [m]
+
+        second_nearest_idx_0_1 = np.argpartition(dist_0_1, kth=1, axis=1)[:, 1]
+
+        matched_src = []
+        matched_tgt = []
+
+        for i, idx_0_1 in enumerate(nearest_idx_0_1):
+            if i == nearest_idx_1_0[idx_0_1]:
+                s_idx_0_1 = second_nearest_idx_0_1[i]
+                m_dist = dist_0_1[i, idx_0_1]
+                sm_dist = dist_0_1[i, s_idx_0_1]
+                if m_dist / sm_dist >= self.ratio:
+                    continue
+                matched_src.append(point_0[i])
+                matched_tgt.append(point_1[idx_0_1])
+
+        if len(matched_src) <= 4:
+            print("There exist too little matches")
+            # assert False
+            return None
+        if len(matched_src) != 0:
+            matched_src = np.stack(matched_src, axis=0)
+            matched_tgt = np.stack(matched_tgt, axis=0)
+        return matched_src, matched_tgt
+
+    @staticmethod
+    def _compute_desp_dist(desp_0, desp_1):
+        # desp_0:[n,256], desp_1:[m,256]
+        square_norm_0 = (np.linalg.norm(desp_0, axis=1, keepdims=True)) ** 2  # [n,1]
+        square_norm_1 = (np.linalg.norm(desp_1, axis=1, keepdims=True).transpose((1, 0))) ** 2  # [1,m]
+        xty = np.matmul(desp_0, desp_1.transpose((1, 0)))  # [n,m]
+        dist = np.sqrt((square_norm_0 + square_norm_1 - 2 * xty + 1e-4))
+        return dist
+
+
 class DescriptorTripletLogSigmoidLoss(object):
 
     def __init__(self, device):
