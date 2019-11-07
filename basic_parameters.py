@@ -45,6 +45,7 @@ class BasicParameters(object):
         self.detection_threshold = 0.005
         self.correct_epsilon = 3
         self.top_k = 1000
+        self.match_mode = "NN"  # choose from NN, NNT, NNR
 
         # Running relating params
         self.run_mode = 'train'
