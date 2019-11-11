@@ -116,6 +116,40 @@ class SuperPointNetFloat(BasicSuperPointNet):
         return logit, desc, prob, None
 
 
+class SuperPointNetVisualize(BasicSuperPointNet):
+
+    def __init__(self):
+        super(SuperPointNetVisualize, self).__init__()
+
+    def forward(self, x):
+        x = self.relu(self.conv1a(x))
+        x = self.relu(self.conv1b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv2a(x))
+        x = self.relu(self.conv2b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv3a(x))
+        x = self.relu(self.conv3b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv4a(x))
+        x = self.relu(self.conv4b(x))
+
+        # detect head
+        cPa = self.relu(self.convPa(x))
+        logit = self.convPb(cPa)
+        prob = self.softmax(logit)[:, :-1, :, :]  # todo
+
+        # descriptor head
+        cDa = self.relu(self.convDa(x))
+        feature = self.convDb(cDa)
+
+        dn = torch.norm(feature, p=2, dim=1, keepdim=True)
+        desc = feature.div(dn)
+        # desc = hash_layer(feature)
+
+        return logit, desc, prob
+
+
 class SuperPointNetBinary(BasicSuperPointNet):
 
     def __init__(self):

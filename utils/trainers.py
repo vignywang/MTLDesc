@@ -21,6 +21,7 @@ from nets.superpoint_net import MagicPointNet
 from nets.superpoint_net import SuperPointNetFloat
 from nets.superpoint_net import SuperPointNetBinary
 from nets.superpoint_net import SuperPointNetTanh
+from nets.superpoint_net import SuperPointNetVisualize  # todo
 from utils.evaluation_tools import mAPCalculator
 from utils.evaluation_tools import HomoAccuracyCalculator
 from utils.evaluation_tools import RepeatabilityCalculator
@@ -942,6 +943,10 @@ class SuperPoint(TrainerTester):
                         'dist/positive_dist', positive_dist, int(i+self.epoch_length*epoch_idx))
                     self.summary_writer.add_scalar(
                         'dist/negative_dist', negative_dist, int(i+self.epoch_length*epoch_idx))
+
+                # 存储模型结构
+                # self.summary_writer.add_graph(SuperPointNetVisualize(), input_to_model=torch.rand((1, 1, 240, 320)),
+                #                               operator_export_type="RAW")
 
                 self.summary_writer.add_histogram('descriptor', desp_pair)
                 self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
