@@ -23,6 +23,7 @@ from data_utils.coco_dataset import COCOMegPointAdversarialDataset
 from data_utils.coco_dataset import COCOMegPointSelfTrainingDataset
 from data_utils.coco_dataset import COCOMegPointSelfTrainingOnlyImageDataset
 from data_utils.coco_dataset import COCOMegPointHeatmapTrainDataset
+from data_utils.coco_dataset import COCOMegPointNoGtDataset
 from data_utils.coco_dataset import COCORawDataset
 from data_utils.synthetic_dataset import SyntheticTrainDataset
 from data_utils.synthetic_dataset import SyntheticHeatmapDataset
@@ -46,6 +47,7 @@ from utils.utils import Matcher
 from utils.utils import NearestNeighborThresholdMatcher
 from utils.utils import NearestNeighborRatioMatcher
 from utils.utils import PointHeatmapWeightedBCELoss
+from utils.utils import PointHeatmapUnsuperivsedLoss
 
 
 class MagicPointHeatmapTrainer(MagicPointSynthetic):
@@ -164,8 +166,11 @@ class MegPointTrainerTester(object):
         self.nms_threshold = params.nms_threshold
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
+
+        self.train_mode = params.train_mode
         self.homo_pred_mode = params.homo_pred_mode
         self.match_mode = params.match_mode
+
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda !')
             self.device = torch.device('cuda:0')
@@ -245,13 +250,20 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self._initialize_dataset()
         self._initialize_model()
         self._initialize_optimizer()
+        self._initialize_train_func()
         self._initialize_loss()
         self._initialize_matcher()
         self._initialize_test_calculator(params)
 
     def _initialize_dataset(self):
         # 初始化数据集
-        self.train_dataset = COCOMegPointHeatmapTrainDataset(self.params)
+        if self.train_mode == "with_gt":
+            self.train_dataset = COCOMegPointHeatmapTrainDataset(self.params)
+        elif self.train_mode == "without_gt":
+            self.train_dataset = COCOMegPointNoGtDataset(self.params)
+        else:
+            assert False
+
         self.train_dataloader = DataLoader(
             dataset=self.train_dataset,
             batch_size=self.batch_size,
@@ -274,8 +286,13 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_loss(self):
         # 初始化loss算子
-        # 初始化heatmap loss
-        self.point_loss = PointHeatmapWeightedBCELoss()
+        if self.train_mode == "with_gt":
+            # 初始化heatmap loss
+            self.point_loss = PointHeatmapWeightedBCELoss()
+        elif self.train_mode == "without_gt":
+            self.point_loss = PointHeatmapUnsuperivsedLoss()
+        else:
+            assert False
 
         # 初始化描述子loss
         self.descriptor_loss = DescriptorTripletLoss(self.device)
@@ -295,6 +312,17 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             self.logger.error("Unrecognized match_mode of %s!" % self.match_mode)
             assert False
 
+    def _initialize_train_func(self):
+        if self.train_mode == "with_gt":
+            self.logger.info("Initialize training func mode of [with_gt].")
+            self._train_func = self._train_with_gt
+        elif self.train_mode == "without_gt":
+            self.logger.info("Initialize training func mode of [without_gt]")
+            self._train_func = self._train_without_gt
+        else:
+            self.logger.error("Wrong train_mode: %s" % self.train_mode)
+            assert False
+
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
         self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr)
@@ -305,6 +333,13 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.logger.info("-----------------------------------------------------")
         self.logger.info("Training epoch %2d begin:" % epoch_idx)
 
+        self._train_func(epoch_idx)
+
+        self.logger.info("Training epoch %2d done." % epoch_idx)
+        self.logger.info("-----------------------------------------------------")
+
+    def _train_with_gt(self, epoch_idx):
+        self.model.train()
         stime = time.time()
         for i, data in enumerate(self.train_dataloader):
 
@@ -368,8 +403,91 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         else:
             torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
 
-        self.logger.info("Training epoch %2d done." % epoch_idx)
-        self.logger.info("-----------------------------------------------------")
+    def _train_without_gt(self, epoch_idx):
+        self.model.train()
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data['image'].to(self.device)
+            point_mask = data["point_mask"].to(self.device).unsqueeze(dim=1)
+            homo_s2t = data["homography_s2t"].to(self.device)
+
+            warped_image = data['warped_image'].to(self.device)
+            warped_point_mask = data["warped_point_mask"].to(self.device).unsqueeze(dim=1)
+            homo_t2s = data["homography_t2s"].to(self.device)
+
+            matched_idx = data['matched_idx'].to(self.device)
+            matched_valid = data['matched_valid'].to(self.device)
+            not_search_mask = data['not_search_mask'].to(self.device)
+
+            shape = image.shape
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            heatmap_pred_pair, desp_pair = self.model(image_pair)
+            heatmap_0, heatmap_1 = torch.chunk(heatmap_pred_pair, 2, dim=0)
+
+            point_loss, point_peak_loss, point_sim_loss = self.point_loss(
+                heatmap_0, heatmap_1, point_mask, warped_point_mask, homo_s2t, homo_t2s)
+
+            desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
+
+            desp_loss = self.descriptor_loss(
+                desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
+
+            loss = point_loss + desp_loss
+
+            if torch.isnan(point_loss):
+                self.logger.error("point_loss is nan!")
+
+            if torch.isnan(point_peak_loss):
+                self.logger.error("point_peak_loss is nan!")
+
+            if torch.isnan(point_sim_loss):
+                self.logger.error("point_sim_loss is nan!")
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            # debug use
+            if i == 90:
+                a = 3
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                point_loss_val = point_loss.item()
+                point_peak_loss_val = point_peak_loss.item()
+                point_sim_loss_val = point_sim_loss.item()
+                desp_loss_val = desp_loss.item()
+                loss_val = loss.item()
+
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: "
+                    "loss=%.4f,"
+                    "point_loss=%.4f,"
+                    "point_peak_loss=%.4f,"
+                    "point_sim_loss=%.4f,"
+                    "desp_loss = %.4f,"
+                    "%.4fs/step. " % (
+                        epoch_idx, i, self.epoch_length,
+                        loss_val,
+                        point_loss_val,
+                        point_peak_loss_val,
+                        point_sim_loss_val,
+                        desp_loss_val,
+                        (time.time() - stime) / self.params.log_freq,
+                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
 
     def _validate_one_epoch(self, epoch_idx):
         self.logger.info("*****************************************************")
