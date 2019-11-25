@@ -540,6 +540,104 @@ class DescriptorTripletLogSigmoidLoss(object):
         return triplet_loss
 
 
+class PointHeatmapUnsuperivsedLoss(object):
+
+    def __init__(self, kernel_size=16):
+        self.kernel_size = kernel_size
+        self.stride = kernel_size // 2
+        self.sim_weight = 0.1
+
+        self.max_pool = torch.nn.MaxPool2d(kernel_size=self.kernel_size, stride=self.stride, padding=0)
+        self.avg_pool = torch.nn.AvgPool2d(kernel_size=self.kernel_size, stride=self.stride, padding=0)
+
+    def __call__(self, src_heatmap, tgt_heatmap, src_mask, tgt_mask, homo_t2s, homo_s2t):
+        """
+        求解自监督的heatmap局部最大以及一致性loss
+        Args:
+            src_heatmap: [bt,1,h,w]
+            tgt_heatmap: [bt,1,h,w]
+            homo_t2s: [bt,3,3] 从tgt->src的单应变换
+            homo_s2t: [bt,3,3] 从src->tgt的单应变换
+
+        Returns:
+            loss:
+        """
+        src_heatmap = torch.sigmoid(src_heatmap)
+        tgt_heatmap = torch.sigmoid(tgt_heatmap)
+        cat_heatmap = torch.cat((src_heatmap, tgt_heatmap), dim=0)
+        cat_mask = torch.cat((src_mask, tgt_mask), dim=0)
+
+        heatmap_max = self.max_pool(cat_heatmap)
+        heatmap_avg = self.avg_pool(cat_heatmap)
+        cat_mask = self.avg_pool(cat_mask)
+        cat_mask = torch.where(cat_mask > 0.95, torch.ones_like(cat_mask), torch.zeros_like(cat_mask))
+
+        # 计算峰值loss
+        loss_peak = torch.sum((heatmap_max - heatmap_avg) * cat_mask, dim=(2, 3))
+        valid_num = torch.sum(cat_mask, dim=(2, 3))
+        loss_peak = loss_peak / (valid_num+1)
+        loss_peak = 1. - torch.mean(loss_peak)
+
+        # 计算相似性loss
+        loss_similarity_0 = self._compute_similarity_loss(tgt_heatmap, src_heatmap, homo_t2s)
+        loss_similarity_1 = self._compute_similarity_loss(src_heatmap, tgt_heatmap, homo_s2t)
+        loss_similarity = 0.5 * (loss_similarity_0 + loss_similarity_1)
+
+        loss_total = loss_peak + self.sim_weight * loss_similarity
+        return loss_total, loss_peak, loss_similarity
+
+    def _compute_similarity_loss(self, heatmap_0, heatmap_1, homo_021):
+        warped_heatmap_1 = interpolation(heatmap_0, homo_021)
+        warped_heatmap_1 = pixel_unshuffle(warped_heatmap_1, self.kernel_size)
+        heatmap_1 = pixel_unshuffle(heatmap_1, self.kernel_size)
+
+        warped_valid = interpolation(torch.ones_like(heatmap_0), homo_021)
+        warped_valid = warped_valid > 1e-4
+        warped_valid = pixel_unshuffle(warped_valid, self.kernel_size)
+        warped_valid = torch.all(warped_valid, dim=1).to(torch.float)
+        valid_num = torch.sum(warped_valid, dim=(1, 2))
+
+        # 计算l1_loss
+        just_abs = torch.abs(warped_heatmap_1 - heatmap_1)
+        sum_abs = torch.sum(just_abs, dim=1)
+        sum_abs_valid = sum_abs * warped_valid
+        sum_spatial = torch.sum(sum_abs_valid, dim=(1, 2))
+        loss_similarity = torch.mean(sum_spatial/(valid_num + 1))
+
+        # if torch.isnan(loss_similarity):
+        #     loss_similarity = 0
+
+        # 计算cos_loss
+        # warped_heatmap_1 = warped_heatmap_1 / (torch.norm(warped_heatmap_1, dim=1, keepdim=True) + 1e-6)
+        # heatmap_1 = heatmap_1 / (torch.norm(heatmap_1, dim=1, keepdim=True) + 1e-6)
+
+        # loss_similarity = torch.sum(warped_heatmap_1*heatmap_1, dim=1) * warped_valid
+        # loss_similarity = torch.sum(loss_similarity, dim=(1, 2))/valid_num
+        # loss_similarity = 1. - torch.mean(loss_similarity)
+
+        return loss_similarity
+
+
+def pixel_unshuffle(tensor, scale):
+    """
+    将tensor中的块unshuffle到channel中，[bt,c,h,w] -> [bt,c*(r**2),h/r,w/r]
+    Args:
+        tensor: [bt,c,h,w]
+        scale: 常数
+
+    Returns:
+        unshuffle_tensor : [bt,c*(scales**2),h/scale,w/scale]
+
+    """
+    b, c, h, w = tensor.shape
+    out_channel = c * (scale ** 2)
+    out_h = h // scale
+    out_w = w // scale
+    tensor = tensor.contiguous().view(b, c, out_h, scale, out_w, scale)
+    unshuffle_tensor = tensor.permute(0, 1, 3, 5, 2, 4).contiguous().view(b, out_channel, out_h, out_w)
+    return unshuffle_tensor
+
+
 class PointHeatmapMSELoss(object):
 
     def __init__(self):
@@ -645,8 +743,8 @@ def interpolation(image, homo):
 
     warped_coords = torch.bmm(inv_homo.unsqueeze(dim=1).repeat(1, height * width, 1, 1).reshape((-1, 3, 3)),
                               org_coords.reshape((-1, 3, 1))).squeeze().reshape((bt, height * width, 3))
-    warped_coords_x = warped_coords[:, :, 0] / warped_coords[:, :, 2]
-    warped_coords_y = warped_coords[:, :, 1] / warped_coords[:, :, 2]
+    warped_coords_x = warped_coords[:, :, 0] / (warped_coords[:, :, 2] + 1e-5)
+    warped_coords_y = warped_coords[:, :, 1] / (warped_coords[:, :, 2] + 1e-5)
 
     x0 = torch.floor(warped_coords_x)
     x1 = x0 + 1.
@@ -679,3 +777,12 @@ def interpolation(image, homo):
     )
 
     return bilinear_img
+
+
+if __name__ == "__main__":
+    test_tensor = torch.tensor(((1, 1, 2, 2), (1, 1, 2, 2))).unsqueeze(dim=0).unsqueeze(dim=0)
+    print(test_tensor)
+    test_tensor = pixel_unshuffle(test_tensor, 2)
+    print(test_tensor[0,:,0,1])
+
+
