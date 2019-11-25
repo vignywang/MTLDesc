@@ -28,6 +28,8 @@ class MegPointHeatmapParameters(BasicParameters):
         self.detection_threshold = 0.9
         self.dataset_dir = None
 
+        self.train_mode = "with_gt"
+
         # homography & photometric relating params using in training
         self.homography_params = {
             'patch_ratio': 0.8,  # 0.8,  # 0.9,
@@ -76,6 +78,8 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--lr", type=float, default=0.001)
         parser.add_argument("--prefix", type=str, default='exp')
         parser.add_argument("--detection_threshold", type=float, default=0.9)
+
+        parser.add_argument("--train_mode", type=str, default="with_gt")  # with_gt & without_gt
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
         parser.add_argument("--homo_pred_mode", type=str, default="RANSAC")
@@ -89,6 +93,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.logger.info("heatmap important params:")
 
         self.logger.info("dataset_dir: %s" % self.dataset_dir)
+        self.logger.info("train mode: %s" % self.train_mode)
 
         self.logger.info("------------------------------------------")
 
