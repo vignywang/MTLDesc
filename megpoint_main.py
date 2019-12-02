@@ -29,6 +29,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.dataset_dir = None
 
         self.train_mode = "with_gt"
+        self.detection_mode = "use_network"
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -79,7 +80,8 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--prefix", type=str, default='exp')
         parser.add_argument("--detection_threshold", type=float, default=0.9)
 
-        parser.add_argument("--train_mode", type=str, default="with_gt")  # with_gt & without_gt
+        parser.add_argument("--train_mode", type=str, default="with_gt")  # with_gt or without_gt
+        parser.add_argument("--detection_mode", type=str, default="use_network")  # use_network or use_sift
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
         parser.add_argument("--homo_pred_mode", type=str, default="RANSAC")
