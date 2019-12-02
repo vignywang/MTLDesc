@@ -155,8 +155,12 @@ class MegPointTrainerTester(object):
         self.correct_epsilon = params.correct_epsilon
 
         self.train_mode = params.train_mode
+        self.detection_mode = params.detection_mode
         self.homo_pred_mode = params.homo_pred_mode
         self.match_mode = params.match_mode
+
+        # todo:
+        self.sift = cv.xfeatures2d.SIFT_create(1000)
 
         if torch.cuda.is_available():
             self.logger.info('gpu is available, set device to cuda !')
@@ -553,8 +557,19 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             second_prob = prob_pair[1, 0]
 
             # 得到对应的预测点
-            first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
-            second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+            if self.detection_mode == "use_network":
+                first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+                second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+            elif self.detection_mode == "use_sift":
+                first_point_cv, _ = self.sift.detectAndCompute(first_image, None)
+                second_point_cv, _ = self.sift.detectAndCompute(second_image, None)
+                first_point_num = len(first_point_cv)
+                second_point_num = len(second_point_cv)
+                first_point = self._cvpoint2numpy(first_point_cv)
+                second_point = self._cvpoint2numpy(second_point_cv)
+            else:
+                self.logger.error("unrecognized detection_mode: %s" % self.detection_mode)
+                assert False
 
             # debug use
             # first_image, second_image = torch.chunk(image_pair, 2, dim=0)
@@ -573,6 +588,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # cv.imwrite("/home/zhangyuyang/tmp_images/megpoint/image_%03d.jpg" % i, image_point)
             # heatmap_image_point = np.concatenate((heatmap_image, image_point), axis=0)
             # cv.imshow("all", heatmap_image_point)
+            # cv.imshow("image_point", image_point)
             # cv.waitKey()
 
             if first_point_num <= 4 or second_point_num <= 4:
@@ -906,6 +922,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         if scale is not None:
             point = point*scale
         return point, point_num
+
+    def _cvpoint2numpy(self, point_cv):
+        """将opencv格式的特征点转换成numpy数组"""
+        point_list = []
+        for pt_cv in point_cv:
+            point = np.array((pt_cv.pt[1], pt_cv.pt[0]))
+            point_list.append(point)
+        point_np = np.stack(point_list, axis=0)
+        return point_np
 
     def _generate_predict_descriptor(self, point, desp):
         point = torch.from_numpy(point).to(torch.float)  # 由于只有pytorch有gather的接口，因此将点调整为pytorch的格式
