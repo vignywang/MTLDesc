@@ -7,6 +7,7 @@ import numpy as np
 
 from basic_parameters import BasicParameters
 from utils.megpoint_trainers import MegPointHeatmapTrainer
+from utils.utils import generate_testing_file
 
 
 def setup_seed():
@@ -24,10 +25,12 @@ class MegPointHeatmapParameters(BasicParameters):
         super(MegPointHeatmapParameters, self).__init__()
         self.ckpt_root = './megpoint_ckpt'
         self.log_root = './megpoint_log'
+        self.ckpt_folder = ""
 
         self.detection_threshold = 0.9
         self.dataset_dir = None
 
+        self.network_arch = "baseline"
         self.train_mode = "with_gt"
         self.detection_mode = "use_network"
 
@@ -80,10 +83,12 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--prefix", type=str, default='exp')
         parser.add_argument("--detection_threshold", type=float, default=0.9)
 
+        parser.add_argument("--network_arch", type=str, default="baseline")  # 目前为两种 baseline or resnet50
         parser.add_argument("--train_mode", type=str, default="with_gt")  # with_gt or without_gt
         parser.add_argument("--detection_mode", type=str, default="use_network")  # use_network or use_sift
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
+        parser.add_argument("--ckpt_folder", type=str, default="")
         parser.add_argument("--homo_pred_mode", type=str, default="RANSAC")
         parser.add_argument("--match_mode", type=str, default="NN")
 
@@ -96,6 +101,7 @@ class MegPointHeatmapParameters(BasicParameters):
 
         self.logger.info("dataset_dir: %s" % self.dataset_dir)
         self.logger.info("train mode: %s" % self.train_mode)
+        self.logger.info("network_arch: %s" % self.network_arch)
 
         self.logger.info("------------------------------------------")
 
@@ -112,9 +118,14 @@ def main():
         megpoint_trainer.train()
     elif params.run_mode == "test":
         megpoint_trainer.test(params.ckpt_file)
+    elif params.run_mode == "test_folder":
+        models = generate_testing_file(params.ckpt_folder)
+        for m in models:
+            megpoint_trainer.test(m)
 
     # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_01_0.0010_24/model_59.pt
     # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_heatmap_00_0.0010_24/model_99.pt
+    # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_residual_0.0010_16/model_59.pt
 
 if __name__ == '__main__':
     main()
