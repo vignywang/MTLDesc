@@ -1,10 +1,19 @@
 #
 # Created by ZhangYuyang on 2019/8/14
 #
+import os
+from glob import glob
+
 import cv2 as cv
 import numpy as np
 import torch
 import torch.nn.functional as f
+
+
+def generate_testing_file(folder, prefix="model"):
+    models = glob(os.path.join(folder, prefix + "_*.pt"))
+    models = sorted(models)
+    return models
 
 
 def compute_batched_dist(x, y, hamming=False):
