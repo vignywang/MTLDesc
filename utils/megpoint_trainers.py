@@ -13,6 +13,7 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
 from nets.megpoint_net import MegPointShuffleHeatmap
+from nets.megpoint_net import MegPointResidualShuffleHeatmap
 
 from data_utils.coco_dataset import COCOMegPointHeatmapTrainDataset
 from data_utils.coco_dataset import COCOMegPointNoGtDataset
@@ -154,6 +155,7 @@ class MegPointTrainerTester(object):
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
 
+        self.network_arch = params.network_arch
         self.train_mode = params.train_mode
         self.detection_mode = params.detection_mode
         self.homo_pred_mode = params.homo_pred_mode
@@ -270,7 +272,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_model(self):
         # 初始化模型
-        model = MegPointShuffleHeatmap()
+        if self.network_arch == "baseline":
+            self.logger.info("Initialize network arch : ShuffleHeatmap")
+            model = MegPointShuffleHeatmap()
+        elif self.network_arch == "residual":
+            self.logger.info("Initialize network arch : Residual+ShuffleHeatmap")
+            model = MegPointResidualShuffleHeatmap()
+        else:
+            self.logger.error("unrecognized network_arch:%s" % self.network_arch)
+            assert False
         if self.multi_gpus:
             model = torch.nn.DataParallel(model)
         self.model = model.to(self.device)
@@ -305,8 +315,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_train_func(self):
         if self.train_mode == "with_gt":
-            self.logger.info("Initialize training func mode of [with_gt].")
-            self._train_func = self._train_with_gt
+            if self.network_arch == "baseline":
+                self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
+                self._train_func = self._train_with_gt
+            elif self.network_arch == "residual":
+                self.logger.info("Initialize training func mode of [with_residual] with residual network.")
+                self._train_func = self._train_with_residual
         elif self.train_mode == "without_gt":
             self.logger.info("Initialize training func mode of [without_gt]")
             self._train_func = self._train_without_gt
@@ -384,6 +398,78 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                         loss_val,
                         point_loss_val,
                         desp_loss_val,
+                        (time.time() - stime) / self.params.log_freq,
+                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
+    def _train_with_residual(self, epoch_idx):
+        self.model.train()
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data['image'].to(self.device)
+            heatmap_gt = data['heatmap'].to(self.device)
+            point_mask = data['point_mask'].to(self.device)
+
+            warped_image = data['warped_image'].to(self.device)
+            warped_heatmap_gt = data['warped_heatmap'].to(self.device)
+            warped_point_mask = data['warped_point_mask'].to(self.device)
+
+            matched_idx = data['matched_idx'].to(self.device)
+            matched_valid = data['matched_valid'].to(self.device)
+            not_search_mask = data['not_search_mask'].to(self.device)
+
+            shape = image.shape
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
+            point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
+            heatmap_pred_pair, desp_deep_pair, desp_shallow_pair = self.model(image_pair)
+            heatmap_pred_pair = heatmap_pred_pair.squeeze()
+
+            point_loss = self.point_loss(heatmap_pred_pair, heatmap_gt_pair, point_mask_pair)
+
+            desp_deep_0, desp_deep_1 = torch.split(desp_deep_pair, shape[0], dim=0)
+            desp_shallow_0, desp_shallow_1 = torch.split(desp_shallow_pair, shape[0], dim=0)
+
+            desp_deep_loss = self.descriptor_loss(
+                desp_deep_0, desp_deep_1, matched_idx, matched_valid, not_search_mask)
+
+            desp_shallow_loss = self.descriptor_loss(
+                desp_shallow_0, desp_shallow_1, matched_idx, matched_valid, not_search_mask)
+
+            loss = point_loss + desp_deep_loss + desp_shallow_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                point_loss_val = point_loss.item()
+                desp_deep_loss_val = desp_deep_loss.item()
+                desp_shallow_loss_val = desp_shallow_loss.item()
+                loss_val = loss.item()
+
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_deep_loss = %.4f, "
+                    "desp_shallow_loss = %.4f"
+                    " one step cost %.4fs. " % (
+                        epoch_idx, i, self.epoch_length,
+                        loss_val,
+                        point_loss_val,
+                        desp_deep_loss_val,
+                        desp_shallow_loss_val,
                         (time.time() - stime) / self.params.log_freq,
                     ))
                 stime = time.time()
@@ -545,7 +631,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
             image_pair = image_pair*2./255. - 1.
 
-            heatmap_pair, desp_pair = self.model(image_pair)
+            if self.network_arch == "residual":
+                heatmap_pair, desp_pair, _ = self.model(image_pair)
+            else:
+                heatmap_pair, desp_pair = self.model(image_pair)
+
             heatmap_pair = torch.sigmoid(heatmap_pair)  # 用BCEloss
             prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold*2+1))
 
@@ -748,7 +838,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
             image_pair = image_pair*2./255. - 1.
 
-            heatmap_pair, desp_pair = self.model(image_pair)
+            if self.network_arch == "residual":
+                heatmap_pair, desp_pair, _ = self.model(image_pair)
+            else:
+                heatmap_pair, desp_pair = self.model(image_pair)
+
             heatmap_pair = torch.sigmoid(heatmap_pair)
             prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold*2+1))
 
