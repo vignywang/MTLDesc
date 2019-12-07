@@ -376,7 +376,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             elif self.train_mode == "with_precise_gt":
                 matched_coords = data["matched_coords"].to(self.device)
                 desp_1 = self._generate_batched_predict_descriptor(matched_coords, desp_1)
-                desp_loss = self.descriptor_loss(desp_0, desp_1, matched_valid)
+                desp_loss = self.descriptor_loss(desp_0, desp_1, matched_valid, not_search_mask)
             else:
                 assert False
 
