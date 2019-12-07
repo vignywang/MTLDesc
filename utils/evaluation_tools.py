@@ -86,7 +86,7 @@ class HomoAccuracyCalculator(object):
             return 0, 0, 0
         return self.sum_accuracy / self.sum_sample_num, self.sum_accuracy, self.sum_sample_num
 
-    def update(self, pred_homography, gt_homography):
+    def update(self, pred_homography, gt_homography, return_diff=False):
         warped_corner_by_pred = np.matmul(pred_homography, self.corner[:, :, np.newaxis])[:, :, 0]
         warped_corner_by_gt = np.matmul(gt_homography, self.corner[:, :, np.newaxis])[:, :, 0]
         warped_corner_by_pred = warped_corner_by_pred[:, :2] / warped_corner_by_pred[:, 2:3]
@@ -96,7 +96,10 @@ class HomoAccuracyCalculator(object):
         accuracy = (diff <= self.epsilon).astype(np.float)
         self.sum_accuracy += accuracy
         self.sum_sample_num += 1
-        return accuracy.astype(np.bool)
+        if not return_diff:
+            return accuracy.astype(np.bool)
+        else:
+            return accuracy.astype(np.bool), diff
 
     def _generate_corner(self):
         pt_00 = np.array((0, 0, 1), dtype=np.float)
