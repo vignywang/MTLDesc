@@ -78,6 +78,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--dataset_dir", type=str, default="/data/MegPoint/dataset/coco/train2014/pseudo_image_points_0")
         parser.add_argument("--batch_size", type=int, default=16)
         parser.add_argument("--num_workers", type=int, default=8)
+        parser.add_argument("--epoch_num", type=int, default=60)
         parser.add_argument("--log_freq", type=int, default=50)
         parser.add_argument("--lr", type=float, default=0.001)
         parser.add_argument("--prefix", type=str, default='exp')
@@ -122,10 +123,13 @@ def main():
         models = generate_testing_file(params.ckpt_folder)
         for m in models:
             megpoint_trainer.test(m)
+    elif params.run_mode == "test_debug":
+        megpoint_trainer.test_debug(params.ckpt_file)
 
     # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_01_0.0010_24/model_59.pt
     # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_heatmap_00_0.0010_24/model_99.pt
     # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_residual_0.0010_16/model_59.pt
+    # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/good_results/coco_weight_bce_precise_0.0010_16/model_19.pt
 
 if __name__ == '__main__':
     main()

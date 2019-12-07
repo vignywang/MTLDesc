@@ -1109,5 +1109,253 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         self.point_statistics = PointStatistics()
 
+    def test_debug(self, ckpt_file):
+        self._load_model_params(ckpt_file)
+
+        self.model.eval()
+        # 重置测评算子参数
+        self.illum_repeat.reset()
+        self.illum_homo_acc.reset()
+        self.illum_mma.reset()
+        self.view_repeat.reset()
+        self.view_homo_acc.reset()
+        self.view_mma.reset()
+        self.point_statistics.reset()
+
+        self.illum_bad_mma.reset()
+        self.view_bad_mma.reset()
+
+        start_time = time.time()
+        count = 0
+        illum_skip = 0
+        view_skip = 0
+        bad = 0
+
+        for i, data in enumerate(self.test_dataset):
+            first_image = data['first_image']
+            second_image = data['second_image']
+            gt_homography = data['gt_homography']
+            image_type = data['image_type']
+
+            # if image_type == "illumination":
+            #     print("sikp")
+            #     skip += 1
+            #     continue
+
+            image_pair = np.stack((first_image, second_image), axis=0)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            image_pair = image_pair * 2. / 255. - 1.
+
+            if self.network_arch == "residual":
+                heatmap_pair, desp_pair, _ = self.model(image_pair)
+            else:
+                heatmap_pair, desp_pair = self.model(image_pair)
+
+            heatmap_pair = torch.sigmoid(heatmap_pair)  # 用BCEloss
+            prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold * 2 + 1))
+
+            desp_pair = desp_pair.detach().cpu().numpy()
+            first_desp = desp_pair[0]
+            second_desp = desp_pair[1]
+            prob_pair = prob_pair.detach().cpu().numpy()
+            first_prob = prob_pair[0, 0]
+            second_prob = prob_pair[1, 0]
+
+            # 得到对应的预测点
+            if self.detection_mode == "use_network":
+                first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+                second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+            else:
+                self.logger.error("unrecognized detection_mode: %s" % self.detection_mode)
+                assert False
+
+            if first_point_num <= 4 or second_point_num <= 4:
+                print("skip this pair because there's little point!")
+                if image_type == "illumination":
+                    illum_skip += 1
+                else:
+                    view_skip += 1
+                continue
+
+            # 得到点对应的描述子
+            select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
+            select_second_desp = self._generate_predict_descriptor(second_point, second_desp)
+
+            # 得到匹配点
+            matched_point = self.general_matcher(first_point, select_first_desp,
+                                                 second_point, select_second_desp)
+            # 作弊
+            correct_first_list = []
+            correct_second_list = []
+            xy_first_point = matched_point[0][:, ::-1]
+            xy1_first_point = np.concatenate((xy_first_point, np.ones((xy_first_point.shape[0], 1))), axis=1)
+            xyz_second_point = np.matmul(gt_homography, xy1_first_point[:, :, np.newaxis])[:, :, 0]
+            xy_second_point = xyz_second_point[:, :2] / xyz_second_point[:, 2:3]
+            diff = np.linalg.norm(xy_second_point - matched_point[1][:, ::-1], axis=1)
+            for j in range(xy_first_point.shape[0]):
+                if diff[j] < 1:
+                    correct_first_list.append(matched_point[0][j])
+                    correct_second_list.append(matched_point[1][j])
+            # if len(correct_first_list) < 20:
+            #     print("skip this pair because there's no good match!")
+            #     if image_type == "illumination":
+            #         illum_skip += 1
+            #     else:
+            #         view_skip += 1
+            #     continue
+            matched_point = (
+                np.stack(correct_first_list, axis=0),
+                np.stack(correct_second_list, axis=0))
+
+            cv_first_point = []
+            cv_second_point = []
+            cv_matched_list = []
+            if len(correct_first_list) > 0:
+                for j in range(len(correct_first_list)):
+                    cv_point = cv.KeyPoint()
+                    cv_point.pt = tuple(correct_first_list[j][::-1])
+                    cv_first_point.append(cv_point)
+
+                    cv_point = cv.KeyPoint()
+                    cv_point.pt = tuple(correct_second_list[j][::-1])
+                    cv_second_point.append(cv_point)
+
+                    cv_match = cv.DMatch()
+                    cv_match.queryIdx = j
+                    cv_match.trainIdx = j
+                    cv_matched_list.append(cv_match)
+
+            if matched_point is None:
+                print("skip this pair because there's no match point!")
+                if image_type == "illumination":
+                    illum_skip += 1
+                else:
+                    view_skip += 1
+                continue
+
+            # 计算得到单应变换
+            if self.homo_pred_mode == "RANSAC":
+                pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                       matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
+            elif self.homo_pred_mode == "LMEDS":
+                pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                       matched_point[1][:, np.newaxis, ::-1], cv.LMEDS)
+            else:
+                assert False
+            if pred_homography is None:
+                print("skip this pair because no homo can be predicted!.")
+                if image_type == "illumination":
+                    illum_skip += 1
+                else:
+                    view_skip += 1
+                continue
+
+            # 对单样本进行测评
+            if image_type == 'illumination':
+                self.illum_repeat.update(first_point, second_point, gt_homography)
+                correct, diff = self.illum_homo_acc.update(pred_homography, gt_homography, True)
+                self.illum_mma.update(gt_homography, matched_point)
+
+                if not correct:
+                    self.illum_bad_mma.update(gt_homography, matched_point)
+                    # self.logger.info("diff between gt & pred is %.4f" % diff)
+                    bad += 1
+
+                    if len(cv_matched_list) != 0:
+                        matched_image = cv.drawMatches(first_image, cv_first_point, second_image, cv_second_point,
+                                                       cv_matched_list, None)
+                        metric_str = "diff between gt & pred is %.4f, correct match: %d/ total: %d, %.4f" % (
+                            diff, len(correct_first_list), matched_point[0].shape[0],
+                            len(correct_first_list) / matched_point[0].shape[0]
+                        )
+                        cv.putText(matched_image, metric_str, (0, 40), cv.FONT_HERSHEY_COMPLEX, fontScale=0.8,
+                                   color=(0, 0, 255), thickness=2)
+                        # cv.imshow("matched_image", matched_image)
+                        # cv.waitKey()
+                        cv.imwrite("/home/zhangyuyang/tmp_images/megpoint_bad/image_%03d.jpg" % i, matched_image)
+
+            elif image_type == 'viewpoint':
+                self.view_repeat.update(first_point, second_point, gt_homography)
+                correct, diff = self.view_homo_acc.update(pred_homography, gt_homography, True)
+                self.view_mma.update(gt_homography, matched_point)
+
+                if not correct:
+                    self.view_bad_mma.update(gt_homography, matched_point)
+                    # self.logger.info("diff between gt & pred is %.4f" % diff)
+                    bad += 1
+
+                    if len(cv_matched_list) != 0:
+                        matched_image = cv.drawMatches(first_image, cv_first_point, second_image, cv_second_point,
+                                                       cv_matched_list, None)
+                        metric_str = "diff between gt & pred is %.4f, correct match: %d/ total: %d, %.4f" % (
+                            diff, len(correct_first_list), matched_point[0].shape[0],
+                            len(correct_first_list) / matched_point[0].shape[0]
+                        )
+                        cv.putText(matched_image, metric_str, (0, 40), cv.FONT_HERSHEY_COMPLEX, fontScale=0.8,
+                                   color=(0, 0, 255), thickness=2)
+                        cv.imwrite("/home/zhangyuyang/tmp_images/megpoint_bad/image_%03d.jpg" % i, matched_image)
+
+            else:
+                print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
+                      "Please check !")
+                assert False
+
+            # 统计检测的点的数目
+            self.point_statistics.update((first_point_num + second_point_num) / 2.)
+
+            if i % 10 == 0:
+                print("Having tested %d samples, which takes %.3fs" % (i, (time.time() - start_time)))
+                start_time = time.time()
+            count += 1
+            # if count % 1000 == 0:
+            #     break
+
+        self.logger.info("Totally skip {} illumination samples and {} view samples.".format(illum_skip, view_skip))
+        # 计算各自的重复率以及总的重复率
+        illum_repeat, view_repeat, total_repeat = self._compute_total_metric(self.illum_repeat,
+                                                                             self.view_repeat)
+        # 计算估计的单应变换准确度
+        illum_homo_acc, view_homo_acc, total_homo_acc = self._compute_total_metric(self.illum_homo_acc,
+                                                                                   self.view_homo_acc)
+        # 计算匹配的准确度
+        illum_match_acc, view_match_acc, total_match_acc = self._compute_total_metric(self.illum_mma,
+                                                                                      self.view_mma)
+
+        # 计算匹配外点的分布情况
+        illum_dis, view_dis = self._compute_match_outlier_distribution(self.illum_mma,
+                                                                       self.view_mma)
+
+        illum_bad_dis, view_bad_dis = self._compute_match_outlier_distribution(self.illum_bad_mma,
+                                                                               self.view_bad_mma)
+
+        # 统计最终的检测点数目的平均值和方差
+        point_avg, point_std = self.point_statistics.average()
+
+        self.logger.info("Homography Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_homo_acc, view_homo_acc, total_homo_acc))
+        self.logger.info("Mean Matching Accuracy: illumination: %.4f, viewpoint: %.4f, total: %.4f " %
+                         (illum_match_acc, view_match_acc, total_match_acc))
+        self.logger.info("Repeatability: illumination: %.4f, viewpoint: %.4f, total: %.4f" %
+                         (illum_repeat, view_repeat, total_repeat))
+        self.logger.info("Detection point, average: %.4f, variance: %.4f" % (point_avg, point_std))
+
+        # self.logger.info("Bad Illumination Matching Distribution:"
+        #                  " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+        #                  (illum_bad_dis[0], illum_bad_dis[1], illum_bad_dis[2],
+        #                   illum_bad_dis[3], illum_bad_dis[4]))
+        self.logger.info("Bad Viewpoint Matching Distribution:"
+                         " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+                         (view_bad_dis[0], view_bad_dis[1], view_bad_dis[2],
+                          view_bad_dis[3], view_bad_dis[4]))
+
+        # self.logger.info("Illumination Matching Distribution:"
+        #                  " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+        #                  (illum_dis[0], illum_dis[1], illum_dis[2],
+        #                   illum_dis[3], illum_dis[4]))
+        self.logger.info("Viewpoint Matching Distribution:"
+                         " [0, e/2]: %.4f, (e/2,e]: %.4f, (e,2e]: %.4f, (2e,4e]: %.4f, (4e,+): %.4f" %
+                         (view_dis[0], view_dis[1], view_dis[2],
+                          view_dis[3], view_dis[4]))
+
 
 
