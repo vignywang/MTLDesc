@@ -16,7 +16,7 @@ from nets.megpoint_net import MegPointShuffleHeatmap
 from nets.megpoint_net import MegPointResidualShuffleHeatmap
 
 from data_utils.coco_dataset import COCOMegPointHeatmapTrainDataset
-from data_utils.coco_dataset import COCOMegPointNoGtDataset
+from data_utils.coco_dataset import COCOMegPointHeatmapPreciseTrainDataset
 from data_utils.synthetic_dataset import SyntheticHeatmapDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
@@ -31,11 +31,11 @@ from utils.evaluation_tools import MeanMatchingAccuracy
 from utils.evaluation_tools import mAPCalculator
 from utils.utils import spatial_nms
 from utils.utils import DescriptorTripletLoss
+from utils.utils import DescriptorPreciseTripletLoss
 from utils.utils import Matcher
 from utils.utils import NearestNeighborThresholdMatcher
 from utils.utils import NearestNeighborRatioMatcher
 from utils.utils import PointHeatmapWeightedBCELoss
-from utils.utils import PointHeatmapUnsuperivsedLoss
 
 
 class MagicPointHeatmapTrainer(MagicPointSynthetic):
@@ -251,9 +251,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
     def _initialize_dataset(self):
         # 初始化数据集
         if self.train_mode == "with_gt":
+            self.logger.info("Initialize COCOMegPointHeatmapTrainDataset")
             self.train_dataset = COCOMegPointHeatmapTrainDataset(self.params)
-        elif self.train_mode == "without_gt":
-            self.train_dataset = COCOMegPointNoGtDataset(self.params)
+        elif self.train_mode == "with_precise_gt":
+            self.logger.info("Initialize COCOMegPointHeatmapPreciseTrainDataset")
+            self.train_dataset = COCOMegPointHeatmapPreciseTrainDataset(self.params)
         else:
             assert False
 
@@ -287,16 +289,16 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_loss(self):
         # 初始化loss算子
-        if self.train_mode == "with_gt":
-            # 初始化heatmap loss
-            self.point_loss = PointHeatmapWeightedBCELoss()
-        elif self.train_mode == "without_gt":
-            self.point_loss = PointHeatmapUnsuperivsedLoss()
-        else:
-            assert False
+        # 初始化heatmap loss
+        self.point_loss = PointHeatmapWeightedBCELoss()
 
         # 初始化描述子loss
-        self.descriptor_loss = DescriptorTripletLoss(self.device)
+        if self.train_mode == "with_precise_gt":
+            self.logger.info("Initialize the DescriptorPreciseTripletLoss.")
+            self.descriptor_loss = DescriptorPreciseTripletLoss(self.device)
+        else:
+            self.logger.info("Initialize the DescriptorTripletLoss.")
+            self.descriptor_loss = DescriptorTripletLoss(self.device)
 
     def _initialize_matcher(self):
         # 初始化匹配算子
@@ -314,19 +316,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             assert False
 
     def _initialize_train_func(self):
-        if self.train_mode == "with_gt":
-            if self.network_arch == "baseline":
-                self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
-                self._train_func = self._train_with_gt
-            elif self.network_arch == "residual":
-                self.logger.info("Initialize training func mode of [with_residual] with residual network.")
-                self._train_func = self._train_with_residual
-        elif self.train_mode == "without_gt":
-            self.logger.info("Initialize training func mode of [without_gt]")
-            self._train_func = self._train_without_gt
+        # 根据不同结构选择不同的训练函数
+        if self.network_arch == "baseline":
+            self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
+            self._train_func = self._train_with_gt
+        elif self.network_arch == "residual":
+            self.logger.info("Initialize training func mode of [with_residual] with residual network.")
+            self._train_func = self._train_with_residual
         else:
-            self.logger.error("Wrong train_mode: %s" % self.train_mode)
-            assert False
+            self.logger.error("Unrecognized network_arch: %s" % self.network_arch)
 
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
@@ -372,8 +370,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
             desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
 
-            desp_loss = self.descriptor_loss(
-                desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
+            if self.train_mode == "with_gt":
+                desp_loss = self.descriptor_loss(
+                    desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
+            elif self.train_mode == "with_precise_gt":
+                matched_coords = data["matched_coords"].to(self.device)
+                desp_1 = self._generate_batched_predict_descriptor(matched_coords, desp_1)
+                desp_loss = self.descriptor_loss(desp_0, desp_1, matched_valid)
+            else:
+                assert False
 
             loss = point_loss + desp_loss
 
@@ -470,92 +475,6 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                         point_loss_val,
                         desp_deep_loss_val,
                         desp_shallow_loss_val,
-                        (time.time() - stime) / self.params.log_freq,
-                    ))
-                stime = time.time()
-
-        # save the model
-        if self.multi_gpus:
-            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
-        else:
-            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
-
-    def _train_without_gt(self, epoch_idx):
-        self.model.train()
-        stime = time.time()
-        for i, data in enumerate(self.train_dataloader):
-
-            image = data['image'].to(self.device)
-            point_mask = data["point_mask"].to(self.device).unsqueeze(dim=1)
-            homo_s2t = data["homography_s2t"].to(self.device)
-
-            warped_image = data['warped_image'].to(self.device)
-            warped_point_mask = data["warped_point_mask"].to(self.device).unsqueeze(dim=1)
-            homo_t2s = data["homography_t2s"].to(self.device)
-
-            matched_idx = data['matched_idx'].to(self.device)
-            matched_valid = data['matched_valid'].to(self.device)
-            not_search_mask = data['not_search_mask'].to(self.device)
-
-            shape = image.shape
-
-            image_pair = torch.cat((image, warped_image), dim=0)
-            heatmap_pred_pair, desp_pair = self.model(image_pair)
-            heatmap_0, heatmap_1 = torch.chunk(heatmap_pred_pair, 2, dim=0)
-
-            point_loss, point_peak_loss, point_sim_loss = self.point_loss(
-                heatmap_0, heatmap_1, point_mask, warped_point_mask, homo_s2t, homo_t2s)
-
-            desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
-
-            desp_loss = self.descriptor_loss(
-                desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
-
-            loss = point_loss + desp_loss
-
-            if torch.isnan(point_loss):
-                self.logger.error("point_loss is nan!")
-
-            if torch.isnan(point_peak_loss):
-                self.logger.error("point_peak_loss is nan!")
-
-            if torch.isnan(point_sim_loss):
-                self.logger.error("point_sim_loss is nan!")
-
-            if torch.isnan(loss):
-                self.logger.error('loss is nan!')
-
-            # debug use
-            if i == 90:
-                a = 3
-
-            self.optimizer.zero_grad()
-            loss.backward()
-
-            self.optimizer.step()
-
-            if i % self.log_freq == 0:
-
-                point_loss_val = point_loss.item()
-                point_peak_loss_val = point_peak_loss.item()
-                point_sim_loss_val = point_sim_loss.item()
-                desp_loss_val = desp_loss.item()
-                loss_val = loss.item()
-
-                self.logger.info(
-                    "[Epoch:%2d][Step:%5d:%5d]: "
-                    "loss=%.4f,"
-                    "point_loss=%.4f,"
-                    "point_peak_loss=%.4f,"
-                    "point_sim_loss=%.4f,"
-                    "desp_loss = %.4f,"
-                    "%.4fs/step. " % (
-                        epoch_idx, i, self.epoch_length,
-                        loss_val,
-                        point_loss_val,
-                        point_peak_loss_val,
-                        point_sim_loss_val,
-                        desp_loss_val,
                         (time.time() - stime) / self.params.log_freq,
                     ))
                 stime = time.time()
@@ -1032,9 +951,16 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         dim, h, w = desp.shape
         desp = torch.reshape(desp, (dim, -1))
         desp = torch.transpose(desp, dim0=1, dim1=0)  # [h*w,256]
+        offset = torch.ones_like(point) * 3.5  # offset代表中心点与左上角点的偏移
 
         # 下采样
-        scaled_point = point / 8
+        if self.train_mode == "with_gt":
+            scaled_point = point / 8
+        elif self.train_mode == "with_precise_gt":
+            scaled_point = (point - offset) / 8
+        else:
+            assert False
+
         point_y = scaled_point[:, 0:1]  # [n,1]
         point_x = scaled_point[:, 1:2]
 
@@ -1078,6 +1004,59 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         interpolation_desp = interpolation_desp/interpolation_norm
 
         return interpolation_desp.numpy()
+
+    def _generate_batched_predict_descriptor(self, point, desp):
+        bt, dim, h, w = desp.shape
+        desp = torch.reshape(desp, (bt, dim, -1))
+        desp = torch.transpose(desp, dim0=1, dim1=2)  # [bt,h*w,256]
+        offset = torch.ones_like(point) * 3.5  # offset代表中心点与左上角点的偏移
+
+        # 下采样
+        scaled_point = (point - offset) / 8
+        point_y = scaled_point[:, :, 0:1]  # [bt,n,1]
+        point_x = scaled_point[:, :, 1:2]  # [bt,n,1]
+
+        x0 = torch.floor(point_x)
+        x1 = x0 + 1
+        y0 = torch.floor(point_y)
+        y1 = y0 + 1
+        x_nearest = torch.round(point_x)
+        y_nearest = torch.round(point_y)
+
+        x0_safe = torch.clamp(x0, min=0, max=w-1)
+        x1_safe = torch.clamp(x1, min=0, max=w-1)
+        y0_safe = torch.clamp(y0, min=0, max=h-1)
+        y1_safe = torch.clamp(y1, min=0, max=h-1)
+
+        x_nearest_safe = torch.clamp(x_nearest, min=0, max=w-1)
+        y_nearest_safe = torch.clamp(y_nearest, min=0, max=h-1)
+
+        idx_00 = (x0_safe + y0_safe*w).to(torch.long).repeat((1, 1, dim))  # [bt,n,dim]
+        idx_01 = (x0_safe + y1_safe*w).to(torch.long).repeat((1, 1, dim))
+        idx_10 = (x1_safe + y0_safe*w).to(torch.long).repeat((1, 1, dim))
+        idx_11 = (x1_safe + y1_safe*w).to(torch.long).repeat((1, 1, dim))
+        idx_nearest = (x_nearest_safe + y_nearest_safe*w).to(torch.long).repeat((1, 1, dim))
+
+        d_x = point_x - x0_safe
+        d_y = point_y - y0_safe
+        d_1_x = x1_safe - point_x
+        d_1_y = y1_safe - point_y
+
+        desp_00 = torch.gather(desp, dim=1, index=idx_00)
+        desp_01 = torch.gather(desp, dim=1, index=idx_01)
+        desp_10 = torch.gather(desp, dim=1, index=idx_10)
+        desp_11 = torch.gather(desp, dim=1, index=idx_11)
+        nearest_desp = torch.gather(desp, dim=1, index=idx_nearest)
+        bilinear_desp = desp_00*d_1_x*d_1_y + desp_01*d_1_x*d_y + desp_10*d_x*d_1_y+desp_11*d_x*d_y
+
+        # todo: 插值得到的描述子不再满足模值为1，强行归一化到模值为1，这里可能有问题
+        condition = torch.eq(torch.norm(bilinear_desp, dim=2, keepdim=True), 0)
+        interpolation_desp = torch.where(condition, nearest_desp, bilinear_desp)
+        interpolation_norm = torch.norm(interpolation_desp, dim=2, keepdim=True)
+        interpolation_desp = interpolation_desp / interpolation_norm
+        interpolation_desp = interpolation_desp.transpose(1, 2).reshape((bt, 256, h, w))
+
+        return interpolation_desp
 
     def _initialize_test_calculator(self, params):
         # 初始化验证算子
