@@ -1066,24 +1066,24 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.logger.info('Top k: %d' % self.top_k)
 
         self.illum_repeat = RepeatabilityCalculator(params.correct_epsilon)
-        self.illum_repeat_mov = MovingAverage()
+        self.illum_repeat_mov = MovingAverage(max_size=15)
 
         self.view_repeat = RepeatabilityCalculator(params.correct_epsilon)
-        self.view_repeat_mov = MovingAverage()
+        self.view_repeat_mov = MovingAverage(max_size=15)
 
         self.illum_homo_acc = HomoAccuracyCalculator(params.correct_epsilon,
                                                      params.hpatch_height, params.hpatch_width)
-        self.illum_homo_acc_mov = MovingAverage()
+        self.illum_homo_acc_mov = MovingAverage(max_size=15)
 
         self.view_homo_acc = HomoAccuracyCalculator(params.correct_epsilon,
                                                     params.hpatch_height, params.hpatch_width)
-        self.view_homo_acc_mov = MovingAverage()
+        self.view_homo_acc_mov = MovingAverage(max_size=15)
 
         self.illum_mma = MeanMatchingAccuracy(params.correct_epsilon)
-        self.illum_mma_mov = MovingAverage()
+        self.illum_mma_mov = MovingAverage(max_size=15)
 
         self.view_mma = MeanMatchingAccuracy(params.correct_epsilon)
-        self.view_mma_mov = MovingAverage()
+        self.view_mma_mov = MovingAverage(max_size=15)
 
         # 初始化专门用于估计的单应变换较差的点匹配情况统计的算子
         self.view_bad_mma = MeanMatchingAccuracy(params.correct_epsilon)
