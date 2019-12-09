@@ -157,6 +157,7 @@ class MegPointTrainerTester(object):
 
         self.network_arch = params.network_arch
         self.train_mode = params.train_mode
+        self.desp_loss = params.desp_loss
         self.detection_mode = params.detection_mode
         self.homo_pred_mode = params.homo_pred_mode
         self.match_mode = params.match_mode
@@ -1184,46 +1185,48 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # 得到匹配点
             matched_point = self.general_matcher(first_point, select_first_desp,
                                                  second_point, select_second_desp)
-            # 作弊
+            # debug
+            # 误差缩小指数
+            reduce_diff = 0.95
             correct_first_list = []
             correct_second_list = []
+            wrong_first_list = []
+            wrong_second_list = []
             xy_first_point = matched_point[0][:, ::-1]
             xy1_first_point = np.concatenate((xy_first_point, np.ones((xy_first_point.shape[0], 1))), axis=1)
             xyz_second_point = np.matmul(gt_homography, xy1_first_point[:, :, np.newaxis])[:, :, 0]
             xy_second_point = xyz_second_point[:, :2] / xyz_second_point[:, 2:3]
+            # delta_diff = xy_second_point - matched_point[1][:, ::-1]
+            # matched_point = (
+            #     matched_point[0],
+            #     (matched_point[1][:, ::-1] + reduce_diff*delta_diff)[:, ::-1])
+
+            matched_second_point = []
+            # 重新计算经误差缩小后的投影误差
             diff = np.linalg.norm(xy_second_point - matched_point[1][:, ::-1], axis=1)
             for j in range(xy_first_point.shape[0]):
-                if diff[j] < 1:
+                # 重投影误差小于3的判断为正确匹配
+                if diff[j] < 5:
                     correct_first_list.append(matched_point[0][j])
-                    correct_second_list.append(matched_point[1][j])
-            # if len(correct_first_list) < 20:
-            #     print("skip this pair because there's no good match!")
-            #     if image_type == "illumination":
-            #         illum_skip += 1
-            #     else:
-            #         view_skip += 1
-            #     continue
-            matched_point = (
-                np.stack(correct_first_list, axis=0),
-                np.stack(correct_second_list, axis=0))
+                    delta_diff = reduce_diff*(xy_second_point[j] - matched_point[1][j, ::-1])[::-1]
+                    correct_second_list.append(matched_point[1][j]+delta_diff)
+                    matched_second_point.append(np.round(matched_point[1][j]+delta_diff))  # 整型最近点
+                    # matched_second_point.append(matched_point[1][j]+delta_diff)  # 浮点型最近点
+                else:
+                    wrong_first_list.append(matched_point[0][j])
+                    wrong_second_list.append(matched_point[1][j])
+                    matched_second_point.append(matched_point[1][j])
 
-            cv_first_point = []
-            cv_second_point = []
-            cv_matched_list = []
-            if len(correct_first_list) > 0:
-                for j in range(len(correct_first_list)):
-                    cv_point = cv.KeyPoint()
-                    cv_point.pt = tuple(correct_first_list[j][::-1])
-                    cv_first_point.append(cv_point)
+            matched_second_point = np.stack(matched_second_point, axis=0)
+            matched_point = (matched_point[0], matched_second_point)
 
-                    cv_point = cv.KeyPoint()
-                    cv_point.pt = tuple(correct_second_list[j][::-1])
-                    cv_second_point.append(cv_point)
-
-                    cv_match = cv.DMatch()
-                    cv_match.queryIdx = j
-                    cv_match.trainIdx = j
-                    cv_matched_list.append(cv_match)
+            cv_correct_first, cv_correct_second, cv_correct_matched = self._convert_match2cv(
+                correct_first_list,
+                correct_second_list)
+            cv_wrong_first, cv_wrong_second, cv_wrong_matched = self._convert_match2cv(
+                wrong_first_list,
+                wrong_second_list,
+                0.25)
 
             if matched_point is None:
                 print("skip this pair because there's no match point!")
@@ -1258,21 +1261,23 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
                 if not correct:
                     self.illum_bad_mma.update(gt_homography, matched_point)
-                    # self.logger.info("diff between gt & pred is %.4f" % diff)
                     bad += 1
 
-                    if len(cv_matched_list) != 0:
-                        matched_image = cv.drawMatches(first_image, cv_first_point, second_image, cv_second_point,
-                                                       cv_matched_list, None)
-                        metric_str = "diff between gt & pred is %.4f, correct match: %d/ total: %d, %.4f" % (
-                            diff, len(correct_first_list), matched_point[0].shape[0],
-                            len(correct_first_list) / matched_point[0].shape[0]
-                        )
-                        cv.putText(matched_image, metric_str, (0, 40), cv.FONT_HERSHEY_COMPLEX, fontScale=0.8,
-                                   color=(0, 0, 255), thickness=2)
-                        # cv.imshow("matched_image", matched_image)
-                        # cv.waitKey()
-                        cv.imwrite("/home/zhangyuyang/tmp_images/megpoint_bad/image_%03d.jpg" % i, matched_image)
+                    # if len(cv_correct_matched) != 0:
+                    correct_matched_image = cv.drawMatches(
+                        first_image, cv_correct_first, second_image, cv_correct_second,
+                        cv_correct_matched, None)
+                    wrong_matched_image = cv.drawMatches(
+                        first_image, cv_wrong_first, second_image, cv_wrong_second,
+                        cv_wrong_matched, None)
+                    metric_str = "diff between gt & pred is %.4f, correct match: %d/ total: %d, %.4f" % (
+                        diff, len(correct_first_list), matched_point[0].shape[0],
+                        len(correct_first_list) / matched_point[0].shape[0]
+                    )
+                    cv.putText(correct_matched_image, metric_str, (0, 40), cv.FONT_HERSHEY_COMPLEX, fontScale=0.8,
+                               color=(0, 0, 255), thickness=2)
+                    matched_image = np.concatenate((correct_matched_image, wrong_matched_image), axis=0)
+                    cv.imwrite("/home/zhangyuyang/tmp_images/megpoint_bad/image_%03d.jpg" % i, matched_image)
 
             elif image_type == 'viewpoint':
                 self.view_repeat.update(first_point, second_point, gt_homography)
@@ -1281,19 +1286,23 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
                 if not correct:
                     self.view_bad_mma.update(gt_homography, matched_point)
-                    # self.logger.info("diff between gt & pred is %.4f" % diff)
                     bad += 1
 
-                    if len(cv_matched_list) != 0:
-                        matched_image = cv.drawMatches(first_image, cv_first_point, second_image, cv_second_point,
-                                                       cv_matched_list, None)
-                        metric_str = "diff between gt & pred is %.4f, correct match: %d/ total: %d, %.4f" % (
-                            diff, len(correct_first_list), matched_point[0].shape[0],
-                            len(correct_first_list) / matched_point[0].shape[0]
-                        )
-                        cv.putText(matched_image, metric_str, (0, 40), cv.FONT_HERSHEY_COMPLEX, fontScale=0.8,
-                                   color=(0, 0, 255), thickness=2)
-                        cv.imwrite("/home/zhangyuyang/tmp_images/megpoint_bad/image_%03d.jpg" % i, matched_image)
+                    # if len(cv_correct_matched) != 0:
+                    correct_matched_image = cv.drawMatches(
+                        first_image, cv_correct_first, second_image, cv_correct_second,
+                        cv_correct_matched, None)
+                    wrong_matched_image = cv.drawMatches(
+                        first_image, cv_wrong_first, second_image, cv_wrong_second,
+                        cv_wrong_matched, None)
+                    metric_str = "diff between gt & pred is %.4f, correct match: %d/ total: %d, %.4f" % (
+                        diff, len(correct_first_list), matched_point[0].shape[0],
+                        len(correct_first_list) / matched_point[0].shape[0]
+                    )
+                    cv.putText(correct_matched_image, metric_str, (0, 40), cv.FONT_HERSHEY_COMPLEX, fontScale=0.8,
+                               color=(0, 0, 255), thickness=2)
+                    matched_image = np.concatenate((correct_matched_image, wrong_matched_image), axis=0)
+                    cv.imwrite("/home/zhangyuyang/tmp_images/megpoint_bad/image_%03d.jpg" % i, matched_image)
 
             else:
                 print("The image type magicpoint_tester.test(ckpt_file)must be one of illumination of viewpoint ! "
@@ -1357,5 +1366,36 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                          (view_dis[0], view_dis[1], view_dis[2],
                           view_dis[3], view_dis[4]))
 
+    @staticmethod
+    def _convert_match2cv(first_point_list, second_point_list, sample_ratio=1.0):
+        cv_first_point = []
+        cv_second_point = []
+        cv_matched_list = []
+
+        assert len(first_point_list) == len(second_point_list)
+
+        inc = 1
+        if sample_ratio < 1:
+            inc = int(1.0 / sample_ratio)
+
+        count = 0
+        if len(first_point_list) > 0:
+            for j in range(0, len(first_point_list), inc):
+                cv_point = cv.KeyPoint()
+                cv_point.pt = tuple(first_point_list[j][::-1])
+                cv_first_point.append(cv_point)
+
+                cv_point = cv.KeyPoint()
+                cv_point.pt = tuple(second_point_list[j][::-1])
+                cv_second_point.append(cv_point)
+
+                cv_match = cv.DMatch()
+                cv_match.queryIdx = count
+                cv_match.trainIdx = count
+                cv_matched_list.append(cv_match)
+
+                count += 1
+
+        return cv_first_point, cv_second_point, cv_matched_list
 
 
