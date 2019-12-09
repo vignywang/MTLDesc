@@ -16,7 +16,6 @@ from nets.megpoint_net import MegPointShuffleHeatmap
 from nets.megpoint_net import MegPointResidualShuffleHeatmap
 
 from data_utils.coco_dataset import COCOMegPointHeatmapTrainDataset
-from data_utils.coco_dataset import COCOMegPointHeatmapPreciseTrainDataset
 from data_utils.synthetic_dataset import SyntheticHeatmapDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
@@ -254,9 +253,6 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         if self.train_mode == "with_gt":
             self.logger.info("Initialize COCOMegPointHeatmapTrainDataset")
             self.train_dataset = COCOMegPointHeatmapTrainDataset(self.params)
-        elif self.train_mode == "with_precise_gt":
-            self.logger.info("Initialize COCOMegPointHeatmapPreciseTrainDataset")
-            self.train_dataset = COCOMegPointHeatmapPreciseTrainDataset(self.params)
         else:
             assert False
 
@@ -294,12 +290,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.point_loss = PointHeatmapWeightedBCELoss()
 
         # 初始化描述子loss
-        if self.train_mode == "with_precise_gt":
-            self.logger.info("Initialize the DescriptorPreciseTripletLoss.")
-            self.descriptor_loss = DescriptorPreciseTripletLoss(self.device)
-        else:
-            self.logger.info("Initialize the DescriptorTripletLoss.")
-            self.descriptor_loss = DescriptorTripletLoss(self.device)
+        self.logger.info("Initialize the DescriptorTripletLoss.")
+        self.descriptor_loss = DescriptorTripletLoss(self.device)
 
     def _initialize_matcher(self):
         # 初始化匹配算子
@@ -371,15 +363,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
             desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
 
-            if self.train_mode == "with_gt":
-                desp_loss = self.descriptor_loss(
-                    desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
-            elif self.train_mode == "with_precise_gt":
-                matched_coords = data["matched_coords"].to(self.device)
-                desp_1 = self._generate_batched_predict_descriptor(matched_coords, desp_1)
-                desp_loss = self.descriptor_loss(desp_0, desp_1, matched_valid, not_search_mask)
-            else:
-                assert False
+            desp_loss = self.descriptor_loss(
+                desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
 
             loss = point_loss + desp_loss
 
@@ -952,15 +937,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         dim, h, w = desp.shape
         desp = torch.reshape(desp, (dim, -1))
         desp = torch.transpose(desp, dim0=1, dim1=0)  # [h*w,256]
-        offset = torch.ones_like(point) * 3.5  # offset代表中心点与左上角点的偏移
 
         # 下采样
-        if self.train_mode == "with_gt":
-            scaled_point = point / 8
-        elif self.train_mode == "with_precise_gt":
-            scaled_point = (point - offset) / 8
-        else:
-            assert False
+        scaled_point = point / 8
 
         point_y = scaled_point[:, 0:1]  # [n,1]
         point_x = scaled_point[:, 1:2]
