@@ -33,6 +33,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.network_arch = "baseline"
         self.train_mode = "with_gt"
         self.detection_mode = "use_network"
+        self.desp_loss = "triplet"
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -86,6 +87,7 @@ class MegPointHeatmapParameters(BasicParameters):
 
         parser.add_argument("--network_arch", type=str, default="baseline")  # 目前为两种 baseline or resnet50
         parser.add_argument("--train_mode", type=str, default="with_gt")  # with_gt or without_gt
+        parser.add_argument("--desp_loss", type=str, default="triplet")  # triplet or tuplet
         parser.add_argument("--detection_mode", type=str, default="use_network")  # use_network or use_sift
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
