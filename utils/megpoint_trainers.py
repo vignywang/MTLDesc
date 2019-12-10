@@ -161,6 +161,7 @@ class MegPointTrainerTester(object):
         self.homo_pred_mode = params.homo_pred_mode
         self.match_mode = params.match_mode
         self.ckpt_file = params.ckpt_file
+        self.adjust_lr = params.adjust_lr
         self.align_weight = params.align_weight
 
         # todo:
@@ -207,8 +208,10 @@ class MegPointTrainerTester(object):
             # validation
             self._validate_one_epoch(i)
 
-            # adjust learning rate
-            # self.scheduler.step(i)
+            if self.adjust_lr:
+                self.logger("Adjust learning rate.")
+                # adjust learning rate
+                self.scheduler.step(i)
 
         end_time = time.time()
         self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
@@ -246,6 +249,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self._initialize_dataset()
         self._initialize_model()
         self._initialize_optimizer()
+        self._initialize_scheduler()
         self._initialize_train_func()
         self._initialize_loss()
         self._initialize_matcher()
@@ -344,6 +348,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
         self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr)
+
+    def _initialize_scheduler(self):
+        # 初始化学习率调整算子
+        milestones = [15, 60]
+        self.logger.info("Initialize lr_scheduler of MultiStepLR: (%d, %d)" % (milestones[0], milestones[1]))
+        self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=milestones, gamma=0.1)
 
     def _train_one_epoch(self, epoch_idx):
         self.model.train()
