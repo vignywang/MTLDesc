@@ -430,7 +430,6 @@ class COCOMegPointHeatmapTrainDataset(Dataset):
         self.height = params.height
         self.width = params.width
 
-        self.downsample_scale = 1
         self.sigma = 1  # 3
         self.g_kernel_size = 1  # 15
         self.g_paddings = self.g_kernel_size // 2
@@ -446,14 +445,13 @@ class COCOMegPointHeatmapTrainDataset(Dataset):
         self.photometric = PhotometricAugmentation(**params.photometric_params)
 
         self.center_grid = self._generate_center_grid()
-        self.localmap = self._generate_local_gaussian_map()
+        # self.localmap = self._generate_local_gaussian_map()
 
     def __len__(self):
         assert len(self.image_list) == len(self.point_list)
         return len(self.image_list)
 
     def __getitem__(self, idx):
-
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
         point = np.load(self.point_list[idx])
         point_mask = np.ones_like(image).astype(np.float32)
@@ -483,7 +481,6 @@ class COCOMegPointHeatmapTrainDataset(Dataset):
 
         # 2.1 得到第一副图点构成的热图
         heatmap = self._convert_points_to_heatmap(point)
-        # self._debug_show(heatmap, image)
 
         # 2.2 得到第二副图点构成的热图
         warped_heatmap = self._convert_points_to_heatmap(warped_point)
@@ -501,16 +498,19 @@ class COCOMegPointHeatmapTrainDataset(Dataset):
         matched_valid = torch.from_numpy(matched_valid).to(torch.float)
         not_search_mask = torch.from_numpy(not_search_mask)
 
+        homography = torch.from_numpy(homography).to(torch.float)
+
         return {
-            'image': image,
-            'point_mask': point_mask,
-            'heatmap': heatmap,
-            'warped_image': warped_image,
-            'warped_point_mask': warped_point_mask,
-            'warped_heatmap': warped_heatmap,
-            'matched_idx': matched_idx,
-            'matched_valid': matched_valid,
-            'not_search_mask': not_search_mask,
+            "image": image,
+            "point_mask": point_mask,
+            "heatmap": heatmap,
+            "warped_image": warped_image,
+            "warped_point_mask": warped_point_mask,
+            "warped_heatmap": warped_heatmap,
+            "matched_idx": matched_idx,
+            "matched_valid": matched_valid,
+            "not_search_mask": not_search_mask,
+            "homography": homography,
         }
 
     def _debug_show(self, heatmap, image):
@@ -523,32 +523,46 @@ class COCOMegPointHeatmapTrainDataset(Dataset):
         cv.waitKey()
 
     def _convert_points_to_heatmap(self, points):
-        height = int(self.height / self.downsample_scale)
-        width = int(self.width / self.downsample_scale)
-        assert height * self.downsample_scale == self.height and width * self.downsample_scale == self.width
+        """
+        将原始点位置经下采样后得到heatmap与incmap，heatmap上对应下采样整型点位置处的值为1，其余为0；incmap与heatmap一一对应，
+        在关键点位置处存放整型点到亚像素角点的偏移量，以及训练时用来屏蔽非关键点inc量的incmap_valid
+        Args:
+            points: [n,2]
 
-        localmap = self.localmap.clone()
-        padded_heatmap = torch.zeros(
-            (height+self.g_paddings*2, width+self.g_paddings*2), dtype=torch.float)
+        Returns:
+            heatmap: [h,w] 关键点位置为1，其余为0
+            incmap: [2,h,w] 关键点位置存放实际偏移，其余非关键点处的偏移量为0
+            incmap_valid: [h,w] 关键点位置为1，其余为0，用于训练时屏蔽对非关键点偏移量的训练，只关注关键点的偏移量
+
+        """
+        height = self.height
+        width = self.width
+
+        # localmap = self.localmap.clone()
+        # padded_heatmap = torch.zeros(
+        #     (height+self.g_paddings*2, width+self.g_paddings*2), dtype=torch.float)
+        heatmap = torch.zeros((height, width), dtype=torch.float)
 
         num_pt = points.shape[0]
         if num_pt > 0:
             for i in range(num_pt):
                 pt = points[i]
-                pt_y, pt_x = pt
-                pt_y = int(pt_y // self.downsample_scale)  # 对真值点位置进行下采样,这里有量化误差
-                pt_x = int(pt_x // self.downsample_scale)
+                pt_y_float, pt_x_float = pt
 
-                pt_y = np.clip(pt_y, 0, height)
-                pt_x = np.clip(pt_x, 0, width)
+                pt_y_int = round(pt_y_float)
+                pt_x_int = round(pt_x_float)
 
-                cur_localmap = padded_heatmap[pt_y: pt_y+self.g_kernel_size, pt_x: pt_x + self.g_kernel_size]
-                cur_localmap = torch.where(localmap >= cur_localmap, localmap, cur_localmap)
-                padded_heatmap[pt_y: pt_y+self.g_kernel_size, pt_x: pt_x + self.g_kernel_size] = cur_localmap
+                pt_y = int(pt_y_int)  # 对真值点位置进行下采样,这里有量化误差
+                pt_x = int(pt_x_int)
 
-            heatmap = padded_heatmap[self.g_paddings: self.g_paddings+height, self.g_paddings: self.g_paddings+width]
-        else:
-            heatmap = torch.zeros((height, width), dtype=torch.float)
+                # 排除掉经下采样后在边界外的点
+                if pt_y < 0 or pt_y > height - 1:
+                    continue
+                if pt_x < 0 or pt_x > width - 1:
+                    continue
+
+                # 关键点位置在heatmap上置1，并在incmap上记录该点离亚像素点的偏移量
+                heatmap[pt_y, pt_x] = 1.0
 
         return heatmap
 
@@ -654,6 +668,60 @@ class COCOMegPointHeatmapTrainDataset(Dataset):
             return center_grid, warped_center_grid
         else:
             return warped_center_grid
+
+
+class COCOMegPointHeatmapOnlyDataset(COCOMegPointHeatmapTrainDataset):
+    """
+    只用于训练heatmap的数据集,将父类中与描述子有关的部分砍掉了
+    """
+    def __init__(self, params):
+        super(COCOMegPointHeatmapOnlyDataset, self).__init__(params)
+
+    def __getitem__(self, idx):
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        point = np.load(self.point_list[idx])
+        point_mask = np.ones_like(image).astype(np.float32)
+
+        # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        if torch.rand([]).item() < 0.5:
+             warped_image, warped_point_mask, warped_point, homography = \
+             image.copy(), point_mask.copy(), point.copy(), np.eye(3)
+        else:
+            warped_image, warped_point_mask, warped_point, homography = self.homography(
+                image, point, mask=point_mask, return_homo=True)
+
+        # 1、对图像增加哎噪声
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+        if torch.rand([]).item() < 0.5:
+            warped_image = self.photometric(warped_image)
+
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        point_mask = torch.from_numpy(point_mask)
+
+        warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
+        warped_point_mask = torch.from_numpy(warped_point_mask)
+
+        image = image*2./255. - 1.
+        warped_image = warped_image*2./255. - 1.
+
+        # 2.1 得到第一副图点构成的热图
+        heatmap = self._convert_points_to_heatmap(point)
+
+        # 2.2 得到第二副图点构成的热图
+        warped_heatmap = self._convert_points_to_heatmap(warped_point)
+
+        homography = torch.from_numpy(homography).to(torch.float)
+
+        return {
+            "image": image,
+            "point_mask": point_mask,
+            "heatmap": heatmap,
+            "warped_image": warped_image,
+            "warped_point_mask": warped_point_mask,
+            "warped_heatmap": warped_heatmap,
+            "homography": homography,
+        }
 
 
 class COCOMegPointHeatmapPreciseTrainDataset(COCOMegPointHeatmapTrainDataset):
