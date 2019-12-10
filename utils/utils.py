@@ -633,19 +633,24 @@ class PointHeatmapBCELoss(object):
 class PointHeatmapWeightedBCELoss(object):
 
     def __init__(self, weight=200):
-        self.weight= weight
-        self.unmasked_bce = torch.nn.BCEWithLogitsLoss(reduction="none")
+        self.weight = weight
 
-    def __call__(self, heatmap_pred, heatmap_gt, mask):
-        """只适用one-hot的情况"""
+    def __call__(self, heatmap_pred, heatmap_gt, heatmap_valid):
+        """只适用one-hot的情况
+        """
         sigmoid_0 = torch.sigmoid(heatmap_pred)  # 预测为关键点的概率
         sigmoid_1 = 1. - sigmoid_0  # 预测为非关键点的概率
 
         module_factor_0 = self.weight * heatmap_gt
         module_factor_1 = 1. * (1 - heatmap_gt)
 
-        unmasked_loss = -(module_factor_0*torch.log(sigmoid_0+1e-4)+module_factor_1*torch.log(sigmoid_1+1e-4))
+        unmasked_heatmap_loss = -(module_factor_0*torch.log(sigmoid_0+1e-4)+module_factor_1*torch.log(sigmoid_1+1e-4))
+        loss = self._compute_masked_loss(unmasked_heatmap_loss, heatmap_valid)
 
+        return loss
+
+    @staticmethod
+    def _compute_masked_loss(unmasked_loss, mask):
         valid_num = torch.sum(mask, dim=(1, 2))
         masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
         masked_loss = masked_loss / (valid_num + 1)
@@ -675,6 +680,43 @@ class PointHeatmapFocalLoss(object):
         valid_num = torch.sum(mask, dim=(1, 2))
         masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
         # masked_loss = masked_loss / (valid_num + 1)
+        loss = torch.mean(masked_loss)
+        return loss
+
+
+class HeatmapAlignLoss(object):
+    """
+    用于计算两幅heatmap在其相关单应变换下的对齐loss
+    """
+    def __init__(self):
+        pass
+
+    def __call__(self, heatmap_s, heatmap_t, homography, mask):
+        """
+        将heatmap_s经单应变换插值到heatmap_t',计算heatmap_t'与heatmap_t在预先计算的mask中的有效区域的差异作为对齐loss
+        Args:
+            heatmap_s: [bt,1,h,w],s视角下预测的热力图
+            heatmap_t: [bt,1,h,w],t视角下预测的热力图
+            homography: s->t的单应变换
+            mask: 经上述变换后的有效区域的mask
+
+        Returns:
+            loss: 对齐差异作为loss返回
+
+        """
+        heatmap_s = torch.sigmoid(heatmap_s)
+        heatmap_t = torch.sigmoid(heatmap_t)
+
+        project_heatmap_t = interpolation(heatmap_s, homography)
+        unmasked_loss = torch.abs(project_heatmap_t-heatmap_t).squeeze()
+        loss = self._compute_masked_loss(unmasked_loss, mask)
+        return loss
+
+    @staticmethod
+    def _compute_masked_loss(unmasked_loss, mask):
+        valid_num = torch.sum(mask, dim=(1, 2))
+        masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
+        masked_loss = masked_loss / (valid_num + 1)
         loss = torch.mean(masked_loss)
         return loss
 
