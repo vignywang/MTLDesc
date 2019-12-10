@@ -16,6 +16,7 @@ from nets.megpoint_net import MegPointShuffleHeatmap
 from nets.megpoint_net import MegPointResidualShuffleHeatmap
 
 from data_utils.coco_dataset import COCOMegPointHeatmapTrainDataset
+from data_utils.coco_dataset import COCOMegPointHeatmapOnlyDataset
 from data_utils.synthetic_dataset import SyntheticHeatmapDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
@@ -27,14 +28,13 @@ from utils.evaluation_tools import MovingAverage
 from utils.evaluation_tools import PointStatistics
 from utils.evaluation_tools import HomoAccuracyCalculator
 from utils.evaluation_tools import MeanMatchingAccuracy
-from utils.evaluation_tools import mAPCalculator
 from utils.utils import spatial_nms
 from utils.utils import DescriptorTripletLoss
-from utils.utils import DescriptorPreciseTripletLoss
 from utils.utils import Matcher
 from utils.utils import NearestNeighborThresholdMatcher
 from utils.utils import NearestNeighborRatioMatcher
 from utils.utils import PointHeatmapWeightedBCELoss
+from utils.utils import HeatmapAlignLoss
 
 
 class MagicPointHeatmapTrainer(MagicPointSynthetic):
@@ -160,6 +160,8 @@ class MegPointTrainerTester(object):
         self.detection_mode = params.detection_mode
         self.homo_pred_mode = params.homo_pred_mode
         self.match_mode = params.match_mode
+        self.ckpt_file = params.ckpt_file
+        self.align_weight = params.align_weight
 
         # todo:
         self.sift = cv.xfeatures2d.SIFT_create(1000)
@@ -217,22 +219,23 @@ class MegPointTrainerTester(object):
     def _validate_one_epoch(self, epoch_idx):
         raise NotImplementedError
 
-    def _load_model_params(self, ckpt_file):
+    def _load_model_params(self, ckpt_file, previous_model):
         if ckpt_file is None:
             print("Please input correct checkpoint file dir!")
             return False
 
         self.logger.info("Load pretrained model %s " % ckpt_file)
         if not self.multi_gpus:
-            model_dict = self.model.state_dict()
+            model_dict = previous_model.state_dict()
             pretrain_dict = torch.load(ckpt_file, map_location=self.device)
             model_dict.update(pretrain_dict)
-            self.model.load_state_dict(model_dict)
+            previous_model.load_state_dict(model_dict)
         else:
-            model_dict = self.model.module.state_dict()
+            model_dict = previous_model.module.state_dict()
             pretrain_dict = torch.load(ckpt_file, map_location=self.device)
             model_dict.update(pretrain_dict)
-            self.model.module.load_state_dict(model_dict)
+            previous_model.module.load_state_dict(model_dict)
+        return previous_model
 
 
 class MegPointHeatmapTrainer(MegPointTrainerTester):
@@ -253,6 +256,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         if self.train_mode == "with_gt":
             self.logger.info("Initialize COCOMegPointHeatmapTrainDataset")
             self.train_dataset = COCOMegPointHeatmapTrainDataset(self.params)
+        elif self.train_mode == "only_detector":
+            self.logger.info("Initialize COCOMegPointHeatmapOnlyDataset")
+            self.train_dataset = COCOMegPointHeatmapOnlyDataset(self.params)
         else:
             assert False
 
@@ -284,10 +290,22 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             model = torch.nn.DataParallel(model)
         self.model = model.to(self.device)
 
+        self.descriptor = None
+        if self.train_mode == "only_detector":
+            self.logger.info("Initialize pretrained descriptor generator")
+            descriptor = MegPointShuffleHeatmap()
+            if self.multi_gpus:
+                descriptor = torch.nn.DataParallel(descriptor)
+            descriptor = descriptor.to(self.device)
+            self.descriptor = self._load_model_params(self.ckpt_file, descriptor)
+
     def _initialize_loss(self):
         # 初始化loss算子
         # 初始化heatmap loss
         self.point_loss = PointHeatmapWeightedBCELoss()
+
+        # 初始化heatmap对齐loss
+        self.align_loss = HeatmapAlignLoss()
 
         # 初始化描述子loss
         self.logger.info("Initialize the DescriptorTripletLoss.")
@@ -311,8 +329,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
     def _initialize_train_func(self):
         # 根据不同结构选择不同的训练函数
         if self.network_arch == "baseline":
-            self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
-            self._train_func = self._train_with_gt
+            if not self.train_mode == "only_detector":
+                self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
+                self._train_func = self._train_with_gt
+            else:
+                self.logger.info("Initialize training func mode of [only_detector] with baseline network.")
+                self._train_func = self._train_only_detector
         elif self.network_arch == "residual":
             self.logger.info("Initialize training func mode of [with_residual] with residual network.")
             self._train_func = self._train_with_residual
@@ -389,6 +411,66 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                         loss_val,
                         point_loss_val,
                         desp_loss_val,
+                        (time.time() - stime) / self.params.log_freq,
+                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
+    def _train_only_detector(self, epoch_idx):
+        self.model.train()
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data['image'].to(self.device)
+            heatmap_gt = data['heatmap'].to(self.device)
+            point_mask = data['point_mask'].to(self.device)
+
+            warped_image = data['warped_image'].to(self.device)
+            warped_heatmap_gt = data['warped_heatmap'].to(self.device)
+            warped_point_mask = data['warped_point_mask'].to(self.device)
+
+            homography = data["homography"].to(self.device)
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
+            point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
+
+            heatmap_pred_pair, _ = self.model(image_pair)
+
+            heatmap_pred, warped_heatmap_pred = torch.chunk(heatmap_pred_pair, 2, dim=0)
+            align_loss = self.align_loss(heatmap_pred, warped_heatmap_pred, homography, warped_point_mask)
+
+            heatmap_pred_pair = heatmap_pred_pair.squeeze()
+            point_loss = self.point_loss(heatmap_pred_pair, heatmap_gt_pair, point_mask_pair)
+
+            loss = point_loss + self.align_weight*align_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                point_loss_val = point_loss.item()
+                align_loss_val = align_loss.item()
+                loss_val = loss.item()
+
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, align_loss=%.4f"
+                    " one step cost %.4fs. " % (
+                        epoch_idx, i, self.epoch_length,
+                        loss_val,
+                        point_loss_val,
+                        align_loss_val,
                         (time.time() - stime) / self.params.log_freq,
                     ))
                 stime = time.time()
@@ -501,7 +583,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.logger.info("*****************************************************")
 
     def test(self, ckpt_file):
-        self._load_model_params(ckpt_file)
+        self.model = self._load_model_params(ckpt_file, self.model)
 
         self.model.eval()
         # 重置测评算子参数
@@ -747,6 +829,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 heatmap_pair, desp_pair, _ = self.model(image_pair)
             else:
                 heatmap_pair, desp_pair = self.model(image_pair)
+
+            # 若模式是只训检测子，则描述子端采用预训练的网络实现
+            if self.train_mode == "only_detector":
+                _, desp_pair = self.descriptor(image_pair)
 
             heatmap_pair = torch.sigmoid(heatmap_pair)
             prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold*2+1))
@@ -1090,7 +1176,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.point_statistics = PointStatistics()
 
     def test_debug(self, ckpt_file):
-        self._load_model_params(ckpt_file)
+        self.model = self._load_model_params(ckpt_file, self.model)
 
         self.model.eval()
         # 重置测评算子参数
