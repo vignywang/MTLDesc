@@ -34,6 +34,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.train_mode = "with_gt"
         self.detection_mode = "use_network"
         self.desp_loss = "triplet"
+        self.align_weight = 0.1
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -94,6 +95,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--ckpt_folder", type=str, default="")
         parser.add_argument("--homo_pred_mode", type=str, default="RANSAC")
         parser.add_argument("--match_mode", type=str, default="NN")
+        parser.add_argument("--align_weight", type=float, default=0.1)
 
         return parser.parse_args()
 
@@ -105,6 +107,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.logger.info("dataset_dir: %s" % self.dataset_dir)
         self.logger.info("train mode: %s" % self.train_mode)
         self.logger.info("network_arch: %s" % self.network_arch)
+        self.logger.info("align_weight: %.4f" % self.align_weight)
 
         self.logger.info("------------------------------------------")
 
