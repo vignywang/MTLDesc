@@ -691,7 +691,7 @@ class HeatmapAlignLoss(object):
     def __init__(self):
         pass
 
-    def __call__(self, heatmap_s, heatmap_t, homography, mask):
+    def __call__(self, heatmap_s, heatmap_t, homography, mask, **kwargs):
         """
         将heatmap_s经单应变换插值到heatmap_t',计算heatmap_t'与heatmap_t在预先计算的mask中的有效区域的差异作为对齐loss
         Args:
@@ -718,6 +718,31 @@ class HeatmapAlignLoss(object):
         masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
         masked_loss = masked_loss / (valid_num + 1)
         loss = torch.mean(masked_loss)
+        return loss
+
+
+class HeatmapWeightedAlignLoss(HeatmapAlignLoss):
+    """
+    带权重的对齐loss计算子，对于关键点位置处一个自定义区域内的差异值会被权重放大，而非关键点处的权重则都为1
+    """
+
+    def __init__(self, weight=200):
+        super(HeatmapWeightedAlignLoss, self).__init__()
+        self.weight = weight
+
+    def __call__(self, heatmap_s, heatmap_t, homography, mask, **kwargs):
+        heatmap_gt_t = kwargs["heatmap_gt_t"]
+
+        heatmap_s = torch.sigmoid(heatmap_s)
+        heatmap_t = torch.sigmoid(heatmap_t)
+
+        module_factor_keypoint = self.weight * heatmap_gt_t
+        module_factor_others = 1. * (1 - heatmap_gt_t)
+        module_factor = module_factor_keypoint + module_factor_others
+
+        project_heatmap_t = interpolation(heatmap_s, homography)
+        unmasked_loss = module_factor * torch.abs(project_heatmap_t-heatmap_t).squeeze()
+        loss = self._compute_masked_loss(unmasked_loss, mask)
         return loss
 
 
