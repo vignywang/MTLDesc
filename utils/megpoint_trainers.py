@@ -35,6 +35,7 @@ from utils.utils import NearestNeighborThresholdMatcher
 from utils.utils import NearestNeighborRatioMatcher
 from utils.utils import PointHeatmapWeightedBCELoss
 from utils.utils import HeatmapAlignLoss
+from utils.utils import HeatmapWeightedAlignLoss
 
 
 class MagicPointHeatmapTrainer(MagicPointSynthetic):
@@ -163,6 +164,7 @@ class MegPointTrainerTester(object):
         self.ckpt_file = params.ckpt_file
         self.adjust_lr = params.adjust_lr
         self.align_weight = params.align_weight
+        self.align_type = params.align_type
 
         # todo:
         self.sift = cv.xfeatures2d.SIFT_create(1000)
@@ -209,7 +211,6 @@ class MegPointTrainerTester(object):
             self._validate_one_epoch(i)
 
             if self.adjust_lr:
-                self.logger("Adjust learning rate.")
                 # adjust learning rate
                 self.scheduler.step(i)
 
@@ -309,7 +310,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.point_loss = PointHeatmapWeightedBCELoss()
 
         # 初始化heatmap对齐loss
-        self.align_loss = HeatmapAlignLoss()
+        if self.align_type == "general":
+            self.logger.info("Initialize the unweighted align loss.")
+            self.align_loss = HeatmapAlignLoss()
+        elif self.align_type == "weighted":
+            self.logger.info("Initialize the weighted align loss.")
+            self.align_loss = HeatmapWeightedAlignLoss()
+        else:
+            self.logger.error("Unrecognized align_type: %s" % self.align_type)
+            assert False
 
         # 初始化描述子loss
         self.logger.info("Initialize the DescriptorTripletLoss.")
@@ -351,8 +360,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_scheduler(self):
         # 初始化学习率调整算子
-        milestones = [15, 60]
-        self.logger.info("Initialize lr_scheduler of MultiStepLR: (%d, %d)" % (milestones[0], milestones[1]))
+        milestones = [15, 30, 50]
+        self.logger.info("Initialize lr_scheduler of MultiStepLR: (%d, %d, %d)" % (
+            milestones[0], milestones[1], milestones[2]))
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=milestones, gamma=0.1)
 
     def _train_one_epoch(self, epoch_idx):
@@ -453,7 +463,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             heatmap_pred_pair, _ = self.model(image_pair)
 
             heatmap_pred, warped_heatmap_pred = torch.chunk(heatmap_pred_pair, 2, dim=0)
-            align_loss = self.align_loss(heatmap_pred, warped_heatmap_pred, homography, warped_point_mask)
+            align_loss = self.align_loss(heatmap_pred, warped_heatmap_pred, homography, warped_point_mask,
+                                         heatmap_gt_t=warped_heatmap_gt)
 
             heatmap_pred_pair = heatmap_pred_pair.squeeze()
             point_loss = self.point_loss(heatmap_pred_pair, heatmap_gt_pair, point_mask_pair)
