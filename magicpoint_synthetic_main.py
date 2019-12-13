@@ -19,7 +19,7 @@ class MagicPointParameters(BasicParameters):
 
     def __init__(self):
         super(MagicPointParameters, self).__init__()
-        self.ckpt_root = '/data/Megpoint/magicpoint_ckpt'
+        self.ckpt_root = '/data/MegPoint/magicpoint_ckpt'
         self.log_root = './magicpoint_log'
         self.nms_threshold = 4
         self.epoch_num = 60

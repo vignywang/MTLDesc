@@ -23,7 +23,7 @@ class MegPointHeatmapParameters(BasicParameters):
 
     def __init__(self):
         super(MegPointHeatmapParameters, self).__init__()
-        self.ckpt_root = '/data/Megpoint/megpoint_ckpt'
+        self.ckpt_root = '/data/MegPoint/megpoint_ckpt'
         self.log_root = './megpoint_log'
         self.ckpt_folder = ""
 
