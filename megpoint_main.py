@@ -23,7 +23,7 @@ class MegPointHeatmapParameters(BasicParameters):
 
     def __init__(self):
         super(MegPointHeatmapParameters, self).__init__()
-        self.ckpt_root = './megpoint_ckpt'
+        self.ckpt_root = '/data/Megpoint/megpoint_ckpt'
         self.log_root = './megpoint_log'
         self.ckpt_folder = ""
 
@@ -37,6 +37,10 @@ class MegPointHeatmapParameters(BasicParameters):
         self.align_weight = 0.1
         self.align_type = "general"
         self.adjust_lr = "False"
+        self.point_type = "general"
+        self.fn_scale = 1.0
+        self.point_gamma = 2.0
+        self.do_augmentation = True
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -100,6 +104,10 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--align_weight", type=float, default=0.1)
         parser.add_argument("--align_type", type=str, default="general")  # general or weighted
         parser.add_argument("--adjust_lr", type=str, default="False")  # True or False
+        parser.add_argument("--point_type", type=str, default="general")  # general or spatial
+        parser.add_argument("--fn_scale", type=float, default=1.0)
+        parser.add_argument("--point_gamma", type=float, default=2.0)
+        parser.add_argument("--do_augmentation", type=str, default="True")
 
         return parser.parse_args()
 
@@ -112,12 +120,22 @@ class MegPointHeatmapParameters(BasicParameters):
         self.logger.info("train mode: %s" % self.train_mode)
         self.logger.info("network_arch: %s" % self.network_arch)
         self.logger.info("align_weight: %.4f" % self.align_weight)
+        self.logger.info("align_type: %s" % self.align_type)
+        self.logger.info("point_type: %s" % self.point_type)
+        self.logger.info("fn_scale: %.1f" % self.fn_scale)
+        self.logger.info("point_gamma: %.1f" % self.point_gamma)
 
         if self.adjust_lr == "True":
             self.adjust_lr = True
         else:
             self.adjust_lr = False
+
+        if self.do_augmentation == "True":
+            self.do_augmentation = True
+        else:
+            self.do_augmentation = False
         self.logger.info("adjust_lr: %s" % self.adjust_lr)
+        self.logger.info("do_augmentation: %s" % self.do_augmentation)
 
         self.logger.info("------------------------------------------")
 

@@ -19,7 +19,7 @@ class MagicPointAdaptionParameters(BasicParameters):
 
     def __init__(self):
         super(MagicPointAdaptionParameters, self).__init__()
-        self.ckpt_root = './magicpoint_ckpt'
+        self.ckpt_root = '/data/Megpoint/magicpoint_ckpt'
         self.log_root = './magicpoint_log'
         self.coco_pseudo_idx = '0'
 

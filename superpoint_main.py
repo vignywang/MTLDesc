@@ -25,7 +25,7 @@ class SuperPointParameters(BasicParameters):
     def __init__(self):
         super(SuperPointParameters, self).__init__()
 
-        self.ckpt_root = './superpoint_ckpt'
+        self.ckpt_root = '/data/Megpoint/superpoint_ckpt'
         self.log_root = './superpoint_log'
         self.epoch_num = 50
         self.coco_pseudo_idx = '0'
