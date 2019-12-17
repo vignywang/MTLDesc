@@ -462,3 +462,32 @@ def contrast_show_different_dataset(dataset_dir_0, dataset_dir_1, show_num=100):
         cv.imshow("cat_image_point", cat_image_point)
         cv.waitKey()
 
+
+def debug_show_dataset(dataset_dir, output_dir, debug_num=100):
+    """
+    读取当前的数据集，并将关键点画到对应图像上，存放在指定的位置
+    Args:
+        dataset_dir: 数据集的根目录
+        output_dir: 描好点的图像输出位置
+        debug_num: 需要存放的图像数量
+    """
+    import os
+    from data_utils.coco_dataset import COCODebugDataset
+
+    if not os.path.exists(output_dir):
+        os.mkdir(output_dir)
+
+    dataset = COCODebugDataset(dataset_dir)
+    data_iter = enumerate(dataset)
+
+    for i in range(debug_num):
+        _, data = data_iter.__next__()
+
+        image, point = data["image"], data["point"]
+        image_point = draw_image_keypoints(image=image, points=point, show=False)
+        image = np.tile(image[:, :, np.newaxis], (1, 1, 3))
+
+        image_cat = np.concatenate((image, image_point), axis=1)
+        cv.imwrite(os.path.join(output_dir, "%03d.jpg" % i), image_cat)
+
+
