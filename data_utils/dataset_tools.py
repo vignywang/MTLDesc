@@ -487,7 +487,7 @@ def debug_show_dataset(dataset_dir, output_dir, debug_num=100):
         image_point = draw_image_keypoints(image=image, points=point, show=False)
         image = np.tile(image[:, :, np.newaxis], (1, 1, 3))
 
-        image_cat = np.concatenate((image, image_point), axis=1)
+        image_cat = np.concatenate((image_point, image), axis=1)
         cv.imwrite(os.path.join(output_dir, "%03d.jpg" % i), image_cat)
 
 
