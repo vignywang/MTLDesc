@@ -466,31 +466,27 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             heatmap_gt = data['heatmap'].to(self.device)
             point_mask = data['point_mask'].to(self.device)
 
-            # warped_image = data['warped_image'].to(self.device)
-            # warped_heatmap_gt = data['warped_heatmap'].to(self.device)
-            # warped_point_mask = data['warped_point_mask'].to(self.device)
+            warped_image = data['warped_image'].to(self.device)
+            warped_heatmap_gt = data['warped_heatmap'].to(self.device)
+            warped_point_mask = data['warped_point_mask'].to(self.device)
 
-            # homography = data["homography"].to(self.device)
+            homography = data["homography"].to(self.device)
 
-            # image_pair = torch.cat((image, warped_image), dim=0)
-            # heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
-            # point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
+            image_pair = torch.cat((image, warped_image), dim=0)
+            heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
+            point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
 
-            # heatmap_pred_pair, _ = self.model(image_pair)
-            heatmap_pred, _ = self.model(image)
+            heatmap_pred_pair, _ = self.model(image_pair)
 
-            # heatmap_pred, warped_heatmap_pred = torch.chunk(heatmap_pred_pair, 2, dim=0)
-            # align_loss = self.align_loss(heatmap_pred, warped_heatmap_pred, homography, warped_point_mask,
-            #                              heatmap_gt_t=warped_heatmap_gt)
+            heatmap_pred, warped_heatmap_pred = torch.chunk(heatmap_pred_pair, 2, dim=0)
+            align_loss = self.align_loss(heatmap_pred, warped_heatmap_pred, homography, warped_point_mask,
+                                         heatmap_gt_t=warped_heatmap_gt)
 
-            # heatmap_pred_pair = heatmap_pred_pair.squeeze()
-            heatmap_pred = heatmap_pred.squeeze()
+            heatmap_pred_pair = heatmap_pred_pair.squeeze()
 
-            # point_loss = self.point_loss(heatmap_pred_pair, heatmap_gt_pair, point_mask_pair)
-            point_loss = self.point_loss(heatmap_pred, heatmap_gt, point_mask)
+            point_loss = self.point_loss(heatmap_pred_pair, heatmap_gt_pair, point_mask_pair)
 
-            # loss = point_loss + self.align_weight*align_loss
-            loss = point_loss
+            loss = point_loss + self.align_weight*align_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -503,7 +499,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             if i % self.log_freq == 0:
 
                 point_loss_val = point_loss.item()
-                # align_loss_val = align_loss.item()
+                align_loss_val = align_loss.item()
                 loss_val = loss.item()
 
                 self.logger.info(
@@ -512,8 +508,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                         epoch_idx, i, self.epoch_length,
                         loss_val,
                         point_loss_val,
-                        # align_loss_val,
-                        0,
+                        align_loss_val,
                         (time.time() - stime) / self.params.log_freq,
                     ))
                 stime = time.time()
