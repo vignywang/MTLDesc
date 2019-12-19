@@ -658,6 +658,71 @@ class PointHeatmapWeightedBCELoss(object):
         return loss
 
 
+class PointHeatmapSpatialFocalWeightedBCELoss(object):
+    """
+    引入真值点与实际预测点之间的距离作为对应真值点的加权项，其主要思想是距离真值点越近的预测点（只是接近而非重合），这些点属于错分且程度激烈，
+    应当增大权重
+    """
+
+    def __init__(self, device, positive_weight=200, fn_scale=1.0, gamma=2, kernel_size=5, sigma=1.5):
+        """
+        初始化
+        Args:
+            device: 指定loss在cpu/gpu上计算
+            positive_weight: positive_weight控制正样本的权重
+            fn_scale: 用于负样本假错权重的放大系数
+            gamma: gamma为focal的指数
+            kernel_size: kernel_size为高斯核的大小
+            sigma: sigma为高斯分布权重的标准差
+        """
+        self.device = device
+        self.gamma = gamma
+        self.positive_weight = positive_weight
+        self.fn_scale = fn_scale
+
+        # 生成固定权重的二维高斯卷积核
+        center = np.array((kernel_size // 2, kernel_size // 2), dtype=np.float32)
+        grid = np.zeros((kernel_size, kernel_size, 2), dtype=np.float32)
+        for i in range(kernel_size):
+            for j in range(kernel_size):
+                grid[i, j] = (i, j)  # y,x的顺序
+
+        kernel = np.exp(-np.linalg.norm(grid - center, axis=2, keepdims=False) / (2 * sigma ** 2))
+        kernel[int(kernel_size // 2), int(kernel_size // 2)] = 0  # 中心点的权重置为0
+
+        # 进行归一化
+        kernel = kernel / np.sum(kernel)
+        self.kernel = torch.from_numpy(kernel).unsqueeze(dim=0).unsqueeze(dim=0).to(
+            self.device)  # [1,1,ksize,ksize]的高斯卷积核
+        self.padding = int(kernel_size // 2)
+
+    def __call__(self, heatmap_pred, heatmap_gt, heatmap_valid, **kwargs):
+        heatmap_pred = torch.sigmoid(heatmap_pred)  # 将logit转换为概率
+
+        fp_heatmap = (heatmap_pred * (1. - heatmap_gt)).unsqueeze(dim=1)  # 所有非关键点被判断为关键点的概率->假正率
+        fn_heatmap = ((1. - heatmap_pred) * heatmap_gt).unsqueeze(dim=1)  # 所有关键点被判断为非关键点的概率->假错率
+
+        fp_weight = f.conv2d(fp_heatmap, self.kernel, padding=self.padding).squeeze()
+        fn_weight = f.conv2d(fn_heatmap, self.kernel, padding=self.padding).squeeze()
+
+        loss_positive = -self.positive_weight * (1. + fp_weight) ** self.gamma * torch.log(
+            heatmap_pred + 1e-5) * heatmap_gt
+        loss_negative = -(1. + self.fn_scale * fn_weight) ** self.gamma * torch.log(1 - heatmap_pred + 1e-5) * (1 - heatmap_gt)
+
+        loss_unmasked = loss_positive + loss_negative
+        loss = self._compute_masked_loss(loss_unmasked, heatmap_valid)
+
+        return loss
+
+    @staticmethod
+    def _compute_masked_loss(unmasked_loss, mask):
+        valid_num = torch.sum(mask, dim=(1, 2))
+        masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
+        masked_loss = masked_loss / (valid_num + 1)
+        loss = torch.mean(masked_loss)
+        return loss
+
+
 class PointHeatmapFocalLoss(object):
 
     def __init__(self, gamma=2, p_ratio=0.75):
