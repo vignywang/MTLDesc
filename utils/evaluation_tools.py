@@ -214,10 +214,12 @@ class MeanMatchingAccuracy(object):
 
 class RepeatabilityCalculator(object):
 
-    def __init__(self, epsilon):
+    def __init__(self, epsilon, height, width):
         self.epsilon = epsilon
         self.sum_repeatability = 0
         self.sum_sample_num = 0
+        self.height = height
+        self.width = width
 
     def reset(self):
         self.sum_repeatability = 0
@@ -250,17 +252,30 @@ class RepeatabilityCalculator(object):
         # compute correctness from 0 to 1
         project_point_0 = np.matmul(homography, homo_point_0)
         project_point_0 = project_point_0[:, :2, 0] / project_point_0[:, 2:3, 0]
+        project_point_0 = self._exclude_outlier(project_point_0)
         correctness_0_1 = self.compute_correctness(project_point_0, point_1)
 
         # compute correctness from 1 to 0
         project_point_1 = np.matmul(inv_homography, homo_point_1)
         project_point_1 = project_point_1[:, :2, 0] / project_point_1[:, 2:3, 0]
+        project_point_1 = self._exclude_outlier(project_point_1)
         correctness_1_0 = self.compute_correctness(project_point_1, point_0)
 
         # compute repeatability
-        total_point = np.shape(point_0)[0] + np.shape(point_1)[0]
+        total_point = np.shape(project_point_0)[0] + np.shape(project_point_1)[0]
         repeatability = (correctness_0_1 + correctness_1_0) / total_point
         return repeatability
+
+    def _exclude_outlier(self, point):
+        inlier = []
+        for i in range(point.shape[0]):
+            x, y = point[i]
+            if x < 0 or x > self.width - 1:
+                continue
+            if y < 0 or y > self.height - 1:
+                continue
+            inlier.append(point[i])
+        return np.stack(inlier, axis=0)
 
     def compute_correctness(self, point_0, point_1):
         # compute the distance of two set of point
