@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 
 from nets.megpoint_net import MegPointShuffleHeatmap
 from nets.megpoint_net import MegPointResidualShuffleHeatmap
+from nets.megpoint_net import resnet18
 
 from data_utils.coco_dataset import COCOMegPointHeatmapTrainDataset
 from data_utils.coco_dataset import COCOMegPointHeatmapOnlyDataset
@@ -34,6 +35,7 @@ from utils.utils import Matcher
 from utils.utils import NearestNeighborThresholdMatcher
 from utils.utils import NearestNeighborRatioMatcher
 from utils.utils import PointHeatmapWeightedBCELoss
+from utils.utils import PointHeatmapSpatialFocalWeightedBCELoss
 from utils.utils import HeatmapAlignLoss
 from utils.utils import HeatmapWeightedAlignLoss
 
@@ -165,6 +167,9 @@ class MegPointTrainerTester(object):
         self.adjust_lr = params.adjust_lr
         self.align_weight = params.align_weight
         self.align_type = params.align_type
+        self.point_type = params.point_type
+        self.fn_scale = params.fn_scale
+        self.do_augmentation = params.do_augmentation
 
         # todo:
         self.sift = cv.xfeatures2d.SIFT_create(1000)
@@ -288,6 +293,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         elif self.network_arch == "residual":
             self.logger.info("Initialize network arch : Residual+ShuffleHeatmap")
             model = MegPointResidualShuffleHeatmap()
+        elif self.network_arch == "resnet18":
+            self.logger.info("Initialize network arch : restnet18")
+            model = resnet18()
         else:
             self.logger.error("unrecognized network_arch:%s" % self.network_arch)
             assert False
@@ -307,7 +315,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
     def _initialize_loss(self):
         # 初始化loss算子
         # 初始化heatmap loss
-        self.point_loss = PointHeatmapWeightedBCELoss()
+        if self.point_type == "general":
+            self.logger.info("Initialize the PointHeatmapWeightedBCELoss.")
+            self.point_loss = PointHeatmapWeightedBCELoss()
+        elif self.point_type == "spatial":
+            self.logger.info("Initialize the PointHeatmapSpatialFocalWeightedBCELoss, fn_scale:%.2f." % self.fn_scale)
+            self.point_loss = PointHeatmapSpatialFocalWeightedBCELoss(device=self.device, fn_scale=self.fn_scale)
+        else:
+            self.logger.error("Unrecogized point_type: %s" % self.point_type)
+            assert False
 
         # 初始化heatmap对齐loss
         if self.align_type == "general":
@@ -341,7 +357,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_train_func(self):
         # 根据不同结构选择不同的训练函数
-        if self.network_arch == "baseline":
+        if self.network_arch in ["baseline", "resnet18"]:
             if not self.train_mode == "only_detector":
                 self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
                 self._train_func = self._train_with_gt
@@ -450,26 +466,31 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             heatmap_gt = data['heatmap'].to(self.device)
             point_mask = data['point_mask'].to(self.device)
 
-            warped_image = data['warped_image'].to(self.device)
-            warped_heatmap_gt = data['warped_heatmap'].to(self.device)
-            warped_point_mask = data['warped_point_mask'].to(self.device)
+            # warped_image = data['warped_image'].to(self.device)
+            # warped_heatmap_gt = data['warped_heatmap'].to(self.device)
+            # warped_point_mask = data['warped_point_mask'].to(self.device)
 
-            homography = data["homography"].to(self.device)
+            # homography = data["homography"].to(self.device)
 
-            image_pair = torch.cat((image, warped_image), dim=0)
-            heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
-            point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
+            # image_pair = torch.cat((image, warped_image), dim=0)
+            # heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
+            # point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
 
-            heatmap_pred_pair, _ = self.model(image_pair)
+            # heatmap_pred_pair, _ = self.model(image_pair)
+            heatmap_pred, _ = self.model(image)
 
-            heatmap_pred, warped_heatmap_pred = torch.chunk(heatmap_pred_pair, 2, dim=0)
-            align_loss = self.align_loss(heatmap_pred, warped_heatmap_pred, homography, warped_point_mask,
-                                         heatmap_gt_t=warped_heatmap_gt)
+            # heatmap_pred, warped_heatmap_pred = torch.chunk(heatmap_pred_pair, 2, dim=0)
+            # align_loss = self.align_loss(heatmap_pred, warped_heatmap_pred, homography, warped_point_mask,
+            #                              heatmap_gt_t=warped_heatmap_gt)
 
-            heatmap_pred_pair = heatmap_pred_pair.squeeze()
-            point_loss = self.point_loss(heatmap_pred_pair, heatmap_gt_pair, point_mask_pair)
+            # heatmap_pred_pair = heatmap_pred_pair.squeeze()
+            heatmap_pred = heatmap_pred.squeeze()
 
-            loss = point_loss + self.align_weight*align_loss
+            # point_loss = self.point_loss(heatmap_pred_pair, heatmap_gt_pair, point_mask_pair)
+            point_loss = self.point_loss(heatmap_pred, heatmap_gt, point_mask)
+
+            # loss = point_loss + self.align_weight*align_loss
+            loss = point_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -482,7 +503,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             if i % self.log_freq == 0:
 
                 point_loss_val = point_loss.item()
-                align_loss_val = align_loss.item()
+                # align_loss_val = align_loss.item()
                 loss_val = loss.item()
 
                 self.logger.info(
@@ -491,7 +512,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                         epoch_idx, i, self.epoch_length,
                         loss_val,
                         point_loss_val,
-                        align_loss_val,
+                        # align_loss_val,
+                        0,
                         (time.time() - stime) / self.params.log_freq,
                     ))
                 stime = time.time()
@@ -1038,7 +1060,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         point_np = np.stack(point_list, axis=0)
         return point_np
 
-    def _generate_predict_descriptor(self, point, desp):
+    def _generate_predict_descriptor(self, point, desp, return_diff=False):
         point = torch.from_numpy(point).to(torch.float)  # 由于只有pytorch有gather的接口，因此将点调整为pytorch的格式
         desp = torch.from_numpy(desp)
         dim, h, w = desp.shape
@@ -1087,10 +1109,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         # todo: 插值得到的描述子不再满足模值为1，强行归一化到模值为1，这里可能有问题
         condition = torch.eq(torch.norm(bilinear_desp, dim=1, keepdim=True), 0)
         interpolation_desp = torch.where(condition, nearest_desp, bilinear_desp)
+        nonorm_desp = interpolation_desp
         interpolation_norm = torch.norm(interpolation_desp, dim=1, keepdim=True)
         interpolation_desp = interpolation_desp/interpolation_norm
 
-        return interpolation_desp.numpy()
+        if not return_diff:
+            return interpolation_desp.numpy()
+        else:
+            diff = torch.norm((nonorm_desp - interpolation_desp), dim=1, keepdim=False)
+            return interpolation_desp.numpy(), diff.numpy()
 
     def _generate_batched_predict_descriptor(self, point, desp):
         bt, dim, h, w = desp.shape
@@ -1152,10 +1179,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                          % (self.detection_threshold, self.correct_epsilon))
         self.logger.info('Top k: %d' % self.top_k)
 
-        self.illum_repeat = RepeatabilityCalculator(params.correct_epsilon)
+        self.illum_repeat = RepeatabilityCalculator(params.correct_epsilon, self.params.hpatch_height, self.params.hpatch_width)
         self.illum_repeat_mov = MovingAverage(max_size=15)
 
-        self.view_repeat = RepeatabilityCalculator(params.correct_epsilon)
+        self.view_repeat = RepeatabilityCalculator(params.correct_epsilon, self.params.hpatch_height, self.params.hpatch_width)
         self.view_repeat_mov = MovingAverage(max_size=15)
 
         self.illum_homo_acc = HomoAccuracyCalculator(params.correct_epsilon,
@@ -1273,7 +1300,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                                                  second_point, select_second_desp)
             # debug
             # 误差缩小指数
-            reduce_diff = 0.95
+            reduce_diff = 0.
             correct_first_list = []
             correct_second_list = []
             wrong_first_list = []
@@ -1288,6 +1315,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             #     (matched_point[1][:, ::-1] + reduce_diff*delta_diff)[:, ::-1])
 
             matched_second_point = []
+            project_second_point = []
+            select_second_point = []
+            select_first_point = []
             # 重新计算经误差缩小后的投影误差
             diff = np.linalg.norm(xy_second_point - matched_point[1][:, ::-1], axis=1)
             for j in range(xy_first_point.shape[0]):
@@ -1298,6 +1328,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                     correct_second_list.append(matched_point[1][j]+delta_diff)
                     matched_second_point.append(np.round(matched_point[1][j]+delta_diff))  # 整型最近点
                     # matched_second_point.append(matched_point[1][j]+delta_diff)  # 浮点型最近点
+                    if diff[j] >= 3 or diff[j] <= 5:
+                        select_first_point.append(matched_point[0][j])
+                        select_second_point.append(matched_point[1][j])
+                        project_second_point.append(xy_second_point[j][::-1])
                 else:
                     wrong_first_list.append(matched_point[0][j])
                     wrong_second_list.append(matched_point[1][j])
@@ -1313,6 +1347,22 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 wrong_first_list,
                 wrong_second_list,
                 0.25)
+
+            cv_matched_first_point = self._convert_pt2cv(select_first_point)
+            cv_matched_second_point = self._convert_pt2cv(select_second_point)
+            cv_project_second_point = self._convert_pt2cv(project_second_point)
+            assert len(cv_matched_second_point) == len(cv_project_second_point)
+            if len(cv_matched_second_point) > 0:
+                point_image_0 = cv.drawKeypoints(first_image, cv_matched_first_point, None, color=(255, 0, 0))
+                point_image = cv.drawKeypoints(second_image, cv_matched_second_point, None, color=(0, 0, 255))
+                point_image_2 = cv.drawKeypoints(point_image, cv_project_second_point, None, color=(0, 255, 0))
+                # point_image_0 = cv.resize(point_image_0, (640, 480), interpolation=cv.INTER_LINEAR)
+                # point_image = cv.resize(point_image, (640, 480), interpolation=cv.INTER_LINEAR)
+                # point_image_2 = cv.resize(point_image_2, (640, 480), interpolation=cv.INTER_LINEAR)
+                first_image_tmp = np.tile(first_image[:, :, np.newaxis], (1, 1, 3))
+                second_image_tmp = np.tile(second_image[:, :, np.newaxis], (1, 1, 3))
+                point_image = np.concatenate((first_image_tmp, point_image_0, point_image, point_image_2, second_image_tmp), axis=1)
+                cv.imwrite("/home/zhangyuyang/tmp_images/megpoint_pointimage/image_%03d.jpg" % i, point_image)
 
             if matched_point is None:
                 print("skip this pair because there's no match point!")
@@ -1484,4 +1534,14 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         return cv_first_point, cv_second_point, cv_matched_list
 
+    @staticmethod
+    def _convert_pt2cv(point_list):
+        cv_point_list = []
+
+        for i in range(len(point_list)):
+            cv_point = cv.KeyPoint()
+            cv_point.pt = tuple(point_list[i][::-1])
+            cv_point_list.append(cv_point)
+
+        return cv_point_list
 
