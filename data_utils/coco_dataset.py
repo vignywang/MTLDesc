@@ -683,14 +683,10 @@ class COCOMegPointHeatmapOnlyDataset(COCOMegPointHeatmapTrainDataset):
         point_mask = np.ones_like(image).astype(np.float32)
 
         # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
-        if torch.rand([]).item() < 0.5:
-             warped_image, warped_point_mask, warped_point, homography = \
-             image.copy(), point_mask.copy(), point.copy(), np.eye(3)
-        else:
-            warped_image, warped_point_mask, warped_point, homography = self.homography(
-                image, point, mask=point_mask, return_homo=True)
+        warped_image, warped_point_mask, warped_point, homography = self.homography(
+            image, point, mask=point_mask, return_homo=True)
 
-        # 1、对图像增加哎噪声
+        # 1、对图像增加噪声
         if torch.rand([]).item() < 0.5:
             image = self.photometric(image)
         if torch.rand([]).item() < 0.5:
