@@ -169,7 +169,6 @@ class MegPointTrainerTester(object):
         self.align_type = params.align_type
         self.point_type = params.point_type
         self.fn_scale = params.fn_scale
-        self.do_augmentation = params.do_augmentation
 
         # todo:
         self.sift = cv.xfeatures2d.SIFT_create(1000)

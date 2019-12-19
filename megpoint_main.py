@@ -40,7 +40,6 @@ class MegPointHeatmapParameters(BasicParameters):
         self.point_type = "general"
         self.fn_scale = 1.0
         self.point_gamma = 2.0
-        self.do_augmentation = True
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -107,7 +106,6 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--point_type", type=str, default="general")  # general or spatial
         parser.add_argument("--fn_scale", type=float, default=1.0)
         parser.add_argument("--point_gamma", type=float, default=2.0)
-        parser.add_argument("--do_augmentation", type=str, default="True")
 
         return parser.parse_args()
 
@@ -130,12 +128,7 @@ class MegPointHeatmapParameters(BasicParameters):
         else:
             self.adjust_lr = False
 
-        if self.do_augmentation == "True":
-            self.do_augmentation = True
-        else:
-            self.do_augmentation = False
         self.logger.info("adjust_lr: %s" % self.adjust_lr)
-        self.logger.info("do_augmentation: %s" % self.do_augmentation)
 
         self.logger.info("------------------------------------------")
 
