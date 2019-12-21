@@ -1316,7 +1316,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             diff = np.linalg.norm(xy_second_point - matched_point[1][:, ::-1], axis=1)
             for j in range(xy_first_point.shape[0]):
                 # 重投影误差小于3的判断为正确匹配
-                if diff[j] < 5:
+                if diff[j] < 3:
                     correct_first_list.append(matched_point[0][j])
                     delta_diff = reduce_diff*(xy_second_point[j] - matched_point[1][j, ::-1])[::-1]
                     correct_second_list.append(matched_point[1][j]+delta_diff)
