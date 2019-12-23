@@ -1465,10 +1465,10 @@ class SuperPoint(TrainerTester):
                          % (self.detection_threshold, self.correct_epsilon))
         self.logger.info('Top k: %d' % self.top_k)
 
-        self.illum_repeat = RepeatabilityCalculator(params.correct_epsilon)
+        self.illum_repeat = RepeatabilityCalculator(params.correct_epsilon, self.params.hpatch_height, self.params.hpatch_width)
         self.illum_repeat_mov = MovingAverage()
 
-        self.view_repeat = RepeatabilityCalculator(params.correct_epsilon)
+        self.view_repeat = RepeatabilityCalculator(params.correct_epsilon, self.params.hpatch_height, self.params.hpatch_width)
         self.view_repeat_mov = MovingAverage()
 
         self.illum_homo_acc = HomoAccuracyCalculator(params.correct_epsilon,
