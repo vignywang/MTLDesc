@@ -253,17 +253,23 @@ class RepeatabilityCalculator(object):
         project_point_0 = np.matmul(homography, homo_point_0)
         project_point_0 = project_point_0[:, :2, 0] / project_point_0[:, 2:3, 0]
         project_point_0 = self._exclude_outlier(project_point_0)
-        correctness_0_1 = self.compute_correctness(project_point_0, point_1)
+        if project_point_0.size > 0:
+            correctness_0_1 = self.compute_correctness(project_point_0, point_1)
+        else:
+            correctness_0_1 = 0
 
         # compute correctness from 1 to 0
         project_point_1 = np.matmul(inv_homography, homo_point_1)
         project_point_1 = project_point_1[:, :2, 0] / project_point_1[:, 2:3, 0]
         project_point_1 = self._exclude_outlier(project_point_1)
-        correctness_1_0 = self.compute_correctness(project_point_1, point_0)
+        if project_point_1.size > 0:
+            correctness_1_0 = self.compute_correctness(project_point_1, point_0)
+        else:
+            correctness_1_0 = 0
 
         # compute repeatability
         total_point = np.shape(project_point_0)[0] + np.shape(project_point_1)[0]
-        repeatability = (correctness_0_1 + correctness_1_0) / total_point
+        repeatability = (correctness_0_1 + correctness_1_0) / (total_point + 1e-3)
         return repeatability
 
     def _exclude_outlier(self, point):
@@ -275,7 +281,10 @@ class RepeatabilityCalculator(object):
             if y < 0 or y > self.height - 1:
                 continue
             inlier.append(point[i])
-        return np.stack(inlier, axis=0)
+        if len(inlier) > 0:
+            return np.stack(inlier, axis=0)
+        else:
+            return np.empty((0, 2))
 
     def compute_correctness(self, point_0, point_1):
         # compute the distance of two set of point
