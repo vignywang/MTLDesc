@@ -720,6 +720,206 @@ class COCOMegPointHeatmapOnlyDataset(COCOMegPointHeatmapTrainDataset):
         }
 
 
+class COCOMegPointDescriptorOnlyDataset(COCOMegPointHeatmapTrainDataset):
+    """
+    这个类只输出有关描述子训练相关所需要的数据
+    """
+    def __init__(self, params):
+        super(COCOMegPointDescriptorOnlyDataset, self).__init__(params)
+
+    def __getitem__(self, idx):
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        point = np.load(self.point_list[idx])
+        point_mask = np.ones_like(image).astype(np.float32)
+
+        # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        if torch.rand([]).item() < 0.5:
+             warped_image, warped_point_mask, warped_point, homography = \
+             image.copy(), point_mask.copy(), point.copy(), np.eye(3)
+        else:
+            warped_image, warped_point_mask, warped_point, homography = self.homography(
+                image, point, mask=point_mask, return_homo=True)
+
+        # 1、对图像增加哎噪声
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+        if torch.rand([]).item() < 0.5:
+            warped_image = self.photometric(warped_image)
+
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        point_mask = torch.from_numpy(point_mask)
+
+        warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
+        warped_point_mask = torch.from_numpy(warped_point_mask)
+
+        image = image*2./255. - 1.
+        warped_image = warped_image*2./255. - 1.
+
+        # 3、对构造描述子loss有关关系的计算
+        # 3.1 由变换有效点的掩膜得到有效描述子的掩膜
+        warped_valid_mask = space_to_depth(warped_point_mask).clamp(0, 1).to(torch.uint8)
+        warped_valid_mask = torch.all(warped_valid_mask, dim=0).to(torch.float)
+        warped_valid_mask = warped_valid_mask.reshape((-1,))
+
+        matched_idx, matched_valid, not_search_mask = self.generate_corresponding_relationship(
+            homography, warped_valid_mask)
+
+        matched_idx = torch.from_numpy(matched_idx)
+        matched_valid = torch.from_numpy(matched_valid).to(torch.float)
+        not_search_mask = torch.from_numpy(not_search_mask)
+
+        return {
+            "image": image,
+            "warped_image": warped_image,
+            "matched_idx": matched_idx,
+            "matched_valid": matched_valid,
+            "not_search_mask": not_search_mask,
+        }
+
+
+class COCOMegPointHeatmapOnlyIndexDataset(COCOMegPointHeatmapTrainDataset):
+    """
+    这个类除了常规输出heatmap监督真值外，还需要输出固定数量的以关键点为中心的区域index值，用于训练时的heatmap采样
+    """
+    def __init__(self, params):
+        super(COCOMegPointHeatmapOnlyIndexDataset, self).__init__(params)
+        self.region_num = 100  # 以特征点为中心，然后随机扰动
+        self.half_region_size = params.half_region_size  # 区域的大小
+        self.general_coords = self._generate_general_region_coords()
+
+    def __getitem__(self, idx):
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        point = np.load(self.point_list[idx])
+        point_mask = np.ones_like(image).astype(np.float32)
+
+        # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        warped_image, warped_point_mask, warped_point, point, homography = self.homography(
+            image, point, mask=point_mask, return_homo=True, required_point_num=True)
+
+        # 1、对图像增加噪声
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+        if torch.rand([]).item() < 0.5:
+            warped_image = self.photometric(warped_image)
+
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
+        point_mask = torch.from_numpy(point_mask)
+
+        warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
+        warped_point_mask = torch.from_numpy(warped_point_mask)
+
+        image = image*2./255. - 1.
+        warped_image = warped_image*2./255. - 1.
+
+        # 2.1 得到第一副图点构成的热图
+        heatmap = self._convert_points_to_heatmap(point)
+
+        # 2.2 得到第二副图点构成的热图
+        warped_heatmap = self._convert_points_to_heatmap(warped_point)
+
+        homography = torch.from_numpy(homography).to(torch.float)
+
+        # 3、根据关键点位置得到包含关键点的区域index
+        ridx_list = []
+        center_list = []
+        warped_ridx_list = []
+        warped_center_list = []
+        for i in range(100):
+            ridx, center_point = self._generate_region_index(point[i])
+            warped_ridx, warped_center_point = self._generate_region_index(warped_point[i])
+
+            ridx_list.append(ridx)
+            center_list.append(center_point)
+
+            warped_ridx_list.append(warped_ridx)
+            warped_center_list.append(warped_center_point)
+
+        ridx = torch.from_numpy(np.stack(ridx_list, axis=0))  # [100,kxk]
+        center = torch.from_numpy(np.stack(center_list, axis=0))  # [100,2]
+        warped_ridx = torch.from_numpy(np.stack(warped_ridx_list, axis=0))
+        warped_center = torch.from_numpy(np.stack(warped_center_list, axis=0))
+
+        return {
+            "image": image,
+            "point_mask": point_mask,
+            "heatmap": heatmap,
+            "ridx": ridx,
+            "center": center,
+            "warped_image": warped_image,
+            "warped_point_mask": warped_point_mask,
+            "warped_heatmap": warped_heatmap,
+            "warped_ridx": warped_ridx,
+            "warped_center": warped_center,
+            "homography": homography,
+            "idx": idx,
+        }
+
+    def _generate_region_index(self, point):
+        """输入一个点，增加扰动并输出包含该点的指定大小区域的各个点的index
+        Args:
+            point: (2,) 分别为y,x坐标值
+        Returns：
+            region_idx: (rsize, rsize)，各个位置处的值为其在图像中的索引值
+            upleft_coord: 区域左上角的坐标
+        """
+        point = np.round(point).astype(np.long)
+        pt_y, pt_x = point
+        hh_size = int(0.5*self.half_region_size)
+
+        dy = np.random.randint(low=-hh_size, high=hh_size+1)
+        dx = np.random.randint(low=-hh_size, high=hh_size+1)
+
+        pt_y += dy
+        pt_x += dx
+
+        # 保证所取区域在图像范围内,pt代表所取区域的中心点位置
+        if pt_y - self.half_region_size < 0:
+            pt_y = self.half_region_size
+        elif pt_y + self.half_region_size > self.height - 1:
+            pt_y = self.height - 1 - self.half_region_size
+
+        if pt_x - self.half_region_size < 0:
+            pt_x = self.half_region_size
+        elif pt_x + self.half_region_size > self.width - 1:
+            pt_x = self.width - 1 - self.half_region_size
+
+        center_point = np.array((pt_y, pt_x))
+
+        # 得到区域中各个点的坐标
+        region_coords = self.general_coords.copy()
+        region_coords += center_point
+
+        # 将坐标转换为idx
+        coords_y, coords_x = np.split(region_coords, 2, axis=2)
+        region_idx = (coords_y * self.width + coords_x).astype(np.long).reshape((-1,))
+        return region_idx, center_point.astype(np.float32)
+
+    def _generate_general_region_coords(self):
+        """生成一个一般性的区域坐标点，每个点的坐标顺序为(y,x)"""
+        region_size = int(self.half_region_size * 2 + 1)
+        coords_x = np.tile(
+            np.arange(-self.half_region_size, self.half_region_size+1)[np.newaxis, :], (region_size, 1))  # [n,n]
+        coords_y = np.tile(
+            np.arange(-self.half_region_size, self.half_region_size+1)[:, np.newaxis], (1, region_size))  # [n,n]
+        coords = np.stack((coords_y, coords_x), axis=2)  # [n,n,2]
+        return coords
+
+    def _format_file_list(self):
+        dataset_dir = self.dataset_dir
+        image_list = []
+        point_list = []
+
+        with open(os.path.join(dataset_dir, "file_list.txt"), "r") as rf:
+            all_lines = rf.readlines()
+            for l in all_lines:
+                image_point_dir = l.strip("\n")
+                image_dir, point_dir = image_point_dir.split(",")
+                image_list.append(image_dir)
+                point_list.append(point_dir)
+
+        return image_list, point_list
+
+
 class COCOMegPointHeatmapPreciseTrainDataset(COCOMegPointHeatmapTrainDataset):
     """
     用于返回基于heatmap的点监督信息，以及用于描述子训练的投影点坐标，该坐标会用来插值得到精确对应的图象块描述子
