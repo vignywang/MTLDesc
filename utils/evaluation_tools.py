@@ -225,9 +225,13 @@ class RepeatabilityCalculator(object):
         self.sum_repeatability = 0
         self.sum_sample_num = 0
 
-    def update(self, point_0, point_1, homography):
-        self.sum_repeatability += self.compute_one_sample_repeatability(point_0, point_1, homography)
+    def update(self, point_0, point_1, homography, return_repeat=False):
+        repeatability, repeat_0, nonrepeat_0, repeat_1, nonrepeat_1 = self.compute_one_sample_repeatability(
+            point_0, point_1, homography)
+        self.sum_repeatability += repeatability
         self.sum_sample_num += 1
+        if return_repeat:
+            return repeat_0, nonrepeat_0, repeat_1, nonrepeat_1
 
     def average(self):
         if self.sum_sample_num == 0:
@@ -252,28 +256,71 @@ class RepeatabilityCalculator(object):
         # compute correctness from 0 to 1
         project_point_0 = np.matmul(homography, homo_point_0)
         project_point_0 = project_point_0[:, :2, 0] / project_point_0[:, 2:3, 0]
-        project_point_0 = self._exclude_outlier(project_point_0)
+        project_point_0, inlier_point_0 = self._exclude_outlier(project_point_0, point_0)
         if project_point_0.size > 0:
-            correctness_0_1 = self.compute_correctness(project_point_0, point_1)
+            correctness_0_1, repeat_0 = self.compute_correctness(project_point_0, point_1)
         else:
             correctness_0_1 = 0
+            repeat_0 = None
+
+        repeat_list_0 = []
+        nonrepeat_list_0 = []
+        if repeat_0 is not None:
+            for i in range(repeat_0.size):
+                if repeat_0[i]:
+                    repeat_list_0.append(inlier_point_0[i])
+                else:
+                    nonrepeat_list_0.append(inlier_point_0[i])
+            if len(repeat_list_0) > 0:
+                repeat_0 = np.stack(repeat_list_0, axis=0)[:, ::-1]  # y,x顺序
+            else:
+                repeat_0 = np.empty((0, 2))
+            if len(nonrepeat_list_0) > 0:
+                nonrepeat_0 = np.stack(nonrepeat_list_0, axis=0)[:, ::-1]
+            else:
+                nonrepeat_0 = np.empty((0, 2))
+        else:
+            repeat_0 = np.empty((0, 2))
+            nonrepeat_0 = np.empty((0, 2))
 
         # compute correctness from 1 to 0
         project_point_1 = np.matmul(inv_homography, homo_point_1)
         project_point_1 = project_point_1[:, :2, 0] / project_point_1[:, 2:3, 0]
-        project_point_1 = self._exclude_outlier(project_point_1)
+        project_point_1, inlier_point_1 = self._exclude_outlier(project_point_1, point_1)
         if project_point_1.size > 0:
-            correctness_1_0 = self.compute_correctness(project_point_1, point_0)
+            correctness_1_0, repeat_1 = self.compute_correctness(project_point_1, point_0)
         else:
             correctness_1_0 = 0
+            repeat_1 = None
+
+        repeat_list_1 = []
+        nonrepeat_list_1 = []
+        if repeat_1 is not None:
+            for i in range(repeat_1.size):
+                if repeat_1[i]:
+                    repeat_list_1.append(inlier_point_1[i])
+                else:
+                    nonrepeat_list_1.append(inlier_point_1[i])
+            if len(repeat_list_1) > 0:
+                repeat_1 = np.stack(repeat_list_1, axis=0)[:, ::-1]  # y,x顺序
+            else:
+                repeat_1 = np.empty((0, 2))
+            if len(nonrepeat_list_1) > 0:
+                nonrepeat_1 = np.stack(nonrepeat_list_1, axis=0)[:, ::-1]
+            else:
+                nonrepeat_1 = np.empty((0, 2))
+        else:
+            repeat_1 = np.empty((0, 2))
+            nonrepeat_1 = np.empty((0, 2))
 
         # compute repeatability
         total_point = np.shape(project_point_0)[0] + np.shape(project_point_1)[0]
         repeatability = (correctness_0_1 + correctness_1_0) / (total_point + 1e-3)
-        return repeatability
+        return repeatability, repeat_0, nonrepeat_0, repeat_1, nonrepeat_1
 
-    def _exclude_outlier(self, point):
+    def _exclude_outlier(self, point, org_point):
         inlier = []
+        org_inlier = []
         for i in range(point.shape[0]):
             x, y = point[i]
             if x < 0 or x > self.width - 1:
@@ -281,10 +328,11 @@ class RepeatabilityCalculator(object):
             if y < 0 or y > self.height - 1:
                 continue
             inlier.append(point[i])
+            org_inlier.append(org_point[i])
         if len(inlier) > 0:
-            return np.stack(inlier, axis=0)
+            return np.stack(inlier, axis=0), np.stack(org_inlier, axis=0)
         else:
-            return np.empty((0, 2))
+            return np.empty((0, 2)), np.empty((0, 2))
 
     def compute_correctness(self, point_0, point_1):
         # compute the distance of two set of point
@@ -294,10 +342,10 @@ class RepeatabilityCalculator(object):
         dist = np.linalg.norm(point_0 - point_1, axis=2)  # [n, m]
 
         min_dist = np.min(dist, axis=1, keepdims=False)  # [n]
-        correctness = np.less_equal(min_dist, self.epsilon).astype(np.float)
-        correctness = np.sum(correctness)
+        repeat = np.less_equal(min_dist, self.epsilon)
+        correctness = np.sum(repeat.astype(np.float))
 
-        return correctness
+        return correctness, repeat
 
 
 class mAPCalculator(object):
