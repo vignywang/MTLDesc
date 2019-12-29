@@ -40,14 +40,18 @@ class MegPointHeatmapParameters(BasicParameters):
         self.point_type = "general"
         self.fn_scale = 1.0
         self.point_gamma = 2.0
+        self.homo_weight = 0.1
+        self.half_region_size = 7
+        self.repro_weight = 0.1
+        self.tmp_ckpt_file = ""
 
         # homography & photometric relating params using in training
         self.homography_params = {
-            'patch_ratio': 0.8,  # 0.8,  # 0.9,
-            'perspective_amplitude_x': 0.3,  # 0.2,  # 0.1,
-            'perspective_amplitude_y': 0.3,  # 0.2,  # 0.1,
+            'patch_ratio': 0.8,  # 1.0
+            'perspective_amplitude_x': 0.3,  # 0.1
+            'perspective_amplitude_y': 0.3,  # 0.1
             'scaling_sample_num': 5,
-            'scaling_amplitude': 0.2,
+            'scaling_amplitude': 0.2,  # 0.1
             'translation_overflow': 0.05,
             'rotation_sample_num': 25,
             'rotation_max_angle': np.pi/3,  # np.pi/2.,  # np.pi/3,
@@ -106,6 +110,10 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--point_type", type=str, default="general")  # general or spatial
         parser.add_argument("--fn_scale", type=float, default=1.0)
         parser.add_argument("--point_gamma", type=float, default=2.0)
+        parser.add_argument("--homo_weight", type=float, default=0.1)
+        parser.add_argument("--repro_weight", type=float, default=0.1)
+        parser.add_argument("--half_region_size", type=int, default=7)
+        parser.add_argument("--tmp_ckpt_file", type=str, default="")
 
         return parser.parse_args()
 
@@ -122,6 +130,9 @@ class MegPointHeatmapParameters(BasicParameters):
         self.logger.info("point_type: %s" % self.point_type)
         self.logger.info("fn_scale: %.1f" % self.fn_scale)
         self.logger.info("point_gamma: %.1f" % self.point_gamma)
+        self.logger.info("homo_weight: %.3f" % self.homo_weight)
+        self.logger.info("repro_weight: %.3f" % self.repro_weight)
+        self.logger.info("half_region_size: %d" % self.half_region_size)
 
         if self.adjust_lr == "True":
             self.adjust_lr = True
@@ -144,7 +155,7 @@ def main():
     if params.run_mode == "train":
         megpoint_trainer.train()
     elif params.run_mode == "test":
-        megpoint_trainer.test(params.ckpt_file)
+        megpoint_trainer.test(params.tmp_ckpt_file)
     elif params.run_mode == "test_folder":
         models = generate_testing_file(params.ckpt_folder)
         for m in models:
