@@ -183,6 +183,7 @@ class MegPointShuffleHeatmap(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.tanh = nn.Tanh()
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
         c1, c2, c3, c4, c5, d1 = 64, 64, 128, 128, 256, 256
         # Encoder.
         self.conv1a = nn.Conv2d(1, c1, kernel_size=3, stride=1, padding=1)
@@ -194,9 +195,13 @@ class MegPointShuffleHeatmap(nn.Module):
         self.conv4a = nn.Conv2d(c3, c4, kernel_size=3, stride=1, padding=1)
         self.conv4b = nn.Conv2d(c4, c4, kernel_size=3, stride=1, padding=1)
 
+        # Feature pyramid network
+        self.fpn_3 = nn.Conv2d(c4, c3, kernel_size=1, stride=1, padding=0)
+        self.fpn_2 = nn.Conv2d(c3, c2, kernel_size=1, stride=1, padding=0)
+        self.fpn_1 = nn.Conv2d(c2, c1, kernel_size=1, stride=1, padding=0)
+
         # Detector head
-        self.convPa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
-        self.convPb = nn.Conv2d(c5, 64, kernel_size=3, stride=1, padding=1)  # different from superpoint
+        self.convP = nn.Conv2d(c1, 1, kernel_size=3, stride=1, padding=1)  # different from superpoint
 
         # Descriptor Head.
         self.convDa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
@@ -220,26 +225,38 @@ class MegPointShuffleHeatmap(nn.Module):
         _, _, h, w = x.shape
         # encoder part
         x = self.relu(self.conv1a(x))
-        x = self.relu(self.conv1b(x))
-        x = self.pool(x)
+        c0 = self.relu(self.conv1b(x))
 
-        x = self.relu(self.conv2a(x))
-        x = self.relu(self.conv2b(x))
-        x = self.pool(x)
+        c1 = self.avgpool(c0)
+        c1 = self.relu(self.conv2a(c1))
+        c1 = self.relu(self.conv2b(c1))
 
-        x = self.relu(self.conv3a(x))
-        x = self.relu(self.conv3b(x))
-        x = self.pool(x)
-        x = self.relu(self.conv4a(x))
-        feature = self.relu(self.conv4b(x))
+        c2 = self.avgpool(c1)
+        c2 = self.relu(self.conv3a(c2))
+        c2 = self.relu(self.conv3b(c2))
+
+        c3 = self.avgpool(c2)
+        c3 = self.relu(self.conv4a(c3))
+        c3 = self.relu(self.conv4b(c3))
+
+        # fpn head
+        fpn_c3 = self.fpn_3(c3)
+        fpn_c3 = nn.functional.interpolate(fpn_c3, scale_factor=2, mode="bilinear", align_corners=True)
+        fpn_c3 += c2
+
+        fpn_c2 = self.fpn_2(fpn_c3)
+        fpn_c2 = nn.functional.interpolate(fpn_c2, scale_factor=2, mode="bilinear", align_corners=True)
+        fpn_c2 += c1
+
+        fpn_c1 = self.fpn_1(fpn_c2)
+        fpn_c1 = nn.functional.interpolate(fpn_c1, scale_factor=2, mode="bilinear", align_corners=True)
+        fpn_c1 += c0
 
         # detector head
-        cPa = self.relu(self.convPa(feature))
-        cPb = self.convPb(cPa)
-        heatmap = f.pixel_shuffle(cPb, upscale_factor=8)
+        heatmap = self.convP(fpn_c1)
 
         # descriptor head
-        cDa = self.relu(self.convDa(feature))
+        cDa = self.relu(self.convDa(c3))
         cDb = self.convDb(cDa)
 
         dn = torch.norm(cDb, p=2, dim=1, keepdim=True)
