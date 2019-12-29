@@ -811,6 +811,197 @@ class HeatmapWeightedAlignLoss(HeatmapAlignLoss):
         return loss
 
 
+class HomographyReprojectionLoss(object):
+    """
+    该loss通过可微分地采样点，然后通过采样点对
+    """
+
+    def __init__(self, device, height, width, half_region_size):
+        self.device = device
+        self.height = height
+        self.width = width
+        self.half_region_size = half_region_size
+        self.c = 5  # cauchy核函数中的系数
+
+        self.general_coords = self._initialize_general_coords(half_region_size)
+        self.sample_coords = self._generate_constant_coords()
+
+    def _initialize_general_coords(self, half_region_size):
+        """
+        构造区域点中的初始坐标
+        Returns:
+            coords: (ksize*kszie,2)
+        """
+        region_size = int(2*half_region_size+1)
+        coords_y = np.tile(
+            np.arange(-half_region_size, half_region_size+1)[:, np.newaxis], (1, region_size))
+        coords_x = np.tile(
+            np.arange(-half_region_size, half_region_size+1)[np.newaxis, :], (region_size, 1))
+        coords = np.stack((coords_y, coords_x), axis=2).reshape((region_size**2, 2))
+        coords = torch.from_numpy(coords).to(torch.float).to(self.device)
+        return coords
+
+    def _generate_region_point(self, heatmap, ridx, center, h=240, w=320):
+        """
+        通过ridx采样heatmap上的区域点的概率，然后归一化各个区域中的概率并求得该区域中的关键点位置
+        Args:
+            heatmap: (bt,h,w) 网络预测的热图
+            ridx: (bt,100,121) 各个区域的索引
+            center: (bt,100,2) 各个区域的中心点坐标
+        Returns:
+            points: (bt,100,2) 各个区域加权平均后的关键点位置
+        """
+        bt, *_ = heatmap.shape
+        _, pt_num, region_volume = ridx.shape
+
+        heatmap = torch.reshape(heatmap, (bt, h*w))
+        ridx = torch.reshape(ridx, (bt, -1))
+
+        region_prob = torch.gather(heatmap, dim=1, index=ridx)  # (bt,100x121)
+        region_prob = torch.reshape(region_prob, (bt, pt_num, region_volume))  # (bt,100,121)
+        region_prob = region_prob / (torch.sum(region_prob, dim=2, keepdim=True))  # 对区域中的概率进行归一化
+
+        general_coords = self.general_coords.clone()
+        points = torch.sum(region_prob.unsqueeze(dim=3) * general_coords, dim=2)
+        points = points + center
+
+        return points
+
+    def _pred_homography(self, point_0, point_1):
+        """
+        首先构造线性方程，然后通过SVD分解求解单应矩阵
+        Args:
+            point_0: (bt,100,2)
+            point_1: (bt,100,2),两两相对应的匹配点
+        Returns:
+            homography_pred: (bt,3,3)预测的单应矩阵
+        """
+        bt, _, _ = point_0.shape
+        v1, u1 = torch.chunk(point_0, 2, dim=2)  # (bt,100,1)
+        v2, u2 = torch.chunk(point_1, 2, dim=2)
+
+        zeros = torch.zeros_like(v1)  # (bt,100,1)
+        ones = torch.ones_like(v1)  # (bt,100,1)
+
+        a1 = torch.cat((u1, v1, ones, zeros, zeros, zeros, -u1*u2, -v1*u2), dim=2)
+        a2 = torch.cat((zeros, zeros, zeros, u1, v1, ones, -u1*v2, -v1*v2), dim=2)
+
+        b1 = u2
+        b2 = v2
+
+        A = torch.cat((a1, a2), dim=1)  # (bt,200,8)
+        b = torch.cat((b1, b2), dim=1)  # (bt,200,1)
+
+        u, s, v = torch.svd(A)
+        b = torch.matmul(torch.transpose(u, 1, 2), b)[:, :, 0]  # [bt,8]
+        h1_8 = torch.matmul(v, (b / s).unsqueeze(dim=2))[:, :, 0]  # [bt,8]
+        h9 = torch.ones_like(h1_8)[:, :1]  # [bt,1]
+        homography_pred = torch.cat((h1_8, h9), dim=1).reshape((bt, 3, 3))
+
+        return homography_pred
+
+    def _generate_constant_coords(self, total_num=100):
+        """提前生成用于计算重投影误差的点坐标"""
+        coords_x = np.tile(np.linspace(0, self.width-1, total_num)[np.newaxis, :], (total_num, 1))  # [n,n]
+        coords_y = np.tile(np.linspace(0, self.height-1, total_num)[:, np.newaxis], (1, total_num))
+        ones = np.ones_like(coords_x)
+        coords = np.stack((coords_x, coords_y, ones), axis=2).reshape((total_num**2, 3, 1))  # [n^2,3,1]
+        coords = torch.from_numpy(coords).to(torch.float).to(self.device)
+        return coords
+
+    def _compute_reprojection_error(self, homography_pred, homography_gt):
+        """通过投影预先采样的点计算两个单应变换之间的重投影误差"""
+        sample_point = self.sample_coords.clone().unsqueeze(dim=0)  # [1,n,3,1]
+
+        point_pred = torch.matmul(homography_pred.unsqueeze(dim=1), sample_point)[:, :, :, 0]
+        point_pred = point_pred[:, :, :2] / (point_pred[:, :, 2:3] + 1e-6)  # [bt,n,2]
+
+        point_gt = torch.matmul(homography_gt.unsqueeze(dim=1), sample_point)[:, :, :, 0]
+        point_gt = point_gt[:, :, :2] / (point_gt[:, :, 2:3] + 1e-6)
+
+        error = torch.norm((point_pred - point_gt), dim=2)
+        # error = 0.5*self.c**2*torch.log(1.0+(error/self.c)**2)
+        error = torch.mean(error)
+
+        return error
+
+    def _compute_homography_diff(self, homography_0, homography_1):
+        """直接计算两个单应矩阵的差值的模作为loss"""
+        diff = homography_0 - homography_1
+        diff = torch.norm(diff, dim=(1, 2))
+
+        # debug use
+        # diff_np = diff.detach().cpu().numpy()
+
+        diff = torch.mean(diff)
+        return diff
+
+    def __call__(self, heatmap_pred, heatmap_gt, ridx, center,
+                 warped_heatmap_pred, warped_heatmap_gt, warped_ridx, warped_center, homography_gt,
+                 *args, **kwargs):
+        heatmap_pred = torch.sigmoid(heatmap_pred)
+        warped_heatmap_pred = torch.sigmoid(warped_heatmap_pred)
+
+        # 用heatmap_pred与warped_heatmap_pred求解单应变换
+        points_pred = self._generate_region_point(heatmap_pred, ridx, center)
+        warped_points_pred = self._generate_region_point(warped_heatmap_pred, warped_ridx, warped_center)
+        homography_pred_0 = self._pred_homography(points_pred, warped_points_pred)
+        loss = self._compute_homography_diff(homography_pred_0, homography_gt)
+        # loss = self._compute_reprojection_error(homography_pred_0, homography_gt)
+
+        # 用heatmap_gt与warped_heatmap_pred求解单应变换
+        # points_gt = self._generate_region_point(heatmap_gt, ridx, center)
+        # warped_points_pred = self._generate_region_point(warped_heatmap_pred, warped_ridx, warped_center)
+        # homography_pred_0 = self._pred_homography(points_gt, warped_points_pred)
+        # loss_0 = self._compute_homography_diff(homography_pred_0, homography_gt)
+        # loss_0 = self._compute_reprojection_error(homography_pred_0, homography_gt)
+
+        # 用warped_heatmap_gt与heatmap_pred求解单应变换
+        # points_pred = self._generate_region_point(heatmap_pred, ridx, center)
+        # warped_points_gt = self._generate_region_point(warped_heatmap_gt, warped_ridx, warped_center)
+        # homography_pred_1 = self._pred_homography(points_pred, warped_points_gt)
+        # loss_1 = self._compute_homography_diff(homography_pred_1, homography_gt)
+
+        # loss = 0.5*(loss_0 + loss_1)
+
+        return loss
+
+
+class ReprojectionLoss(HomographyReprojectionLoss):
+    """仅通过真值计算关键点重投影误差"""
+
+    def __init__(self, device, height, width, half_region_size):
+        super(ReprojectionLoss, self).__init__(device, height, width, half_region_size)
+
+    def _compute_reprojection_loss(self, point_0, point_1, homography_gt):
+        """计算点point0投影到point1'与point1之间的重投影误差"""
+        point_0 = torch.flip(point_0, dims=[2])
+        point_1 = torch.flip(point_1, dims=[2])
+        ones = torch.ones_like(point_0)[:, :, 0:1]
+
+        homo_point_0 = torch.cat((point_0, ones), dim=2).unsqueeze(dim=3)  # [bt,100,3,1]
+        homography_gt = homography_gt.unsqueeze(dim=1)  # [bt,1,3,3]
+        project_point_0 = torch.matmul(homography_gt, homo_point_0)[:, :, :, 0]  # [bt,100,3]
+        project_point_0 = project_point_0[:, :, :2] / project_point_0[:, :, 2:3]  # [bt,100,2]
+
+        reproject_loss = torch.norm(project_point_0 - point_1, dim=2)
+        reproject_loss = torch.mean(reproject_loss)
+
+        return reproject_loss
+
+    def __call__(self, heatmap_pred, ridx, center, warped_heatmap_pred, warped_ridx, warped_center, homography_gt,
+                 *args, **kwargs):
+        heatmap_pred = torch.sigmoid(heatmap_pred)
+        warped_heatmap_pred = torch.sigmoid(warped_heatmap_pred)
+
+        points_pred = self._generate_region_point(heatmap_pred, ridx, center)
+        warped_points_pred = self._generate_region_point(warped_heatmap_pred, warped_ridx, warped_center)
+
+        loss = self._compute_reprojection_loss(points_pred, warped_points_pred, homography_gt)
+
+        return loss
+
+
 def interpolation(image, homo):
     """
     对批图像进行单应变换，输入要求image与homo的batch数目相等，插值方式采用双线性插值，空白区域补零
