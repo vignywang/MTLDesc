@@ -21,6 +21,7 @@ from data_utils.coco_dataset import COCOMegPointHeatmapTrainDataset
 from data_utils.coco_dataset import COCOMegPointHeatmapOnlyDataset
 from data_utils.coco_dataset import COCOMegPointHeatmapOnlyIndexDataset
 from data_utils.coco_dataset import COCOMegPointDescriptorOnlyDataset
+from data_utils.ppg_dataset import PPGMegPointHeatmapOnlyDataset
 from data_utils.synthetic_dataset import SyntheticHeatmapDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
@@ -177,6 +178,7 @@ class MegPointTrainerTester(object):
         self.homo_weight = params.homo_weight
         self.repro_weight = params.repro_weight
         self.half_region_size = params.half_region_size
+        self.dataset_type = params.dataset_type
 
         # todo:
         self.sift = cv.xfeatures2d.SIFT_create(1000)
@@ -276,8 +278,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             self.logger.info("Initialize COCOMegPointHeatmapTrainDataset")
             self.train_dataset = COCOMegPointHeatmapTrainDataset(self.params)
         elif self.train_mode == "only_detector":
-            self.logger.info("Initialize COCOMegPointHeatmapOnlyDataset")
-            self.train_dataset = COCOMegPointHeatmapOnlyDataset(self.params)
+            if self.dataset_type == "coco":
+                self.logger.info("Initialize COCOMegPointHeatmapOnlyDataset")
+                self.train_dataset = COCOMegPointHeatmapOnlyDataset(self.params)
+            elif self.dataset_type == "ppg":
+                self.logger.info("Intialize COCOPPgPointHeatmapOnlyDataset")
+                self.train_dataset = PPGMegPointHeatmapOnlyDataset(self.params)
         elif self.train_mode == "only_detector_index":
             self.logger.info("Initialize COCOMegPointHeatmapOnlyIndexDataset")
             self.train_dataset = COCOMegPointHeatmapOnlyIndexDataset(self.params)
@@ -506,7 +512,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             warped_heatmap_gt = data['warped_heatmap'].to(self.device)
             warped_point_mask = data['warped_point_mask'].to(self.device)
 
-            homography = data["homography"].to(self.device)
+            # homography = data["homography"].to(self.device)
 
             image_pair = torch.cat((image, warped_image), dim=0)
             heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
@@ -514,15 +520,16 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
             heatmap_pred_pair, _ = self.model(image_pair)
 
-            heatmap_pred, warped_heatmap_pred = torch.chunk(heatmap_pred_pair, 2, dim=0)
-            align_loss = self.align_loss(heatmap_pred, warped_heatmap_pred, homography, warped_point_mask,
-                                         heatmap_gt_t=warped_heatmap_gt)
+            # heatmap_pred, warped_heatmap_pred = torch.chunk(heatmap_pred_pair, 2, dim=0)
+            # align_loss = self.align_loss(heatmap_pred, warped_heatmap_pred, homography, warped_point_mask,
+            #                              heatmap_gt_t=warped_heatmap_gt)
 
             heatmap_pred_pair = heatmap_pred_pair.squeeze()
 
             point_loss = self.point_loss(heatmap_pred_pair, heatmap_gt_pair, point_mask_pair)
 
-            loss = point_loss + self.align_weight*align_loss
+            # loss = point_loss + self.align_weight*align_loss
+            loss = point_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -535,7 +542,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             if i % self.log_freq == 0:
 
                 point_loss_val = point_loss.item()
-                align_loss_val = align_loss.item()
+                # align_loss_val = align_loss.item()
+                align_loss_val = 0
                 loss_val = loss.item()
 
                 self.logger.info(
