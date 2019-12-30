@@ -44,6 +44,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.half_region_size = 7
         self.repro_weight = 0.1
         self.tmp_ckpt_file = ""
+        self.dataset_type = "coco"
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -95,6 +96,8 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--prefix", type=str, default='exp')
         parser.add_argument("--detection_threshold", type=float, default=0.9)
 
+        parser.add_argument("--height", type=int, default=240)
+        parser.add_argument("--width", type=int, default=320)
         parser.add_argument("--network_arch", type=str, default="baseline")  # 目前为两种 baseline or resnet50
         parser.add_argument("--train_mode", type=str, default="with_gt")  # with_gt or without_gt
         parser.add_argument("--desp_loss", type=str, default="triplet")  # triplet or tuplet
@@ -114,6 +117,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--repro_weight", type=float, default=0.1)
         parser.add_argument("--half_region_size", type=int, default=7)
         parser.add_argument("--tmp_ckpt_file", type=str, default="")
+        parser.add_argument("--dataset_type", type=str, default="coco")
 
         return parser.parse_args()
 
