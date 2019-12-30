@@ -240,15 +240,15 @@ class MegPointShuffleHeatmap(nn.Module):
         c3 = self.relu(self.conv4b(c3))
 
         # fpn head
-        fpn_c3 = self.fpn_3(c3)
+        fpn_c3 = self.relu(self.fpn_3(c3))
         fpn_c3 = nn.functional.interpolate(fpn_c3, scale_factor=2, mode="bilinear", align_corners=True)
         fpn_c3 += c2
 
-        fpn_c2 = self.fpn_2(fpn_c3)
+        fpn_c2 = self.relu(self.fpn_2(fpn_c3))
         fpn_c2 = nn.functional.interpolate(fpn_c2, scale_factor=2, mode="bilinear", align_corners=True)
         fpn_c2 += c1
 
-        fpn_c1 = self.fpn_1(fpn_c2)
+        fpn_c1 = self.relu(self.fpn_1(fpn_c2))
         fpn_c1 = nn.functional.interpolate(fpn_c1, scale_factor=2, mode="bilinear", align_corners=True)
         fpn_c1 += c0
 
@@ -468,7 +468,7 @@ class ResNet(nn.Module):
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(1, self.inplanes, kernel_size=7, stride=2, padding=3,
+        self.conv1 = nn.Conv2d(1, self.inplanes, kernel_size=7, stride=1, padding=3,
                                bias=False)
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
@@ -478,7 +478,7 @@ class ResNet(nn.Module):
                                        dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
                                        dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=1,
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
                                        dilate=replace_stride_with_dilation[2])
 
         # Detector head
