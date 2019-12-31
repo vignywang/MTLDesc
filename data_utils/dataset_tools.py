@@ -30,8 +30,6 @@ class InfiniteDataLoader(DataLoader):
 class HomographyAugmentation(object):
 
     def __init__(self,
-                 height=240,
-                 width=320,
                  patch_ratio=0.8,
                  perspective_amplitude_x=0.2,
                  perspective_amplitude_y=0.2,
@@ -46,8 +44,6 @@ class HomographyAugmentation(object):
                  do_translation=True,
                  allow_artifacts=True
                  ):
-        self.height = height
-        self.width = width
         self.patch_ratio = patch_ratio
         self.perspective_amplitude_x = perspective_amplitude_x
         self.perspective_amplitude_y = perspective_amplitude_y
@@ -63,21 +59,22 @@ class HomographyAugmentation(object):
         self.allow_artifacts = allow_artifacts
 
     def __call__(self, image, points, mask=None, return_homo=False, required_point_num=False, required_num=100):
-        homography = self.sample()
+        h, w = image.shape
+        homography = self.sample(height=h, width=w)
         if required_point_num:
-            warped_points, warped_idx = self._warp_keypoints(points, homography, filter_org=True)
+            warped_points, warped_idx = self._warp_keypoints(points, homography, height=h, width=w, filter_org=True)
             while True:
                 if warped_points.shape[0] >= required_num:
                     break
                 else:
-                    homography = self.sample()
-                    warped_points, warped_idx = self._warp_keypoints(points, homography, filter_org=True)
+                    homography = self.sample(height=h, width=w)
+                    warped_points, warped_idx = self._warp_keypoints(points, homography, height=h, width=w, filter_org=True)
             points_same_with_warp = []
             for idx in warped_idx:
                 points_same_with_warp.append(points[idx])
             points = np.stack(points_same_with_warp, axis=0)
         else:
-            warped_points = self._warp_keypoints(points, homography)
+            warped_points = self._warp_keypoints(points, homography, height=h, width=w)
 
         if mask is None:
             warped_image, warped_mask = self._compute_warped_image_and_mask(image, homography)
@@ -93,12 +90,14 @@ class HomographyAugmentation(object):
             return warped_image, warped_mask, warped_points
 
     def warp(self, image):
-        homography = self.sample()
+        h, w = image.shape
+        homography = self.sample(height=h, width=w)
         image, mask = self._compute_warped_image_and_mask(image, homography)
         return image, mask, homography
 
     def _compute_warped_image_and_mask(self, image, homography, mask=None):
-        dsize = (self.width, self.height)
+        h, w = image.shape
+        dsize = (w, h)
         warped_image = cv.warpPerspective(image, homography, dsize=dsize, flags=cv.INTER_LINEAR)
         if mask is None:
             org_mask = np.ones_like(image, dtype=np.float32)
@@ -109,7 +108,7 @@ class HomographyAugmentation(object):
 
         return warped_image, valid_mask
 
-    def _warp_keypoints(self, points, homography, filter_org=False):
+    def _warp_keypoints(self, points, homography, height, width, filter_org=False):
         """
         通过单应变换将原始关键点集变换到新的关键点集下
         Args:
@@ -129,14 +128,14 @@ class HomographyAugmentation(object):
         new_points = new_points[:, :2] / new_points[:, 2:]  # 进行归一化
         new_points = new_points[:, ::-1]
         if not filter_org:
-            new_points = self._filter_keypoints(new_points)
+            new_points = self._filter_keypoints(new_points, height, width)
             return new_points
         else:
-            new_points, new_idx = self._filter_keypoints(new_points, filter_org=True)
+            new_points, new_idx = self._filter_keypoints(new_points, height, width, filter_org=True)
             return new_points, new_idx
 
-    def _filter_keypoints(self, points, filter_org=False):
-        boarder = np.array((self.height-1, self.width-1), dtype=np.float32)
+    def _filter_keypoints(self, points, height, width, filter_org=False):
+        boarder = np.array((height-1, width-1), dtype=np.float32)
         mask = (points >= 0)&(points <= boarder)
         in_idx = np.nonzero(np.all(mask, axis=1, keepdims=False))[0]
         in_points = []
@@ -152,7 +151,7 @@ class HomographyAugmentation(object):
         else:
             return in_points
 
-    def sample(self):
+    def sample(self, height, width):
 
         pts_1 = np.array(((0, 0), (0, 1), (1, 1), (1, 0)), dtype=np.float)  # 注意这里第一维是x，第二维是y
         margin = (1 - self.patch_ratio) / 2
@@ -248,7 +247,7 @@ class HomographyAugmentation(object):
             return coefficient_mat
 
         # 将矩形以及变换后的四边形坐标还原到实际尺度上，并计算他们之间对应的单应变换
-        size = np.array((self.width - 1, self.height - 1), dtype=np.float)
+        size = np.array((width - 1, height - 1), dtype=np.float)
         pts_1 *= size
         pts_2 *= size
 
@@ -263,14 +262,14 @@ class HomographyAugmentation(object):
 class PhotometricAugmentation(object):
 
     def __init__(self,
-                 gaussian_noise_mean=10,
+                 gaussian_noise_mean=0,
                  gaussian_noise_std=5,
                  speckle_noise_min_prob=0,
                  speckle_noise_max_prob=0.0035,
-                 brightness_max_abs_change=25,
-                 contrast_min=0.3,
-                 contrast_max=1.5,
-                 shade_transparency_range=(-0.5,0.8),
+                 brightness_max_abs_change=10,
+                 contrast_min=0.8,
+                 contrast_max=1.2,
+                 shade_transparency_range=(-0.5, 0.5),
                  shade_kernel_size_range=(50,100),
                  shade_nb_ellipese = 20,
                  motion_blur_max_kernel_size=7,
