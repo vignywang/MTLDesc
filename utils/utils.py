@@ -651,8 +651,13 @@ class PointHeatmapWeightedBCELoss(object):
 
     @staticmethod
     def _compute_masked_loss(unmasked_loss, mask):
-        valid_num = torch.sum(mask, dim=(1, 2))
-        masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
+        assert len(unmasked_loss.shape) == len(mask.shape)
+        if len(unmasked_loss.shape) == 3:
+            dim = (1, 2)
+        else:
+            dim = (2, 3)
+        valid_num = torch.sum(mask, dim=dim)
+        masked_loss = torch.sum(unmasked_loss * mask, dim=dim)
         masked_loss = masked_loss / (valid_num + 1)
         loss = torch.mean(masked_loss)
         return loss
