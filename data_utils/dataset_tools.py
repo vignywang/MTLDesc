@@ -87,7 +87,10 @@ class HomographyAugmentation(object):
             else:
                 return warped_image, warped_mask, warped_points, homography
         else:
-            return warped_image, warped_mask, warped_points
+            if required_point_num:
+                return warped_image, warped_mask, warped_points, points
+            else:
+                return warped_image, warped_mask, warped_points
 
     def warp(self, image):
         h, w = image.shape
@@ -124,7 +127,7 @@ class HomographyAugmentation(object):
             return points
         points = np.flip(points, axis=1)
         points = np.concatenate((points, np.ones((n, 1))), axis=1)[:, :, np.newaxis]
-        new_points = np.matmul(homography, points)[:, :, 0]
+        new_points = np.matmul(homography, points)[:, :, 0].astype(np.float32)
         new_points = new_points[:, :2] / new_points[:, 2:]  # 进行归一化
         new_points = new_points[:, ::-1]
         if not filter_org:
