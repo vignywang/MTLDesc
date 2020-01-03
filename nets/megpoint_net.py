@@ -532,7 +532,7 @@ class ResNet(nn.Module):
                                bias=False)
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
-        # self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
                                        dilate=replace_stride_with_dilation[0])
@@ -540,10 +540,12 @@ class ResNet(nn.Module):
                                        dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
                                        dilate=replace_stride_with_dilation[2])
-
-        # Detector head
-        self.convPa = nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=1)
-        self.convPb = nn.Conv2d(256, 64, kernel_size=3, stride=1, padding=1)  # different from superpoint
+        # self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        # self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.compress1 = nn.Conv2d(64, 32, kernel_size=1, stride=1)
+        self.compress2 = nn.Conv2d(128, 32, kernel_size=1, stride=1)
+        self.compress3 = nn.Conv2d(256, 32, kernel_size=1, stride=1)
+        self.compress4 = nn.Conv2d(512, 32, kernel_size=1, stride=1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -592,16 +594,35 @@ class ResNet(nn.Module):
         x = self.relu(x)
         # x = self.maxpool(x)
 
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
 
-        cPa = self.relu(self.convPa(x))
-        cPb = self.convPb(cPa)
-        heatmap = f.pixel_shuffle(cPb, upscale_factor=8)
+        compress1 = self.compress1(c1)
+        compress2 = self.compress2(c2)
+        compress3 = self.compress3(c3)
+        compress4 = self.compress4(c4)
 
-        return heatmap, None
+        return compress1, compress2, compress3, compress4
+
+
+class DescriptorExtractor(nn.Module):
+    """
+    与resnet配套使用的描述子生成器，其作用在于融合多层级的特征
+    """
+    def __init__(self):
+        super(DescriptorExtractor, self).__init__()
+        self.fc1 = nn.Linear((64+128+256+512), 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.fc2(x)
+        x = x / torch.norm(x, dim=2, keepdim=True)
+
+        return x
 
 
 def _resnet(arch, block, layers, pretrained, progress, **kwargs):
