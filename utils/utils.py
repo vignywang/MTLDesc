@@ -162,6 +162,43 @@ class DescriptorTripletLoss(object):
             return loss
 
 
+class DescriptorGeneralTripletLoss(object):
+    """
+    专用于升级版的描述子提取网络的训练loss
+    """
+
+    def __init__(self, device):
+        self.device = device
+
+    def __call__(self, desp_0, desp_1, not_search_mask):
+        """
+        Args:
+            desp_0: [bt,n,dim]
+            desp_1: [bt,n,dim]
+        Returns:
+            loss
+        """
+
+        desp_1 = desp_1.transpose(1, 2)  # [bt,dim,n]
+
+        cos_similarity = torch.matmul(desp_0, desp_1)  # [bt,n,n]
+        dist = torch.sqrt(2.*(1.-cos_similarity)+1e-4)
+
+        # not_search_mask = torch.eye(n, n, dtype=torch.float, device=self.device)
+        positive_pair = torch.diagonal(dist, dim1=1, dim2=2)  # [bt,n]
+        dist = dist + 10*not_search_mask
+
+        hardest_negative_pair, hardest_negative_idx = torch.min(dist, dim=2)  # [bt,n]
+
+        # zeros = torch.zeros_like(positive_pair)
+        # loss_total, _ = torch.max(torch.stack((zeros, 1.+positive_pair-hardest_negative_pair), dim=1), dim=1)
+        loss_total = torch.relu(1.+positive_pair-hardest_negative_pair)
+
+        loss = torch.mean(loss_total)
+
+        return loss
+
+
 class DescriptorPreciseTripletLoss(object):
     """该类默认输入的描述子是一一配对的，不需要输入配对信息"""
 
