@@ -45,6 +45,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.repro_weight = 0.1
         self.tmp_ckpt_file = ""
         self.dataset_type = "coco"
+        self.sample_num = 100
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -118,6 +119,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--half_region_size", type=int, default=7)
         parser.add_argument("--tmp_ckpt_file", type=str, default="")
         parser.add_argument("--dataset_type", type=str, default="coco")
+        parser.add_argument("--sample_num", type=int, default=100)
 
         return parser.parse_args()
 
