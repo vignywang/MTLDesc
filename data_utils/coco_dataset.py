@@ -720,61 +720,188 @@ class COCOMegPointHeatmapOnlyDataset(COCOMegPointHeatmapTrainDataset):
         }
 
 
-class COCOMegPointDescriptorOnlyDataset(COCOMegPointHeatmapTrainDataset):
+class COCOMegPointDescriptorOnlyDataset(Dataset):
     """
     这个类只输出有关描述子训练相关所需要的数据
     """
     def __init__(self, params):
-        super(COCOMegPointDescriptorOnlyDataset, self).__init__(params)
+        self.params = params
+        self.height = params.height
+        self.width = params.width
+        self.sample_num = params.sample_num
+
+        # self.params.logger.info("Initialize MegPoint Train Dataset: %s" % self.dataset_dir)
+        self.dataset_dir = params.dataset_dir
+        self.image_list = self._format_file_list()
+
+        self.homography = HomographyAugmentation()
+        self.photometric = PhotometricAugmentation()
+
+        self.fix_grid = self._generate_fixed_grid()
+
+    def __len__(self):
+        return len(self.image_list)
 
     def __getitem__(self, idx):
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
-        point = np.load(self.point_list[idx])
-        point_mask = np.ones_like(image).astype(np.float32)
+        image = self._crop_and_resize(image)
 
-        # 由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        # 1、得到随机采样的图像点
+        point = self._random_sample_point()
+
+        # 2、由随机采样的单应变换得到第二副图像 todo
         if torch.rand([]).item() < 0.5:
-             warped_image, warped_point_mask, warped_point, homography = \
-             image.copy(), point_mask.copy(), point.copy(), np.eye(3)
+            warped_image, warped_point, homography = image.copy(), point.copy(), np.eye(3)
         else:
-            warped_image, warped_point_mask, warped_point, homography = self.homography(
-                image, point, mask=point_mask, return_homo=True)
+            warped_image, _, warped_point, point, homography = self.homography(
+                image, point, required_point_num=True, required_num=point.shape[0], return_homo=True)
 
-        # 1、对图像增加哎噪声
+        not_search_mask = self._generate_not_search_mask(point, warped_point, homography)
+
+        # 3、按0.5的概率对两张图像进行加噪声
         if torch.rand([]).item() < 0.5:
             image = self.photometric(image)
         if torch.rand([]).item() < 0.5:
             warped_image = self.photometric(warped_image)
 
-        image = torch.from_numpy(image).to(torch.float).unsqueeze(dim=0)
-        point_mask = torch.from_numpy(point_mask)
+        # debug use
+        # image_point = draw_image_keypoints(image, point, show=False)
+        # warped_image_point = draw_image_keypoints(warped_image, warped_point, show=False)
+        # cat_all = np.concatenate((image_point, warped_image_point), axis=1)
+        # cv.imshow("cat_all", cat_all)
+        # cv.waitKey()
 
-        warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0)
-        warped_point_mask = torch.from_numpy(warped_point_mask)
+        # todo
+        image = image.astype(np.float32) * 2. / 255. - 1.
+        warped_image = warped_image.astype(np.float32) * 2. / 255. - 1.
 
-        image = image*2./255. - 1.
-        warped_image = warped_image*2./255. - 1.
-
-        # 3、对构造描述子loss有关关系的计算
-        # 3.1 由变换有效点的掩膜得到有效描述子的掩膜
-        warped_valid_mask = space_to_depth(warped_point_mask).clamp(0, 1).to(torch.uint8)
-        warped_valid_mask = torch.all(warped_valid_mask, dim=0).to(torch.float)
-        warped_valid_mask = warped_valid_mask.reshape((-1,))
-
-        matched_idx, matched_valid, not_search_mask = self.generate_corresponding_relationship(
-            homography, warped_valid_mask)
-
-        matched_idx = torch.from_numpy(matched_idx)
-        matched_valid = torch.from_numpy(matched_valid).to(torch.float)
+        image = torch.from_numpy(image).unsqueeze(dim=0)
+        point = torch.from_numpy(self._scale_point_for_sample(point))
+        warped_image = torch.from_numpy(warped_image).unsqueeze(dim=0)
+        warped_point = torch.from_numpy(self._scale_point_for_sample(warped_point))
         not_search_mask = torch.from_numpy(not_search_mask)
 
         return {
             "image": image,
+            "point": point,
             "warped_image": warped_image,
-            "matched_idx": matched_idx,
-            "matched_valid": matched_valid,
+            "warped_point": warped_point,
             "not_search_mask": not_search_mask,
         }
+
+    def _generate_not_search_mask(self, point, warped_point, homography, threshold=16):
+        """
+        距离小于域值范围非匹配点不计入负样本范围
+        Args:
+            point: [n,2] 与warped_point一一对应
+            warped_point: [n,2]
+            homography: 点对之间的变换关系
+
+        Returns:
+            not_search_mask: [n,n] type为float32的mask,不搜索的位置为1
+        """
+        point = np.concatenate((point[:, ::-1], np.ones((point.shape[0], 1))), axis=1)[:, :, np.newaxis]  # [n,3,1]
+        project_point = np.matmul(homography, point)[:, :, 0]
+        project_point = project_point[:, :2] / project_point[:, 2:3]
+
+        dist = np.linalg.norm(project_point[:, np.newaxis, ::-1] - warped_point[np.newaxis, :], axis=2)
+        not_search_mask = (dist <= threshold).astype(np.float32)
+        return not_search_mask
+
+    def _scale_point_for_sample(self, point):
+        """
+        将点归一化到[-1,1]的区间范围内，并调换顺序为x,y，方便采样
+        Args:
+            point: [n,2] y,x的顺序，原始范围为[0,height-1], [0,width-1]
+        Returns:
+            point: [n,1,2] x,y的顺序，范围为[-1,1]
+        """
+        org_size = np.array((self.height-1, self.width-1), dtype=np.float32)
+        point = ((point * 2. / org_size - 1.)[:, ::-1])[:, np.newaxis, :].copy()
+        return point
+
+    def _random_sample_point(self, num=100):
+        """
+        根据预设的输入图像大小，随机均匀采样坐标点
+        Returns:
+            point: [num+20,2] num+20个随机采样的坐标点
+        """
+        num = num + 20
+        assert num+20 <= 225
+        grid = self.fix_grid.copy()
+        # 随机选择指定数目个格子
+
+        # org_list = np.arange(0, 225)
+        # np.random.shuffle(org_list)
+        # random_idx = org_list[:num]
+        # random_idx = np.random.randint(0, 225, (num,))
+        # point_list = []
+        # for idx in random_idx:
+        #     y_start, x_start, y_end, x_end = grid[idx]
+        #     rand_y = np.random.randint(y_start, y_end)
+        #     rand_x = np.random.randint(x_start, x_end)
+        #     point_list.append(np.array((rand_y, rand_x), dtype=np.float32))
+        # point = np.stack(point_list, axis=0)
+
+        # 取格子的中心当作采样点
+        point_list = []
+        for i in range(grid.shape[0]):
+            y_start, x_start, y_end, x_end = grid[i]
+            y = (y_end - y_start) / 2 + y_start
+            x = (x_end - x_start) / 2 + x_start
+            point_list.append(np.array((y, x), dtype=np.float32))
+        point = np.stack(point_list, axis=0)
+
+        return point
+
+    def _generate_fixed_grid(self, x_num=30, y_num=30):
+        """
+        预先采样固定间隔的225个图像格子
+        """
+        grid_y = np.linspace(0, self.height-1, y_num+1, dtype=np.int)
+        grid_x = np.linspace(0, self.width-1, x_num+1, dtype=np.int)
+
+        grid_y_start = grid_y[:y_num].copy()
+        grid_y_end = grid_y[1:y_num+1].copy()
+        grid_x_start = grid_x[:x_num].copy()
+        grid_x_end = grid_x[1:x_num+1].copy()
+
+        grid_start = np.stack((np.tile(grid_y_start[:, np.newaxis], (1, x_num)),
+                               np.tile(grid_x_start[np.newaxis, :], (y_num, 1))), axis=2).reshape((-1, 2))
+        grid_end = np.stack((np.tile(grid_y_end[:, np.newaxis], (1, x_num)),
+                             np.tile(grid_x_end[np.newaxis, :], (y_num, 1))), axis=2).reshape((-1, 2))
+        grid = np.concatenate((grid_start, grid_end), axis=1)
+
+        return grid
+
+    def _crop_and_resize(self, img):
+        """
+        裁减图像并缩放到指定大小
+        """
+        org_height, org_width = img.shape
+        ratio = self.height / self.width
+        if org_height >= int(org_width * ratio):
+            cur_height = int(org_width * ratio)
+            delta = org_height - cur_height
+            h_min = delta // 2
+            h_max = h_min + cur_height
+            img = img[h_min: h_max, :]
+        else:
+            cur_width = int(org_height / ratio)
+            delta = org_width - cur_width
+            w_min = delta // 2
+            w_max = w_min + cur_width
+            img = img[:, w_min: w_max]
+        img = cv.resize(img, (self.width, self.height), None, interpolation=cv.INTER_LINEAR)
+
+        return img
+
+    def _format_file_list(self):
+        dataset_dir = self.dataset_dir
+        image_list = glob.glob(os.path.join(dataset_dir, "*.jpg"))
+        image_list = sorted(image_list)
+
+        return image_list
 
 
 class COCOMegPointHeatmapOnlyIndexDataset(COCOMegPointHeatmapTrainDataset):
@@ -1287,58 +1414,17 @@ if __name__ == "__main__":
     np.random.seed(2343)
 
     class Parameters:
-        coco_dataset_dir = '/data/MegPoint/dataset/coco'
-        height = 240
-        width = 320
-        do_augmentation = True
-        coco_pseudo_idx = '0'
-        loss_type = 'triplet'  # 'binary'
-
-        homography_params = {
-            'patch_ratio': 0.8,  # 0.8,
-            'perspective_amplitude_x': 0.2,  # 0.2,
-            'perspective_amplitude_y': 0.2,  # 0.2,
-            'scaling_sample_num': 5,
-            'scaling_amplitude': 0.2,
-            'translation_overflow': 0.05,
-            'rotation_sample_num': 25,
-            'rotation_max_angle': np.pi / 2,  # np.pi / 2,
-            'do_perspective': True,
-            'do_scaling': True,
-            'do_rotation': True,
-            'do_translation': True,
-            'allow_artifacts': True
-        }
-
-        photometric_params = {
-            'gaussian_noise_mean': 0,  # 10,
-            'gaussian_noise_std': 5,
-            'speckle_noise_min_prob': 0,
-            'speckle_noise_max_prob': 0.0035,
-            'brightness_max_abs_change': 25,  # 25,
-            'contrast_min': 0.5,  # 0.3,
-            'contrast_max': 1.5,  # 1.5,
-            'shade_transparency_range': (-0.5, 0.5),  # (-0.5, 0.8),
-            'shade_kernel_size_range': (100, 150),  # (50, 100),
-            'shade_nb_ellipese': 20,
-            'motion_blur_max_kernel_size': 7,
-            'do_gaussian_noise': True,
-            'do_speckle_noise': True,
-            'do_random_brightness': True,
-            'do_random_contrast': True,
-            'do_shade': True,
-            'do_motion_blur': True
-        }
-
+        dataset_dir = "/data/MegPoint/dataset/coco/train2014/images"
+        height = 224
+        width = 224
+        sample_num = 100
 
     params = Parameters()
-    superpoint_train_dataset = COCOSuperPointTrainDataset(params)
-    # magicpoint_adaption_dataset = COCOAdaptionTrainDataset(params)
+    superpoint_train_dataset = COCOMegPointDescriptorOnlyDataset(params)
     for i, data in enumerate(superpoint_train_dataset):
-    # for i, data in enumerate(magicpoint_adaption_dataset):
-        image = data['image']
-        label = data['label']
-        mask = data['mask']
+        a = 3
+
+
 
 
 
