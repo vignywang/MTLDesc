@@ -243,6 +243,201 @@ class SyntheticHeatmapDataset(Dataset):
         return image_list, point_list
 
 
+class SyntheticHeatmapPatchDataset(Dataset):
+
+    def __init__(self, params):
+        self.params = params
+        self.height = params.height
+        self.width = params.width
+
+        self.sub_height = params.sub_height
+        self.sub_width = params.sub_width
+        self.patch_num = params.patch_num_train
+
+        self.dataset_dir = params.synthetic_dataset_dir
+        self.image_list, self.point_list = self._format_file_list()
+        self.homography_augmentation = HomographyAugmentation()
+        self.photometric_augmentation = PhotometricAugmentation()
+
+    def __len__(self):
+        assert len(self.image_list) == len(self.point_list)
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        point = np.load(self.point_list[idx])
+
+        mask = np.ones_like(image, dtype=np.float32)
+        if np.random.rand() >= 0.1:
+            image, mask, point = self.homography_augmentation(image, point)
+            image = self.photometric_augmentation(image)
+
+        heatmap = self._convert_points_to_heatmap(points=point)
+
+        patch_img, patch_heatmap, patch_mask = self._patch_generate(image, point, heatmap, mask)
+
+        # debug show
+        # self._debug_patch_show(patch_img, patch_heatmap, patch_mask)
+
+        patch_img = patch_img.astype(np.float32) * 2. / 255. - 1.  # 归一化到[-1,1]之间
+        patch_img = torch.from_numpy(patch_img)
+        patch_heatmap = torch.from_numpy(patch_heatmap)
+        patch_mask = torch.from_numpy(patch_mask)
+
+        sample = {
+            "patch_img": patch_img,
+            "patch_heatmap": patch_heatmap,
+            "patch_mask": patch_mask,
+        }
+        return sample
+
+    def _patch_generate(self, image, point, heatmap, mask):
+        """
+        根据图像，对应heatmap及mask获取指定数量的图像块、对应的块heatmap和块mask
+        """
+        # 根据原始点位置确定采样点，采样点数目预先指定
+        pt_num = point.shape[0]
+        if pt_num <= 0:
+            random_y = np.random.randint(0, self.height-1, (self.patch_num, 1))
+            random_x = np.random.randint(0, self.width-1, (self.patch_num, 1))
+            point = np.concatenate((random_y, random_x), axis=1)
+        elif pt_num < self.patch_num:
+            point = np.round(point).astype(np.int)
+            repeat_num = self.patch_num // pt_num
+            left_num = self.patch_num - repeat_num * pt_num
+            point = np.tile(point, (repeat_num, 1))
+
+            random_y = np.random.randint(0, self.height-1, (left_num, 1))
+            random_x = np.random.randint(0, self.width-1, (left_num, 1))
+            left_point = np.concatenate((random_y, random_x), axis=1)
+
+            point = np.concatenate((point, left_point), axis=0)
+        else:
+            random_idx = np.random.randint(0, pt_num, size=(self.patch_num,))
+            point = point[random_idx]
+            point = np.round(point).astype(np.int)
+
+        # 根据采样的点确定采样的区域，区域中该点的位置随机
+        patch_img_list = []
+        patch_heatmap_list = []
+        patch_mask_list = []
+        for i in range(self.patch_num):
+            pt_y, pt_x = point[i]
+            dis_y = np.random.randint(0, self.sub_height - 1)
+            dis_x = np.random.randint(0, self.sub_width - 1)
+            start_y = pt_y - dis_y
+            start_x = pt_x - dis_x
+
+            if start_y < 0:
+                start_y = 0
+            elif start_y + self.sub_height > self.height:
+                start_y = self.height - self.sub_height
+
+            if start_x < 0:
+                start_x = 0
+            elif start_x + self.sub_width > self.width:
+                start_x = self.width - self.sub_width
+
+            patch_img = image[start_y: start_y+self.sub_height, start_x: start_x+self.sub_width].copy()
+            patch_heatmap = heatmap[start_y: start_y+self.sub_height, start_x: start_x+self.sub_width].copy()
+            patch_mask = mask[start_y: start_y+self.sub_height, start_x: start_x+self.sub_width].copy()
+            patch_img_list.append(patch_img)
+            patch_heatmap_list.append(patch_heatmap)
+            patch_mask_list.append(patch_mask)
+
+        patch_img = np.stack(patch_img_list, axis=0)
+        patch_heatmap = np.stack(patch_heatmap_list, axis=0)
+        patch_mask = np.stack(patch_mask_list, axis=0)
+        return patch_img, patch_heatmap, patch_mask
+
+    def _debug_patch_show(self, patch_img, patch_heatmap, patch_mask):
+        stitch_img = []
+        stitch_heatmap = []
+        stitch_mask = []
+        for i in range(8):
+            row_img = []
+            row_heatmap = []
+            row_mask = []
+            for j in range(8):
+                idx = int(i*8+j)
+                row_img.append(patch_img[idx].copy())
+                row_heatmap.append(patch_heatmap[idx].copy())
+                row_mask.append(patch_mask[idx].copy())
+            stitch_img.append(np.concatenate(row_img, axis=1))
+            stitch_heatmap.append(np.concatenate(row_heatmap, axis=1))
+            stitch_mask.append(np.concatenate(row_mask, axis=1))
+        stitch_img = np.concatenate(stitch_img, axis=0)
+        stitch_heatmap = (np.concatenate(stitch_heatmap, axis=0)*255).astype(np.uint8)
+        stitch_mask = (np.concatenate(stitch_mask, axis=0)*255).astype(np.uint8)
+        cat_all = np.concatenate((stitch_img, stitch_heatmap, stitch_mask), axis=1)
+
+        cv.imwrite("/home/zhangyuyang/tmp_images/megpoint_debugdataset/patch_cat.jpg", cat_all)
+        cv.imshow("all", cat_all)
+        cv.waitKey()
+        # a = 3
+
+    def _convert_points_to_heatmap(self, points):
+        """
+        将原始点位置经下采样后得到heatmap与incmap，heatmap上对应下采样整型点位置处的值为1，其余为0；incmap与heatmap一一对应，
+        在关键点位置处存放整型点到亚像素角点的偏移量，以及训练时用来屏蔽非关键点inc量的incmap_valid
+        Args:
+            points: [n,2]
+
+        Returns:
+            heatmap: [h,w] 关键点位置为1，其余为0
+            incmap: [2,h,w] 关键点位置存放实际偏移，其余非关键点处的偏移量为0
+            incmap_valid: [h,w] 关键点位置为1，其余为0，用于训练时屏蔽对非关键点偏移量的训练，只关注关键点的偏移量
+
+        """
+        height = self.height
+        width = self.width
+
+        heatmap = np.zeros((height, width), dtype=np.float32)
+
+        num_pt = points.shape[0]
+        if num_pt > 0:
+            for i in range(num_pt):
+                pt = points[i]
+                pt_y_float, pt_x_float = pt
+
+                pt_y_int = np.round(pt_y_float)
+                pt_x_int = np.round(pt_x_float)
+
+                pt_y = int(pt_y_int)  # 对真值点位置进行下采样,这里有量化误差
+                pt_x = int(pt_x_int)
+
+                # 排除掉经下采样后在边界外的点
+                if pt_y < 0 or pt_y > height - 1:
+                    continue
+                if pt_x < 0 or pt_x > width - 1:
+                    continue
+
+                # 关键点位置在heatmap上置1，并在incmap上记录该点离亚像素点的偏移量
+                heatmap[pt_y, pt_x] = 1.0
+
+        return heatmap
+
+    def _format_file_list(self):
+        dataset_dir = self.dataset_dir
+        subfloder_dir = os.path.join(dataset_dir, "*")
+        subfloder_list = glob.glob(subfloder_dir)
+        subfloder_list = sorted(subfloder_list, key=lambda x: x.split('/')[-1])
+        image_list = []
+        point_list = []
+
+        for subfloder in subfloder_list:
+            subimage_dir = os.path.join(subfloder, "images/training/*.png")
+            subpoint_dir = os.path.join(subfloder, "points/training/*.npy")
+            subimage_list = glob.glob(subimage_dir)
+            subpoint_list = glob.glob(subpoint_dir)
+            subimage_list = sorted(subimage_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
+            subpoint_list = sorted(subpoint_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
+            image_list += subimage_list
+            point_list += subpoint_list
+
+        return image_list, point_list
+
+
 class SyntheticSuperPointStatisticDataset(Dataset):
 
     def __init__(self, params):
@@ -512,20 +707,12 @@ if __name__ == "__main__":
 
     class Parameters:
         synthetic_dataset_dir = "/data/MegPoint/dataset/synthetic"
-
         height = 240
         width = 320
-        do_augmentation = True
 
     params = Parameters()
-    synthetic_dataset = SyntheticTrainDataset(params=params)
-    # synthetic_dataset = SyntheticValTestDataset(params=params)
-    dataloader = DataLoader(synthetic_dataset, batch_size=1, shuffle=True, num_workers=4)
-    for i, data in enumerate(dataloader):
-        image = data['image'][0, 0].numpy().astype(np.uint8)
-        label = data['label'][0].numpy()
-        mask = data['mask'][0].numpy()
-        cv.imshow('image', image)
+    synthetic_dataset = SyntheticHeatmapPatchDataset(params=params)
+    for i, data in enumerate(synthetic_dataset):
         a = 3
 
 
