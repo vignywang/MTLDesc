@@ -34,7 +34,8 @@ class HomographyAugmentation(object):
                  perspective_amplitude_x=0.2,
                  perspective_amplitude_y=0.2,
                  scaling_sample_num=5,
-                 scaling_amplitude=0.2,
+                 scaling_low=0.8,
+                 scaling_up=2.0,
                  translation_overflow=0.05,
                  rotation_sample_num=25,
                  rotation_max_angle=np.pi/2,
@@ -48,7 +49,8 @@ class HomographyAugmentation(object):
         self.perspective_amplitude_x = perspective_amplitude_x
         self.perspective_amplitude_y = perspective_amplitude_y
         self.scaling_sample_num = scaling_sample_num
-        self.scaling_amplitude = scaling_amplitude
+        self.scaling_low = scaling_low
+        self.scaling_up = scaling_up
         self.translation_overflow = translation_overflow
         self.rotation_sample_num = rotation_sample_num
         self.rotation_max_angle = rotation_max_angle
@@ -186,7 +188,7 @@ class HomographyAugmentation(object):
         if self.do_scaling:
             # 得到n+1个尺度参数，其中最后一个为1，即不进行尺度化
             random_scales = torch.ones((self.scaling_sample_num,), dtype=torch.float).uniform_(
-                1-self.scaling_amplitude, 1+self.scaling_amplitude).numpy()
+                self.scaling_low, self.scaling_up).numpy()
             scales = np.concatenate((random_scales, np.ones((1,))), axis=0)
             # scales = np.concatenate((np.random.uniform(1-self.scaling_amplitude, 1+self.scaling_amplitude,
             #                                            size=(self.scaling_sample_num,)),

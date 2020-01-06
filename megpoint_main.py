@@ -53,7 +53,8 @@ class MegPointHeatmapParameters(BasicParameters):
             'perspective_amplitude_x': 0.3,  # 0.1
             'perspective_amplitude_y': 0.3,  # 0.1
             'scaling_sample_num': 5,
-            'scaling_amplitude': 0.2,  # 0.1
+            'scaling_low': 0.8,
+            'scaling_up': 2.0,
             'translation_overflow': 0.05,
             'rotation_sample_num': 25,
             'rotation_max_angle': np.pi/3,  # np.pi/2.,  # np.pi/3,
