@@ -748,15 +748,15 @@ class COCOMegPointDescriptorOnlyDataset(Dataset):
 
         # 1、得到随机采样的图像点
         point = self._random_sample_point()
+        height, width = image.shape
 
         # 2、由随机采样的单应变换得到第二副图像 todo
         if torch.rand([]).item() < 0.5:
-            warped_image, warped_point, homography = image.copy(), point.copy(), np.eye(3)
+            warped_image, homography = image.copy(), np.eye(3)
         else:
-            warped_image, _, warped_point, point, homography = self.homography(
-                image, point, required_point_num=True, required_num=point.shape[0], return_homo=True)
+            warped_image, _, homography = self.homography.warp(image)
 
-        not_search_mask = self._generate_not_search_mask(point, warped_point, homography)
+        warped_point, valid_mask, not_search_mask = self._generate_warped_point(point, homography, height, width)
 
         # 3、按0.5的概率对两张图像进行加噪声
         if torch.rand([]).item() < 0.5:
@@ -779,6 +779,8 @@ class COCOMegPointDescriptorOnlyDataset(Dataset):
         point = torch.from_numpy(self._scale_point_for_sample(point))
         warped_image = torch.from_numpy(warped_image).unsqueeze(dim=0)
         warped_point = torch.from_numpy(self._scale_point_for_sample(warped_point))
+
+        valid_mask = torch.from_numpy(valid_mask)
         not_search_mask = torch.from_numpy(not_search_mask)
 
         return {
@@ -786,27 +788,39 @@ class COCOMegPointDescriptorOnlyDataset(Dataset):
             "point": point,
             "warped_image": warped_image,
             "warped_point": warped_point,
+            "valid_mask": valid_mask,
             "not_search_mask": not_search_mask,
         }
 
-    def _generate_not_search_mask(self, point, warped_point, homography, threshold=16):
+    @ staticmethod
+    def _generate_warped_point(point, homography, height, width, threshold=16):
         """
-        距离小于域值范围非匹配点不计入负样本范围
+        根据投影变换得到变换后的坐标点，有效关系及不参与负样本搜索的矩阵
         Args:
             point: [n,2] 与warped_point一一对应
-            warped_point: [n,2]
             homography: 点对之间的变换关系
 
         Returns:
             not_search_mask: [n,n] type为float32的mask,不搜索的位置为1
         """
+        # 得到投影点的坐标
         point = np.concatenate((point[:, ::-1], np.ones((point.shape[0], 1))), axis=1)[:, :, np.newaxis]  # [n,3,1]
         project_point = np.matmul(homography, point)[:, :, 0]
         project_point = project_point[:, :2] / project_point[:, 2:3]
+        project_point = project_point[:, ::-1]  # 调换为y,x的顺序
 
-        dist = np.linalg.norm(project_point[:, np.newaxis, ::-1] - warped_point[np.newaxis, :], axis=2)
-        not_search_mask = (dist <= threshold).astype(np.float32)
-        return not_search_mask
+        # 投影点在图像范围内的点为有效点，反之则为无效点
+        boarder_0 = np.array((0, 0), dtype=np.float32)
+        boarder_1 = np.array((height-1, width-1), dtype=np.float32)
+        valid_mask = (project_point >= boarder_0) & (project_point <= boarder_1)
+        valid_mask = np.all(valid_mask, axis=1)
+        invalid_mask = ~valid_mask
+
+        # 根据无效点及投影点之间的距离关系确定不搜索的负样本矩阵
+
+        dist = np.linalg.norm(project_point[:, np.newaxis] - project_point[np.newaxis, :], axis=2)
+        not_search_mask = ((dist <= threshold) | invalid_mask[np.newaxis, :]).astype(np.float32)
+        return project_point.astype(np.float32), valid_mask.astype(np.float32), not_search_mask
 
     def _scale_point_for_sample(self, point):
         """
