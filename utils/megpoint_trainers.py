@@ -290,9 +290,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             self.logger.info("Initialize COCOMegPointHeatmapOnlyIndexDataset")
             self.train_dataset = COCOMegPointHeatmapOnlyIndexDataset(self.params)
         elif self.train_mode == "only_descriptor":
-            if self.params.height != 224 or self.params.width != 224:
-                self.logger.error("Training only descriptor only support 224x224 image input size!")
-                assert False
+            # if self.params.height != 224 or self.params.width != 224:
+            #     self.logger.error("Training only descriptor only support 224x224 image input size!")
+            #     assert False
             self.logger.info("Initialize COCOMegPointDescriptorOnlyDataset")
             self.train_dataset = COCOMegPointDescriptorOnlyDataset(self.params)
         else:
@@ -676,18 +676,24 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             warped_image = data["warped_image"].to(self.device)
             warped_point = data["warped_point"].to(self.device)
 
+            valid_mask = data["valid_mask"].to(self.device)
             not_search_mask = data["not_search_mask"].to(self.device)
 
             shape = image.shape
 
             image_pair = torch.cat((image, warped_image), dim=0)
             point_pair = torch.cat((point, warped_point), dim=0)
+
+            # _, coarse_desp_pair = self.model(image_pair)
+            # desp_pair = f.grid_sample(coarse_desp_pair, point_pair, mode="bilinear")[:, :, :, 0].transpose(1, 2)
+            # desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
+
             c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
 
-            c1_feature_pair = f.grid_sample(c1_pair, point_pair, mode="bilinear")
-            c2_feature_pair = f.grid_sample(c2_pair, point_pair, mode="bilinear")
-            c3_feature_pair = f.grid_sample(c3_pair, point_pair, mode="bilinear")
-            c4_feature_pair = f.grid_sample(c4_pair, point_pair, mode="bilinear")
+            c1_feature_pair = f.grid_sample(c1_pair, point_pair, mode="bilinear", padding_mode="border")
+            c2_feature_pair = f.grid_sample(c2_pair, point_pair, mode="bilinear", padding_mode="border")
+            c3_feature_pair = f.grid_sample(c3_pair, point_pair, mode="bilinear", padding_mode="border")
+            c4_feature_pair = f.grid_sample(c4_pair, point_pair, mode="bilinear", padding_mode="border")
 
             c1_0, c1_1 = torch.chunk(c1_feature_pair, 2, dim=0)
             c2_0, c2_1 = torch.chunk(c2_feature_pair, 2, dim=0)
@@ -704,7 +710,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # desp_0 = self.extractor(feature_0)
             # desp_1 = self.extractor(feature_1)
 
-            desp_loss = self.descriptor_loss(desp_0, desp_1, not_search_mask)
+            desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
 
             loss = desp_loss
 
