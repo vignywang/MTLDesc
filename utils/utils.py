@@ -170,11 +170,13 @@ class DescriptorGeneralTripletLoss(object):
     def __init__(self, device):
         self.device = device
 
-    def __call__(self, desp_0, desp_1, not_search_mask):
+    def __call__(self, desp_0, desp_1, valid_mask, not_search_mask):
         """
         Args:
             desp_0: [bt,n,dim]
             desp_1: [bt,n,dim]
+            valid_mask: [bt,n] 1有效，0无效
+            not_search_mask: [bt,n,n]
         Returns:
             loss
         """
@@ -193,8 +195,10 @@ class DescriptorGeneralTripletLoss(object):
         # zeros = torch.zeros_like(positive_pair)
         # loss_total, _ = torch.max(torch.stack((zeros, 1.+positive_pair-hardest_negative_pair), dim=1), dim=1)
         loss_total = torch.relu(1.+positive_pair-hardest_negative_pair)
+        loss_total *= valid_mask
 
-        loss = torch.mean(loss_total)
+        valid_num = torch.sum(valid_mask, dim=1)
+        loss = torch.mean(torch.sum(loss_total, dim=1)/(valid_num + 1.))
 
         return loss
 
