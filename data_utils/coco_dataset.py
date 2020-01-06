@@ -834,37 +834,29 @@ class COCOMegPointDescriptorOnlyDataset(Dataset):
         point = ((point * 2. / org_size - 1.)[:, ::-1])[:, np.newaxis, :].copy()
         return point
 
-    def _random_sample_point(self, num=100):
+    def _random_sample_point(self):
         """
         根据预设的输入图像大小，随机均匀采样坐标点
-        Returns:
-            point: [num+20,2] num+20个随机采样的坐标点
         """
-        num = num + 20
-        assert num+20 <= 225
         grid = self.fix_grid.copy()
         # 随机选择指定数目个格子
 
-        # org_list = np.arange(0, 225)
-        # np.random.shuffle(org_list)
-        # random_idx = org_list[:num]
-        # random_idx = np.random.randint(0, 225, (num,))
-        # point_list = []
-        # for idx in random_idx:
-        #     y_start, x_start, y_end, x_end = grid[idx]
-        #     rand_y = np.random.randint(y_start, y_end)
-        #     rand_x = np.random.randint(x_start, x_end)
-        #     point_list.append(np.array((rand_y, rand_x), dtype=np.float32))
-        # point = np.stack(point_list, axis=0)
-
-        # 取格子的中心当作采样点
         point_list = []
         for i in range(grid.shape[0]):
             y_start, x_start, y_end, x_end = grid[i]
-            y = (y_end - y_start) / 2 + y_start
-            x = (x_end - x_start) / 2 + x_start
-            point_list.append(np.array((y, x), dtype=np.float32))
+            rand_y = np.random.randint(y_start, y_end)
+            rand_x = np.random.randint(x_start, x_end)
+            point_list.append(np.array((rand_y, rand_x), dtype=np.float32))
         point = np.stack(point_list, axis=0)
+
+        # 取格子的中心当作采样点
+        # point_list = []
+        # for i in range(grid.shape[0]):
+        #     y_start, x_start, y_end, x_end = grid[i]
+        #     y = (y_end - y_start) / 2 + y_start
+        #     x = (x_end - x_start) / 2 + x_start
+        #     point_list.append(np.array((y, x), dtype=np.float32))
+        # point = np.stack(point_list, axis=0)
 
         return point
 
