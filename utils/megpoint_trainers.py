@@ -15,6 +15,8 @@ from torch.utils.data import DataLoader
 from nets.megpoint_net import MegPointShuffleHeatmap
 from nets.megpoint_net import MegPointShuffleHeatmapOld
 from nets.megpoint_net import resnet18
+from nets.superpoint_net import SuperPointNetFloat
+from nets.megpoint_net import MegPointNew
 from nets.megpoint_net import DescriptorExtractor
 
 from data_utils.coco_dataset import COCOMegPointHeatmapTrainDataset
@@ -1633,10 +1635,26 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         self.point_statistics = PointStatistics()
 
-    def test_debug(self, ckpt_file):
-        model = MegPointShuffleHeatmapOld()
-        self.model = model.to(self.device)
-        self.model = self._load_model_params(ckpt_file, self.model)
+    def test_debug(self, ckpt_file, mode="MegPoint", mode_ckpt=None):
+        if mode == "MegPoint":
+            model = MegPointShuffleHeatmapOld()
+            self.model = model.to(self.device)
+            self.model = self._load_model_params(ckpt_file, self.model)
+        elif mode == "MagicLeap":
+            model = SuperPointNetFloat()
+            self.model = model.to(self.device)
+            self.model = self._load_model_params(ckpt_file, self.model)
+        else:
+            self.logger.error("Unrecognized mode: %s" % mode)
+            assert False
+
+        desp = None
+        if mode == "MagicLeap":
+            assert mode_ckpt is not None
+            desp = resnet18()
+            # desp = MegPointNew()
+            desp = desp.to(self.device)
+            desp = self._load_model_params(mode_ckpt, desp)
 
         self.model.eval()
         # 重置测评算子参数
@@ -1670,14 +1688,16 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
             image_pair = np.stack((first_image, second_image), axis=0)
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
-            image_pair = image_pair * 2. / 255. - 1.
 
-            if self.network_arch == "residual":
-                heatmap_pair, desp_pair, _ = self.model(image_pair)
+            if mode == "MagicLeap":
+                image_pair = image_pair / 255.
+                _, desp_pair, heatmap_pair, _ = self.model(image_pair)
+                heatmap_pair = f.pixel_shuffle(heatmap_pair, 8)
             else:
+                image_pair = image_pair * 2. / 255. - 1.
                 heatmap_pair, desp_pair = self.model(image_pair)
+                heatmap_pair = torch.sigmoid(heatmap_pair)
 
-            heatmap_pair = torch.sigmoid(heatmap_pair)  # 用BCEloss
             prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold * 2 + 1))
 
             desp_pair = desp_pair.detach().cpu().numpy()
@@ -1688,12 +1708,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             second_prob = prob_pair[1, 0]
 
             # 得到对应的预测点
-            if self.detection_mode == "use_network":
-                first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
-                second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
-            else:
-                self.logger.error("unrecognized detection_mode: %s" % self.detection_mode)
-                assert False
+            first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+            second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
 
             if first_point_num <= 4 or second_point_num <= 4:
                 print("skip this pair because there's little point!")
@@ -1704,8 +1720,22 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 continue
 
             # 得到点对应的描述子
-            select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
-            select_second_desp = self._generate_predict_descriptor(second_point, second_desp)
+            if desp is None:
+                select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
+                select_second_desp = self._generate_predict_descriptor(second_point, second_desp)
+            else:
+                _, _, height, width = image_pair.shape
+                c1_pair, c2_pair, c3_pair, c4_pair = desp(image_pair)
+
+                c1_0, c1_1 = torch.chunk(c1_pair, 2, dim=0)
+                c2_0, c2_1 = torch.chunk(c2_pair, 2, dim=0)
+                c3_0, c3_1 = torch.chunk(c3_pair, 2, dim=0)
+                c4_0, c4_1 = torch.chunk(c4_pair, 2, dim=0)
+
+                select_first_desp = self._generate_combined_descriptor(first_point, c1_0, c2_0, c3_0, c4_0, height,
+                                                                       width)
+                select_second_desp = self._generate_combined_descriptor(second_point, c1_1, c2_1, c3_1, c4_1, height,
+                                                                        width)
 
             # 得到匹配点
             matched_point = self.general_matcher(first_point, select_first_desp,
