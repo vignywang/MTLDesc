@@ -172,6 +172,72 @@ class MegPointShuffleHeatmapOld(nn.Module):
         return heatmap, desp
 
 
+class MegPointNew(nn.Module):
+    """
+    用于恢复预训练的网络
+    """
+
+    def __init__(self):
+        super(MegPointNew, self).__init__()
+        self.relu = nn.ReLU(inplace=True)
+        self.tanh = nn.Tanh()
+        self.avg = nn.AvgPool2d(kernel_size=2, stride=2)
+        c1, c2, c3, c4, c5, d1 = 64, 64, 128, 128, 256, 256
+        # Encoder.
+        self.conv1a = nn.Conv2d(1, c1, kernel_size=3, stride=1, padding=1)
+        self.conv1b = nn.Conv2d(c1, c1, kernel_size=3, stride=1, padding=1)
+        self.conv2a = nn.Conv2d(c1, c2, kernel_size=3, stride=1, padding=1)
+        self.conv2b = nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1)
+        self.conv3a = nn.Conv2d(c2, c3, kernel_size=3, stride=1, padding=1)
+        self.conv3b = nn.Conv2d(c3, c3, kernel_size=3, stride=1, padding=1)
+        self.conv4a = nn.Conv2d(c3, c4, kernel_size=3, stride=1, padding=1)
+        self.conv4b = nn.Conv2d(c4, c4, kernel_size=3, stride=1, padding=1)
+
+        self.compress1 = nn.Conv2d(c1, 32, kernel_size=1, stride=1)
+        self.compress2 = nn.Conv2d(c2, 32, kernel_size=1, stride=1)
+        self.compress3 = nn.Conv2d(c3, 32, kernel_size=1, stride=1)
+        self.compress4 = nn.Conv2d(c4, 32, kernel_size=1, stride=1)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                if m.affine:
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+
+        _, _, h, w = x.shape
+        # encoder part
+        x = self.relu(self.conv1a(x))
+        c1 = self.relu(self.conv1b(x))
+
+        c2 = self.avg(c1)
+        c2 = self.relu(self.conv2a(c2))
+        c2 = self.relu(self.conv2b(c2))
+
+        c3 = self.avg(c2)
+        c3 = self.relu(self.conv3a(c3))
+        c3 = self.relu(self.conv3b(c3))
+
+        c4 = self.avg(c3)
+        c4 = self.relu(self.conv4a(c4))
+        c4 = self.relu(self.conv4b(c4))
+
+        compress1 = self.compress1(c1)
+        compress2 = self.compress2(c2)
+        compress3 = self.compress3(c3)
+        compress4 = self.compress4(c4)
+
+        return compress1, compress2, compress3, compress4
+
+
 class MegPointSlidingHeatmap(nn.Module):
     """
     用于sliding训练的网络结构，只用于检测
