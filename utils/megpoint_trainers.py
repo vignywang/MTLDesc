@@ -14,7 +14,6 @@ from torch.utils.data import DataLoader
 
 from nets.megpoint_net import MegPointShuffleHeatmap
 from nets.megpoint_net import MegPointShuffleHeatmapOld
-from nets.megpoint_net import MegPointResidualShuffleHeatmap
 from nets.megpoint_net import resnet18
 from nets.megpoint_net import DescriptorExtractor
 
@@ -280,12 +279,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             self.logger.info("Initialize COCOMegPointHeatmapTrainDataset")
             self.train_dataset = COCOMegPointHeatmapTrainDataset(self.params)
         elif self.train_mode == "only_detector":
-            if self.dataset_type == "coco":
-                self.logger.info("Initialize COCOMegPointHeatmapOnlyDataset")
-                self.train_dataset = COCOMegPointHeatmapOnlyDataset(self.params)
-            elif self.dataset_type == "ppg":
-                self.logger.info("Intialize COCOPPgPointHeatmapOnlyDataset")
-                self.train_dataset = PPGMegPointHeatmapOnlyDataset(self.params)
+            self.logger.info("Initialize COCOMegPointHeatmapOnlyDataset")
+            self.train_dataset = COCOMegPointHeatmapOnlyDataset(self.params)
         elif self.train_mode == "only_detector_index":
             self.logger.info("Initialize COCOMegPointHeatmapOnlyIndexDataset")
             self.train_dataset = COCOMegPointHeatmapOnlyIndexDataset(self.params)
@@ -316,9 +311,6 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         if self.network_arch == "baseline":
             self.logger.info("Initialize network arch : ShuffleHeatmap")
             model = MegPointShuffleHeatmap()
-        elif self.network_arch == "residual":
-            self.logger.info("Initialize network arch : Residual+ShuffleHeatmap")
-            model = MegPointResidualShuffleHeatmap()
         elif self.network_arch == "resnet18":
             self.logger.info("Initialize network arch : restnet18")
             model = resnet18()
