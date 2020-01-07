@@ -47,6 +47,10 @@ class MegPointHeatmapParameters(BasicParameters):
         self.dataset_type = "coco"
         self.sample_num = 100
 
+        # debug related
+        self.debug_mode = "MegPoint"
+        self.debug_ckpt = None
+
         # homography & photometric relating params using in training
         self.homography_params = {
             'patch_ratio': 0.8,  # 1.0
@@ -122,6 +126,10 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--dataset_type", type=str, default="coco")
         parser.add_argument("--sample_num", type=int, default=100)
 
+        # debug related
+        parser.add_argument("--debug_mode", type=str, default="MegPoint")
+        parser.add_argument("--debug_ckpt", type=str, default=None)
+
         return parser.parse_args()
 
     def initialize(self):
@@ -168,7 +176,7 @@ def main():
         for m in models:
             megpoint_trainer.test(m)
     elif params.run_mode == "test_debug":
-        megpoint_trainer.test_debug(params.ckpt_file)
+        megpoint_trainer.test_debug(params.ckpt_file, params.debug_mode, params.debug_ckpt)
 
     # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_01_0.0010_24/model_59.pt
     # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_heatmap_00_0.0010_24/model_99.pt
