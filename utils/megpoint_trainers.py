@@ -700,6 +700,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             desp_0 = desp_0 / torch.norm(desp_0, dim=2, keepdim=True)
             desp_1 = desp_1 / torch.norm(desp_1, dim=2, keepdim=True)
 
+            # feature_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=1)[:, :, :, 0].transpose(1, 2)
+            # feature_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=1)[:, :, :, 0].transpose(1, 2)
+
             # extract descriptor
             # desp_0 = self.extractor(feature_0)
             # desp_1 = self.extractor(feature_1)
@@ -1466,6 +1469,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         desp = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=1)
         desp = desp / torch.norm(desp, dim=1, keepdim=True)
 
+        # c1_feature = f.grid_sample(c1, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
+        # c2_feature = f.grid_sample(c2, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
+        # c3_feature = f.grid_sample(c3, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
+        # c4_feature = f.grid_sample(c4, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
+        # feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
         # desp = self.extractor(feature)[0]  # [n,128]
 
         desp = desp.detach().cpu().numpy()
@@ -1635,7 +1643,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         self.point_statistics = PointStatistics()
 
-    def test_debug(self, ckpt_file, mode="MegPoint", mode_ckpt=None):
+    def test_debug(self, ckpt_file, mode="MegPoint", mode_ckpt=None, use_sift=False):
         if mode == "MegPoint":
             model = MegPointShuffleHeatmapOld()
             self.model = model.to(self.device)
@@ -1647,6 +1655,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         else:
             self.logger.error("Unrecognized mode: %s" % mode)
             assert False
+
+        if use_sift:
+            self.logger.info("Use sift as feature detector.")
+        sift = cv.xfeatures2d_SIFT.create(1000)
 
         desp = None
         if mode == "MagicLeap":
@@ -1708,8 +1720,16 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             second_prob = prob_pair[1, 0]
 
             # 得到对应的预测点
-            first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
-            second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+            if not use_sift:
+                first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+                second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+            else:
+                first_point = sift.detect(first_image)
+                second_point = sift.detect(second_image)
+                first_point = self._convert_cv2pt(first_point)
+                second_point = self._convert_cv2pt(second_point)
+                first_point_num = first_point.shape[0]
+                second_point_num = second_point.shape[0]
 
             if first_point_num <= 4 or second_point_num <= 4:
                 print("skip this pair because there's little point!")
@@ -1817,7 +1837,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # 计算得到单应变换
             if self.homo_pred_mode == "RANSAC":
                 pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
-                                                       matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
+                                                       matched_point[1][:, np.newaxis, ::-1], cv.RANSAC, maxIters=3000)
             elif self.homo_pred_mode == "LMEDS":
                 pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
                                                        matched_point[1][:, np.newaxis, ::-1], cv.LMEDS)
@@ -2026,4 +2046,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             cv_point_list.append(cv_point)
 
         return cv_point_list
+
+    @staticmethod
+    def _convert_cv2pt(cv_point):
+        point_list = []
+        for i, cv_pt in enumerate(cv_point):
+            pt = np.array((cv_pt.pt[1], cv_pt.pt[0]))  # y,x的顺序
+            point_list.append(pt)
+        point = np.stack(point_list, axis=0)
+        return point
+
+
 
