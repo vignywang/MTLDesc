@@ -797,6 +797,7 @@ class ResNetAll(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        _, _, h, w = x.shape
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -817,10 +818,10 @@ class ResNetAll(nn.Module):
         compress33 = self.compress33(c3)
         compress44 = self.compress44(c4)
 
-        fn1 = compress11
-        fn2 = f.interpolate(compress22, scale_factor=2, mode="bilinear", align_corners=True)
-        fn3 = f.interpolate(compress33, scale_factor=4, mode="bilinear", align_corners=True)
-        fn4 = f.interpolate(compress44, scale_factor=8, mode="bilinear", align_corners=True)
+        fn1 = f.interpolate(compress11, size=(h, w), mode="bilinear", align_corners=True)
+        fn2 = f.interpolate(compress22, size=(h, w), mode="bilinear", align_corners=True)
+        fn3 = f.interpolate(compress33, size=(h, w), mode="bilinear", align_corners=True)
+        fn4 = f.interpolate(compress44, size=(h, w), mode="bilinear", align_corners=True)
 
         fn = self.relu(torch.cat((fn1, fn2, fn3, fn4), dim=1))
         heatmap = self.heatmap(fn)
