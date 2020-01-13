@@ -754,6 +754,8 @@ class ResNetAll(nn.Module):
         self.compress44 = nn.Conv2d(512, 16, kernel_size=1, stride=1)
 
         self.heatmap = nn.Conv2d(64, 1, kernel_size=3, stride=1, padding=1)
+        # self.heatmap = nn.Conv2d(48, 1, kernel_size=3, stride=1, padding=1)
+        # self.heatmap = nn.Conv2d(32, 1, kernel_size=3, stride=1, padding=1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -824,9 +826,15 @@ class ResNetAll(nn.Module):
         fn4 = f.interpolate(compress44, size=(h, w), mode="bilinear", align_corners=True)
 
         fn = self.relu(torch.cat((fn1, fn2, fn3, fn4), dim=1))
+        # fn = self.relu(torch.cat((fn1, fn2, fn3), dim=1))
+        # fn = self.relu(torch.cat((fn1, fn2), dim=1))
+        # fn = self.relu(fn1)
         heatmap = self.heatmap(fn)
 
         return heatmap, compress1, compress2, compress3, compress4
+        # return heatmap, compress1, compress2, compress3
+        # return heatmap, compress1, compress2
+        # return heatmap, compress1
 
 
 def _resnet_all(arch, block, layers, pretrained, progress, **kwargs):
