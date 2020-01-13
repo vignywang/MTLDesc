@@ -689,6 +689,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
             # 模型预测
             heatmap_pred_pair, c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+            # heatmap_pred_pair, c1_pair, c2_pair = self.model(image_pair)
+            # heatmap_pred_pair, c1_pair = self.model(image_pair)
 
             # 计算描述子loss
             desp_point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
@@ -703,7 +705,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             c4_0, c4_1 = torch.chunk(c4_feature_pair, 2, dim=0)
 
             desp_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=1)[:, :, :, 0].transpose(1, 2)
+            # desp_0 = torch.cat((c1_0, c2_0), dim=1)[:, :, :, 0].transpose(1, 2)
+            # desp_0 = c1_0[:, :, :, 0].transpose(1, 2)
             desp_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=1)[:, :, :, 0].transpose(1, 2)
+            # desp_1 = torch.cat((c1_1, c2_1), dim=1)[:, :, :, 0].transpose(1, 2)
+            # desp_1 = c1_1[:, :, :, 0].transpose(1, 2)
 
             desp_0 = desp_0 / torch.norm(desp_0, dim=2, keepdim=True)
             desp_1 = desp_1 / torch.norm(desp_1, dim=2, keepdim=True)
@@ -1316,6 +1322,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.model.eval()
         _, _, height, width = image_pair.shape
         heatmap_pair, c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+        # heatmap_pair, c1_pair, c2_pair = self.model(image_pair)
+        # heatmap_pair, c1_pair = self.model(image_pair)
 
         c1_0, c1_1 = torch.chunk(c1_pair, 2, dim=0)
         c2_0, c2_1 = torch.chunk(c2_pair, 2, dim=0)
@@ -1339,7 +1347,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         # 得到点对应的描述子
         select_first_desp = self._generate_combined_descriptor(first_point, c1_0, c2_0, c3_0, c4_0, height, width)
+        # select_first_desp = self._generate_combined_descriptor(first_point, c1_0, c2_0, height, width)
+        # select_first_desp = self._generate_combined_descriptor(first_point, c1_0, height, width)
         select_second_desp = self._generate_combined_descriptor(second_point, c1_1, c2_1, c3_1, c4_1, height, width)
+        # select_second_desp = self._generate_combined_descriptor(second_point, c1_1, c2_1, height, width)
+        # select_second_desp = self._generate_combined_descriptor(second_point, c1_1, height, width)
 
         return first_point, first_point_num, second_point, second_point_num, select_first_desp, select_second_desp
 
@@ -1502,6 +1514,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         return point_np
 
     def _generate_combined_descriptor(self, point, c1, c2, c3, c4, height, width):
+    # def _generate_combined_descriptor(self, point, c1, c2, height, width):
+    # def _generate_combined_descriptor(self, point, c1, height, width):
         """
         用多层级的组合特征构造描述子
         Args:
@@ -1520,6 +1534,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         c3_feature = f.grid_sample(c3, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
         c4_feature = f.grid_sample(c4, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
         desp = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=1)
+        # desp = torch.cat((c1_feature, c2_feature), dim=1)
+        # desp = c1_feature
         desp = desp / torch.norm(desp, dim=1, keepdim=True)
 
         # c1_feature = f.grid_sample(c1, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
