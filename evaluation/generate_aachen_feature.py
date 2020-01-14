@@ -10,8 +10,10 @@ import cv2 as cv
 import torch.nn.functional as f
 
 from nets.megpoint_net import resnet18_all
+from nets.megpoint_net import half_resnet18_all
+from nets.megpoint_net import resnet18
 from nets.superpoint_net import SuperPointNetFloat
-from evaluation.Aachen_dataset import AachenDataset
+from evaluation.aachen_dataset import AachenDataset
 from utils.utils import spatial_nms
 from utils.utils import Matcher
 from utils.utils import NearestNeighborRatioMatcher
@@ -31,32 +33,32 @@ class FeatureGenerator(object):
         self.detection_threshold = params.detection_threshold
         self.top_k = params.top_k
 
-        self._initialize_model(params.ckpt_file)
+        self._initialize_model(params.detector_ckpt_file, params.desp_ckpt_file)
         self._initialize_dataset(params.dataset_root)
         self._initialize_matcher()
 
-    def _initialize_model(self, ckpt_file):
+    def _initialize_model(self, detector_ckpt_file, desp_ckpt_file):
         """
         初始化模型
         """
-        if ckpt_file is None:
+        if detector_ckpt_file is None or desp_ckpt_file is None:
             print("Please input correct ckpt_file instead of None.")
             assert False
 
-        # 初始化模型
-        print("Initialize model of resnet18_all")
-        model = resnet18_all().to(self.device)
-        # print("Initialize model of magicleap superpoint")
-        # model = SuperPointNetFloat().to(self.device)
+        # print("Initialize model of resnet18_all")
+        # model = resnet18_all().to(self.device)
+        # print("Initialize model of half_resnet18_all")
+        # model = half_resnet18_all().to(self.device)
 
-        # 读取参数
-        # print("Restore model params from %s" % ckpt_file)
-        # model_dict = model.state_dict()
-        # pretrain_dict = torch.load(ckpt_file, map_location=self.device)
-        # model_dict.update(pretrain_dict)
-        # model.load_state_dict(model_dict)
+        # 初始化检测模型
+        print("Initialize model of magicleap superpoint")
+        detector = SuperPointNetFloat().to(self.device)
+        self.detector = self._restore_model_params(detector, detector_ckpt_file)
 
-        self.model = model
+        # 初始化描述子模型
+        print("Initialize model of resnet18")
+        descriptor = resnet18().to(self.device)
+        self.descriptor = self._restore_model_params(descriptor, desp_ckpt_file)
 
     def _initialize_dataset(self, dataset_dir):
         """
@@ -71,19 +73,27 @@ class FeatureGenerator(object):
         self.matcher = Matcher()
         # self.matcher = NearestNeighborRatioMatcher(0.9)
 
+    def _restore_model_params(self, model, ckpt_file):
+        # 读取参数
+        print("Restore model params from %s" % ckpt_file)
+        model_dict = model.state_dict()
+        pretrain_dict = torch.load(ckpt_file, map_location=self.device)
+        model_dict.update(pretrain_dict)
+        model.load_state_dict(model_dict)
+        return model
+
     def run(self):
         """
         启动模型，对数据集中每一张图像估计关键点和对应的描述子，
         关键点和对应描述子以npz的格式存在与图像相同的路径下，方法名作为后缀结尾，例如1.jpg -> 1.jpg.d2-net
         """
-        self.model.eval()
 
         for i, data in enumerate(self.dataset):
             img = data["img"]
             img_dir = data["img_dir"]
 
-            height, width = img.shape
-            point, desp = self.generate_feature(img)
+            height, width, _ = img.shape
+            point, desp = self.generate_feature(img_dir)
             # point, desp = self.generate_feature_magicleap(img)
             point_num = point.shape[0]
 
@@ -109,7 +119,7 @@ class FeatureGenerator(object):
             # cv.imshow("debug_img", debug_img)
             # cv.waitKey()
 
-    def match_image_pair(self, img_0, img_1, show=True):
+    def match_image_pair(self, img_0_dir, img_1_dir, ratio, show=True):
         """
         匹配两幅图像，并选择是否将匹配结果显示出来
         Args:
@@ -119,12 +129,14 @@ class FeatureGenerator(object):
         Returns:
             matched_img
         """
-        point_0, desp_0 = self.generate_feature(img_0)
-        # point_0, desp_0 = self.generate_feature_magicleap(img_0)
-        point_1, desp_1 = self.generate_feature(img_1)
-        # point_1, desp_1 = self.generate_feature_magicleap(img_1)
+        img_0 = cv.imread(img_0_dir)
+        img_1 = cv.imread(img_1_dir)
+        point_0, desp_0 = self.generate_feature(img_0_dir)
+        # point_0, desp_0 = self.generate_feature_magicleap(img_0_dir)
+        point_1, desp_1 = self.generate_feature(img_1_dir)
+        # point_1, desp_1 = self.generate_feature_magicleap(img_1_dir)
         match_list = self.matcher(point_0, desp_0, point_1, desp_1)
-        cv_point_0, cv_point_1, cv_match_list = self._convert_match2cv(match_list[0], match_list[1], 0.1)
+        cv_point_0, cv_point_1, cv_match_list = self._convert_match2cv(match_list[0], match_list[1], ratio)
 
         # sift = cv.xfeatures2d_SIFT.create(2000)
         # cv_point_0, desp_0 = sift.detectAndCompute(img_0, None)
@@ -135,40 +147,53 @@ class FeatureGenerator(object):
         match_img = cv.drawMatches(img_0, cv_point_0, img_1, cv_point_1, cv_match_list, None)
         match_img = cv.resize(match_img, None, None, fx=0.5, fy=0.5, interpolation=cv.INTER_LINEAR)
 
+        cv.imwrite("/home/zhangyuyang/tmp_images/aachen_contrast/1.jpg", match_img)
         cv.imshow("match_img", match_img)
         cv.waitKey()
 
-    def generate_feature(self, img):
+    def generate_feature(self, img_dir):
         """
         获取一幅图像的特征点及其对应的描述子
         Args:
-            img: [h,w] 灰度图像
+            img_dir: 图像地址
         Returns:
             point: [n,2] 特征点
             descriptor: [n,128] 描述子
         """
-        org_h, org_w = img.shape
+        self.detector.eval()
+        self.descriptor.eval()
+
+        img = cv.imread(img_dir)[:, :, ::-1].copy()
+        img_gray = cv.imread(img_dir, cv.IMREAD_GRAYSCALE)
+
+        org_h, org_w, _ = img.shape
         do_scale = False
-        if org_h > 2000 or org_w > 2000:
-            h = int(org_h // 2)
-            w = int(org_w // 2)
-            scale = np.array((org_h / h, org_w / w), dtype=np.float32)
+        if org_h > 1000 or org_w > 1000:
+            h = int(org_h / 1.5)
+            w = int(org_w / 1.5)
+            # scale = np.array((org_h / h, org_w / w), dtype=np.float32)
             do_scale = True
         else:
             h = org_h
             w = org_w
-            scale = np.array((1, 1), dtype=np.float32)
+            # scale = np.array((1, 1), dtype=np.float32)
 
-        img = torch.from_numpy(img).to(torch.float).unsqueeze(dim=0).unsqueeze(dim=0).to(self.device)
+        img = torch.from_numpy(img).to(torch.float).permute((2, 0, 1)).unsqueeze(dim=0).to(self.device)
         img = img * 2. / 255. - 1.
+
+        img_gray = torch.from_numpy(img_gray).to(torch.float).unsqueeze(dim=0).unsqueeze(dim=0).to(self.device)
+        img_gray = img_gray / 255.
+
         if do_scale:
             img = f.interpolate(img, size=(h, w), mode="bilinear", align_corners=True)
 
-        self.model.eval()
-        heatmap, c1, c2, c3, c4 = self.model(img)
+        # detector
+        _, _, prob, _ = self.detector(img_gray)
+        prob = f.pixel_shuffle(prob, 8)
+        prob = spatial_nms(prob)
 
-        heatmap = torch.sigmoid(heatmap)
-        prob = spatial_nms(heatmap)
+        # descriptor
+        c1, c2, c3, c4 = self.descriptor(img)
 
         prob = prob.detach().cpu().numpy()
         prob = prob[0, 0]
@@ -177,14 +202,14 @@ class FeatureGenerator(object):
         point, point_num = self._generate_predict_point(prob, self.detection_threshold, self.top_k)  # [n,2]
 
         # 得到点对应的描述子
-        desp = self._generate_combined_descriptor(point, c1, c2, c3, c4, h, w)
+        desp = self._generate_combined_descriptor(point, c1, c2, c3, c4, org_h, org_w)
 
-        if do_scale:
-            point *= scale
+        # if do_scale:
+        #     point *= scale
 
         return point, desp
 
-    def generate_feature_magicleap(self, img):
+    def generate_feature_magicleap(self, img_dir):
         """
         用superpoint获取一幅图像的特征点及其对应的描述子
         Args:
@@ -193,6 +218,10 @@ class FeatureGenerator(object):
             point: [n,2] 特征点
             descriptor: [n,128] 描述子
         """
+        self.detector.eval()
+
+        img = cv.imread(img_dir, cv.IMREAD_GRAYSCALE)
+
         org_h, org_w = img.shape
         do_scale = False
         if org_h > 2000 or org_w > 2000:
@@ -210,8 +239,8 @@ class FeatureGenerator(object):
         if do_scale:
             img = f.interpolate(img, size=(h, w), mode="bilinear", align_corners=True)
 
-        self.model.eval()
-        _, desp, prob, _ = self.model(img)
+        self.detector.eval()
+        _, desp, prob, _ = self.detector(img)
         prob = f.pixel_shuffle(prob, 8)
         prob = spatial_nms(prob)
 
@@ -286,6 +315,8 @@ class FeatureGenerator(object):
         return point, point_num
 
     def _generate_combined_descriptor(self, point, c1, c2, c3, c4, height, width):
+    # def _generate_combined_descriptor(self, point, c1, c2, c3, height, width):
+    # def _generate_combined_descriptor(self, point, c1, c2, height, width):
         """
         用多层级的组合特征构造描述子
         Args:
@@ -304,6 +335,8 @@ class FeatureGenerator(object):
         c3_feature = f.grid_sample(c3, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
         c4_feature = f.grid_sample(c4, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
         desp = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=1)
+        # desp = torch.cat((c1_feature, c2_feature, c3_feature), dim=1)
+        # desp = torch.cat((c1_feature, c2_feature), dim=1)
         desp = desp / torch.norm(desp, dim=1, keepdim=True)
 
         desp = desp.detach().cpu().numpy()
@@ -369,11 +402,12 @@ if __name__ == "__main__":
 
     class Parameters:
         dataset_root = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright"
-        # ckpt_file = "/home/zhangyuyang/model_8034_all.pt"
-        ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth"
 
-        detection_threshold = 0.5
-        top_k = 2000
+        detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth"
+        desp_ckpt_file = "/home/zhangyuyang/model_megadepth_07.pt"
+
+        detection_threshold = 0.005  # for magicleap model
+        top_k = 5000
 
 
     params = Parameters()
@@ -384,10 +418,10 @@ if __name__ == "__main__":
     # img_1 = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright/db/11.jpg"
     # img_0 = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright/db/2125.jpg"
     # img_1 = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright/query/night/nexus5x/IMG_20161227_192213.jpg"
+    # img_0 = "/data/MegPoint/dataset/hpatch/v_dirtywall/1.ppm"
+    # img_1 = "/data/MegPoint/dataset/hpatch/v_dirtywall/4.ppm"
 
-    # img_0 = cv.imread(img_0, cv.IMREAD_GRAYSCALE)
-    # img_1 = cv.imread(img_1, cv.IMREAD_GRAYSCALE)
-    # feature_generator.match_image_pair(img_0, img_1)
+    # feature_generator.match_image_pair(img_0, img_1, 0.25)
 
 
 
