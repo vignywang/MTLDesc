@@ -22,7 +22,7 @@ class AachenDataset(Dataset):
 
     def __getitem__(self, idx):
         img_dir = self.image_list[idx]
-        img = cv.imread(self.image_list[idx], cv.IMREAD_GRAYSCALE)
+        img = cv.imread(self.image_list[idx])
 
         # debug use
         # cv.imshow("cur_img", img)
