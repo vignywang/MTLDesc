@@ -25,6 +25,7 @@ from data_utils.coco_dataset import COCOMegPointHeatmapOnlyDataset
 from data_utils.coco_dataset import COCOMegPointHeatmapOnlyIndexDataset
 from data_utils.coco_dataset import COCOMegPointDescriptorOnlyDataset
 from data_utils.coco_dataset import COCOMegPointHeatmapAllTrainDataset
+from data_utils.megadepth_dataset import MegaDepthDataset
 from data_utils.synthetic_dataset import SyntheticHeatmapDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
@@ -293,8 +294,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # if self.params.height != 224 or self.params.width != 224:
             #     self.logger.error("Training only descriptor only support 224x224 image input size!")
             #     assert False
-            self.logger.info("Initialize COCOMegPointDescriptorOnlyDataset")
-            self.train_dataset = COCOMegPointDescriptorOnlyDataset(self.params)
+            # self.logger.info("Initialize COCOMegPointDescriptorOnlyDataset")
+            # self.train_dataset = COCOMegPointDescriptorOnlyDataset(self.params)
+            self.logger.info("Initialize MegaDepthDataset")
+            self.train_dataset = MegaDepthDataset(scenes_ratio=self.params.scenes_ratio, pairs_per_scene=self.params.pairs_per_scene)
+            self.train_dataset.build_dataset()
         else:
             assert False
 
@@ -761,10 +765,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         for i, data in enumerate(self.train_dataloader):
 
             image = data["image"].to(self.device)
-            point = data["point"].to(self.device)
+            desp_point = data["desp_point"].to(self.device)
 
             warped_image = data["warped_image"].to(self.device)
-            warped_point = data["warped_point"].to(self.device)
+            warped_desp_point = data["warped_desp_point"].to(self.device)
 
             valid_mask = data["valid_mask"].to(self.device)
             not_search_mask = data["not_search_mask"].to(self.device)
@@ -772,7 +776,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             shape = image.shape
 
             image_pair = torch.cat((image, warped_image), dim=0)
-            point_pair = torch.cat((point, warped_point), dim=0)
+            point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
 
             # _, coarse_desp_pair = self.model(image_pair)
             # desp_pair = f.grid_sample(coarse_desp_pair, point_pair, mode="bilinear")[:, :, :, 0].transpose(1, 2)
@@ -1361,9 +1365,14 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         image_pair: [2,1,h,w]
         """
         self.model.eval()
+        self.detector.eval()
         # self.extractor.eval()
-        _, _, height, width = image_pair.shape
-        c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+        _, c, height, width = image_pair.shape
+        if c == 1:
+            image_pair_4_desp = image_pair.repeat((1, 3, 1, 1))
+        else:
+            image_pair_4_desp = image_pair
+        c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair_4_desp)
         # _, coarse_desp_pair = self.model(image_pair)
         # coarse_desp_0, coarse_desp_1 = torch.chunk(coarse_desp_pair, 2, dim=0)
 
