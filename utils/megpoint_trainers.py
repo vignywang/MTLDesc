@@ -443,7 +443,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_scheduler(self):
         # 初始化学习率调整算子
-        milestones = [15, 30, 50]
+        milestones = [10, 20, 30]
         self.logger.info("Initialize lr_scheduler of MultiStepLR: (%d, %d, %d)" % (
             milestones[0], milestones[1], milestones[2]))
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=milestones, gamma=0.1)
