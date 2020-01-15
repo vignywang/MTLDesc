@@ -52,8 +52,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.debug_ckpt = None
 
         # MegaDepth dataset related
-        self.scenes_ratio = 0.1
-        self.pairs_per_scene = 0.5
+        self.mega_dataset_dir = "/data/MegaDepthOrder/preprocessed_train_dataset"
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -131,8 +130,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--sample_num", type=int, default=100)
 
         # megaDepth related
-        parser.add_argument("--scenes_ratio", type=float, default=0.1)
-        parser.add_argument("--pairs_per_scene", type=float, default=0.5)
+        parser.add_argument("--mega_dataset_dir", type=str, default="/data/MegaDepthOrder/preprocessed_train_dataset")
 
         # debug related
         parser.add_argument("--debug_mode", type=str, default="MegPoint")
@@ -164,8 +162,7 @@ class MegPointHeatmapParameters(BasicParameters):
 
         self.logger.info("adjust_lr: %s" % self.adjust_lr)
 
-        self.logger.info("scenes_ratio: %.1f" % self.scenes_ratio)
-        self.logger.info("pairs_per_scene: %.1f" % self.pairs_per_scene)
+        self.logger.info("mega_dataset_dir: %s" % self.mega_dataset_dir)
 
         self.logger.info("------------------------------------------")
 
