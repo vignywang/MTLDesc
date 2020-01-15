@@ -25,7 +25,7 @@ from data_utils.coco_dataset import COCOMegPointHeatmapOnlyDataset
 from data_utils.coco_dataset import COCOMegPointHeatmapOnlyIndexDataset
 from data_utils.coco_dataset import COCOMegPointDescriptorOnlyDataset
 from data_utils.coco_dataset import COCOMegPointHeatmapAllTrainDataset
-from data_utils.megadepth_dataset import MegaDepthDataset
+from data_utils.megadepth_dataset import MegaDepthDatasetFromPreprocessed
 from data_utils.synthetic_dataset import SyntheticHeatmapDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
@@ -297,8 +297,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # self.logger.info("Initialize COCOMegPointDescriptorOnlyDataset")
             # self.train_dataset = COCOMegPointDescriptorOnlyDataset(self.params)
             self.logger.info("Initialize MegaDepthDataset")
-            self.train_dataset = MegaDepthDataset(scenes_ratio=self.params.scenes_ratio, pairs_per_scene=self.params.pairs_per_scene)
-            self.train_dataset.build_dataset()
+            self.train_dataset = MegaDepthDatasetFromPreprocessed(dataset_dir=self.params.mega_dataset_dir)
         else:
             assert False
 
