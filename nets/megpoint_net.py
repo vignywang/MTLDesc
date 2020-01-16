@@ -679,12 +679,12 @@ class DescriptorExtractor(nn.Module):
     """
     def __init__(self):
         super(DescriptorExtractor, self).__init__()
-        self.fc1 = nn.Linear((64+128+256+512), 256)
-        self.fc2 = nn.Linear(256, 128)
+        self.fc1 = nn.Linear(128, 128)
+        self.fc2 = nn.Linear(128, 128)
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc1(self.relu(x)))
         x = self.fc2(x)
         x = x / torch.norm(x, dim=2, keepdim=True)
 
