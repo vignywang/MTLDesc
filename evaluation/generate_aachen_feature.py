@@ -12,6 +12,7 @@ import torch.nn.functional as f
 from nets.megpoint_net import resnet18_all
 from nets.megpoint_net import half_resnet18_all
 from nets.megpoint_net import resnet18
+from nets.megpoint_net import MegPointShuffleHeatmapOld
 from nets.superpoint_net import SuperPointNetFloat
 from evaluation.aachen_dataset import AachenDataset
 from utils.utils import spatial_nms
@@ -53,6 +54,8 @@ class FeatureGenerator(object):
         # 初始化检测模型
         print("Initialize model of magicleap superpoint")
         detector = SuperPointNetFloat().to(self.device)
+        # print("Initialize model of MegPointShuffleHeatmapOld.")
+        # detector = MegPointShuffleHeatmapOld().to(self.device)
         self.detector = self._restore_model_params(detector, detector_ckpt_file)
 
         # 初始化描述子模型
@@ -70,8 +73,8 @@ class FeatureGenerator(object):
 
     def _initialize_matcher(self):
         print("Initialize nearest matcher.")
-        self.matcher = Matcher()
-        # self.matcher = NearestNeighborRatioMatcher(0.9)
+        # self.matcher = Matcher()
+        self.matcher = NearestNeighborRatioMatcher(0.9)
 
     def _restore_model_params(self, model, ckpt_file):
         # 读取参数
@@ -183,6 +186,7 @@ class FeatureGenerator(object):
 
         img_gray = torch.from_numpy(img_gray).to(torch.float).unsqueeze(dim=0).unsqueeze(dim=0).to(self.device)
         img_gray = img_gray / 255.
+        # img_gray = img_gray * 2. / 255. - 1.
 
         if do_scale:
             img = f.interpolate(img, size=(h, w), mode="bilinear", align_corners=True)
@@ -191,6 +195,9 @@ class FeatureGenerator(object):
         _, _, prob, _ = self.detector(img_gray)
         prob = f.pixel_shuffle(prob, 8)
         prob = spatial_nms(prob)
+        # heatmap, _ = self.detector(img_gray)
+        # heatmap = torch.sigmoid(heatmap)
+        # prob = spatial_nms(heatmap)
 
         # descriptor
         c1, c2, c3, c4 = self.descriptor(img)
@@ -315,8 +322,6 @@ class FeatureGenerator(object):
         return point, point_num
 
     def _generate_combined_descriptor(self, point, c1, c2, c3, c4, height, width):
-    # def _generate_combined_descriptor(self, point, c1, c2, c3, height, width):
-    # def _generate_combined_descriptor(self, point, c1, c2, height, width):
         """
         用多层级的组合特征构造描述子
         Args:
@@ -403,8 +408,11 @@ if __name__ == "__main__":
     class Parameters:
         dataset_root = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright"
 
+        # detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/good_results/coco_weight_bce_01_0.0010_24/model_59.pt"
         detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth"
-        desp_ckpt_file = "/home/zhangyuyang/model_megadepth_07.pt"
+        # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_07.pt"
+        desp_ckpt_file = "/home/zhangyuyang/model_megadepth_half_08.pt"
+        # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_11.pt"
 
         detection_threshold = 0.005  # for magicleap model
         top_k = 5000
