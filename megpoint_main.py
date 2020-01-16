@@ -53,6 +53,7 @@ class MegPointHeatmapParameters(BasicParameters):
 
         # MegaDepth dataset related
         self.mega_dataset_dir = "/data/MegaDepthOrder/preprocessed_train_dataset"
+        self.mega_val_dataset_dir = "/data/MegaDepthOrder/preprocessed_val_dataset"
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -131,6 +132,7 @@ class MegPointHeatmapParameters(BasicParameters):
 
         # megaDepth related
         parser.add_argument("--mega_dataset_dir", type=str, default="/data/MegaDepthOrder/preprocessed_train_dataset")
+        parser.add_argument("--mega_val_dataset_dir", type=str, default="/data/MegaDepthOrder/preprocessed_val_dataset")
 
         # debug related
         parser.add_argument("--debug_mode", type=str, default="MegPoint")
@@ -163,6 +165,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.logger.info("adjust_lr: %s" % self.adjust_lr)
 
         self.logger.info("mega_dataset_dir: %s" % self.mega_dataset_dir)
+        self.logger.info("mega_val_dataset_dir: %s" % self.mega_val_dataset_dir)
 
         self.logger.info("------------------------------------------")
 
