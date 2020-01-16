@@ -314,6 +314,23 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.test_dataset = HPatchDataset(self.params)
         self.test_length = len(self.test_dataset)
 
+        # 初始化验证集
+        if self.train_mode == "only_descriptor":
+            self.logger.info("Initialize MegaDepth validation dataset")
+            self.val_dataset = MegaDepthDatasetFromPreprocessed(dataset_dir=self.params.mega_val_dataset_dir)
+            self.val_dataloader = DataLoader(
+                dataset=self.val_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+                drop_last=True,
+            )
+            self.val_epoch_length = len(self.val_dataset) // self.batch_size
+        else:
+            self.val_dataset = None
+            self.val_dataloader = None
+            self.val_epoch_length = 1
+
     def _initialize_model(self):
         # 初始化模型
         if self.network_arch == "baseline":
@@ -783,21 +800,27 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
             c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
 
-            c1_feature_pair = f.grid_sample(c1_pair, point_pair, mode="bilinear", padding_mode="border")
-            c2_feature_pair = f.grid_sample(c2_pair, point_pair, mode="bilinear", padding_mode="border")
-            c3_feature_pair = f.grid_sample(c3_pair, point_pair, mode="bilinear", padding_mode="border")
-            c4_feature_pair = f.grid_sample(c4_pair, point_pair, mode="bilinear", padding_mode="border")
+            c1_feature_pair = f.grid_sample(c1_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            c2_feature_pair = f.grid_sample(c2_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            c3_feature_pair = f.grid_sample(c3_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            c4_feature_pair = f.grid_sample(c4_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+            # 分段进行归一化
+            c1_feature_pair = c1_feature_pair / torch.norm(c1_feature_pair, dim=2, keepdim=True)
+            c2_feature_pair = c2_feature_pair / torch.norm(c2_feature_pair, dim=2, keepdim=True)
+            c3_feature_pair = c3_feature_pair / torch.norm(c3_feature_pair, dim=2, keepdim=True)
+            c4_feature_pair = c4_feature_pair / torch.norm(c4_feature_pair, dim=2, keepdim=True)
 
             c1_0, c1_1 = torch.chunk(c1_feature_pair, 2, dim=0)
             c2_0, c2_1 = torch.chunk(c2_feature_pair, 2, dim=0)
             c3_0, c3_1 = torch.chunk(c3_feature_pair, 2, dim=0)
             c4_0, c4_1 = torch.chunk(c4_feature_pair, 2, dim=0)
 
-            desp_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=1)[:, :, :, 0].transpose(1, 2)
-            desp_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=1)[:, :, :, 0].transpose(1, 2)
+            desp_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=2)
+            desp_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=2)
 
-            desp_0 = desp_0 / torch.norm(desp_0, dim=2, keepdim=True)
-            desp_1 = desp_1 / torch.norm(desp_1, dim=2, keepdim=True)
+            desp_0 = desp_0 / 2.
+            desp_1 = desp_1 / 2.
 
             # feature_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=1)[:, :, :, 0].transpose(1, 2)
             # feature_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=1)[:, :, :, 0].transpose(1, 2)
@@ -806,9 +829,13 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # desp_0 = self.extractor(feature_0)
             # desp_1 = self.extractor(feature_1)
 
+            c1_loss = self.descriptor_loss(c1_0, c1_1, valid_mask, not_search_mask)
+            c2_loss = self.descriptor_loss(c2_0, c2_1, valid_mask, not_search_mask)
+            c3_loss = self.descriptor_loss(c3_0, c3_1, valid_mask, not_search_mask)
+            c4_loss = self.descriptor_loss(c4_0, c4_1, valid_mask, not_search_mask)
             desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
 
-            loss = desp_loss
+            loss = 0.5*desp_loss + 0.125*c1_loss + 0.125*c2_loss + 0.125*c3_loss + 0.125*c4_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -823,15 +850,29 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             if i % self.log_freq == 0:
 
                 desp_loss_val = desp_loss.item()
+                c1_loss_val = c1_loss.item()
+                c2_loss_val = c2_loss.item()
+                c3_loss_val = c3_loss.item()
+                c4_loss_val = c4_loss.item()
                 loss_val = loss.item()
                 self.summary_writer.add_scalar("loss", loss_val, global_step=int(i+epoch_idx*self.epoch_length))
 
                 self.logger.info(
-                    "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, desp_loss = %.4f"
-                    " one step cost %.4fs. " % (
+                    "[Epoch:%2d][Step:%5d:%5d]: "
+                    "loss=%.4f, "
+                    "desp=%.4f, "
+                    "c1=%.4f, "
+                    "c2=%.4f, "
+                    "c3=%.4f, "
+                    "c4=%.4f, "
+                    "cost %.4fs/step. " % (
                         epoch_idx, i, self.epoch_length,
                         loss_val,
                         desp_loss_val,
+                        c1_loss_val,
+                        c2_loss_val,
+                        c3_loss_val,
+                        c4_loss_val,
                         (time.time() - stime) / self.params.log_freq,
                     ))
                 stime = time.time()
@@ -848,7 +889,13 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.logger.info("*****************************************************")
         self.logger.info("Validating epoch %2d begin:" % epoch_idx)
 
-        self._test_func(epoch_idx)
+        if self.train_mode == "only_descriptor":
+            self._megadepth_validation_func(epoch_idx)
+            self.logger.info("Validating epoch %2d done." % epoch_idx)
+            self.logger.info("*****************************************************")
+            return
+        else:
+            self._test_func(epoch_idx)
 
         illum_homo_moving_acc = self.illum_homo_acc_mov.average()
         view_homo_moving_acc = self.view_homo_acc_mov.average()
@@ -1359,6 +1406,135 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         return first_point, first_point_num, second_point, second_point_num, select_first_desp, select_second_desp
 
+    def _megadepth_validation_func(self, epoch_idx):
+        """
+        用megadepth validation dataset进行验证的函数
+        """
+        self.model.eval()
+        avg_loss = []
+        avg_desp_loss = []
+        avg_c1_loss = []
+        avg_c2_loss = []
+        avg_c3_loss = []
+        avg_c4_loss = []
+        stime = time.time()
+        for i, data in enumerate(self.val_dataloader):
+
+            image = data["image"].to(self.device)
+            desp_point = data["desp_point"].to(self.device)
+
+            warped_image = data["warped_image"].to(self.device)
+            warped_desp_point = data["warped_desp_point"].to(self.device)
+
+            valid_mask = data["valid_mask"].to(self.device)
+            not_search_mask = data["not_search_mask"].to(self.device)
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
+
+            with torch.no_grad():
+                c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+
+            c1_feature_pair = f.grid_sample(c1_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            c2_feature_pair = f.grid_sample(c2_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            c3_feature_pair = f.grid_sample(c3_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            c4_feature_pair = f.grid_sample(c4_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+            # 分段进行归一化
+            c1_feature_pair = c1_feature_pair / torch.norm(c1_feature_pair, dim=2, keepdim=True)
+            c2_feature_pair = c2_feature_pair / torch.norm(c2_feature_pair, dim=2, keepdim=True)
+            c3_feature_pair = c3_feature_pair / torch.norm(c3_feature_pair, dim=2, keepdim=True)
+            c4_feature_pair = c4_feature_pair / torch.norm(c4_feature_pair, dim=2, keepdim=True)
+
+            c1_0, c1_1 = torch.chunk(c1_feature_pair, 2, dim=0)
+            c2_0, c2_1 = torch.chunk(c2_feature_pair, 2, dim=0)
+            c3_0, c3_1 = torch.chunk(c3_feature_pair, 2, dim=0)
+            c4_0, c4_1 = torch.chunk(c4_feature_pair, 2, dim=0)
+
+            desp_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=2)
+            desp_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=2)
+
+            desp_0 = desp_0 / 2.
+            desp_1 = desp_1 / 2.
+
+            c1_loss = self.descriptor_loss(c1_0, c1_1, valid_mask, not_search_mask)
+            c2_loss = self.descriptor_loss(c2_0, c2_1, valid_mask, not_search_mask)
+            c3_loss = self.descriptor_loss(c3_0, c3_1, valid_mask, not_search_mask)
+            c4_loss = self.descriptor_loss(c4_0, c4_1, valid_mask, not_search_mask)
+            desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
+
+            loss = 0.5*desp_loss + 0.125*c1_loss + 0.125*c2_loss + 0.125*c3_loss + 0.125*c4_loss
+
+            loss_val = loss.item()
+            desp_val = desp_loss.item()
+            c1_val = c1_loss.item()
+            c2_val = c2_loss.item()
+            c3_val = c3_loss.item()
+            c4_val = c4_loss.item()
+
+            torch.cuda.empty_cache()
+
+            if i % self.log_freq == 0:
+
+                self.logger.info(
+                    "[Val Epoch:%2d][Step:%5d:%5d]: "
+                    "loss=%.4f, "
+                    "desp=%.4f, "
+                    "c1=%.4f, "
+                    "c2=%.4f, "
+                    "c3=%.4f, "
+                    "c4=%.4f, "
+                    "cost %.4fs/step. " % (
+                        epoch_idx, i, self.val_epoch_length,
+                        loss_val,
+                        desp_val,
+                        c1_val,
+                        c2_val,
+                        c3_val,
+                        c4_val,
+                        (time.time() - stime) / self.params.log_freq,
+                    ))
+                stime = time.time()
+
+            avg_loss.append(loss_val)
+            avg_desp_loss.append(desp_val)
+            avg_c1_loss.append(c1_val)
+            avg_c2_loss.append(c2_val)
+            avg_c3_loss.append(c3_val)
+            avg_c4_loss.append(c4_val)
+
+        avg_loss = np.mean(np.stack(avg_loss))
+        avg_desp_loss = np.mean(np.stack(avg_desp_loss))
+        avg_c1_loss = np.mean(np.stack(avg_c1_loss))
+        avg_c2_loss = np.mean(np.stack(avg_c2_loss))
+        avg_c3_loss = np.mean(np.stack(avg_c3_loss))
+        avg_c4_loss = np.mean(np.stack(avg_c4_loss))
+
+        self.summary_writer.add_scalar("validation/loss", avg_loss, global_step=epoch_idx)
+        self.summary_writer.add_scalar("validation/desp_loss", avg_desp_loss, global_step=epoch_idx)
+        self.summary_writer.add_scalar("validation/c1_loss", avg_c1_loss, global_step=epoch_idx)
+        self.summary_writer.add_scalar("validation/c2_loss", avg_c2_loss, global_step=epoch_idx)
+        self.summary_writer.add_scalar("validation/c3_loss", avg_c3_loss, global_step=epoch_idx)
+        self.summary_writer.add_scalar("validation/c4_loss", avg_c4_loss, global_step=epoch_idx)
+
+        self.logger.info(
+            "[Val Epoch:%2d], "
+            "avg_loss=%.4f, "
+            "avg_desp=%.4f, "
+            "avg_c1=%.4f, "
+            "avg_c2=%.4f, "
+            "avg_c3=%.4f, "
+            "avg_c4=%.4f, " % (
+                epoch_idx,
+                avg_loss,
+                avg_desp_loss,
+                avg_c1_loss,
+                avg_c2_loss,
+                avg_c3_loss,
+                avg_c4_loss,
+            )
+        )
+
     def _descriptor_inference_func(self, image_pair):
         """
         专用于descriptor网络估计点和对应描述子的函数
@@ -1523,8 +1699,6 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         return point_np
 
     def _generate_combined_descriptor(self, point, c1, c2, c3, c4, height, width):
-    # def _generate_combined_descriptor(self, point, c1, c2, height, width):
-    # def _generate_combined_descriptor(self, point, c1, height, width):
         """
         用多层级的组合特征构造描述子
         Args:
@@ -1542,10 +1716,18 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         c2_feature = f.grid_sample(c2, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
         c3_feature = f.grid_sample(c3, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
         c4_feature = f.grid_sample(c4, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
+
+        # 分开进行归一化
+        c1_feature = c1_feature / torch.norm(c1_feature, dim=1, keepdim=True)
+        c2_feature = c2_feature / torch.norm(c2_feature, dim=1, keepdim=True)
+        c3_feature = c3_feature / torch.norm(c3_feature, dim=1, keepdim=True)
+        c4_feature = c4_feature / torch.norm(c4_feature, dim=1, keepdim=True)
+
         desp = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=1)
         # desp = torch.cat((c1_feature, c2_feature), dim=1)
         # desp = c1_feature
-        desp = desp / torch.norm(desp, dim=1, keepdim=True)
+        # desp = desp / torch.norm(desp, dim=1, keepdim=True)
+        desp = desp / 2.
 
         # c1_feature = f.grid_sample(c1, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
         # c2_feature = f.grid_sample(c2, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
