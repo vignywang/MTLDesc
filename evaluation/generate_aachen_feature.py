@@ -198,18 +198,21 @@ class FeatureGenerator(object):
         # heatmap, _ = self.detector(img_gray)
         # heatmap = torch.sigmoid(heatmap)
         # prob = spatial_nms(heatmap)
-
-        # descriptor
-        c1, c2, c3, c4 = self.descriptor(img)
-
+        # 得到对应的预测点
         prob = prob.detach().cpu().numpy()
         prob = prob[0, 0]
-
-        # 得到对应的预测点
         point, point_num = self._generate_predict_point(prob, self.detection_threshold, self.top_k)  # [n,2]
 
+        desp_point = torch.from_numpy(point[:, ::-1].copy()).to(torch.float).to(self.device)
+        # 归一化采样坐标到[-1,1]
+        desp_point = desp_point * 2. / torch.tensor((org_w-1, org_h-1), dtype=torch.float, device=self.device) - 1
+        desp_point = desp_point.unsqueeze(dim=0).unsqueeze(dim=2)  # [1,n,1,2]
+
+        # descriptor
+        desp = self.descriptor(img, desp_point)[0, :, :].detach().cpu().numpy()
+
         # 得到点对应的描述子
-        desp = self._generate_combined_descriptor(point, c1, c2, c3, c4, org_h, org_w)
+        # desp = self._generate_combined_descriptor(point, c1, c2, c3, c4, org_h, org_w)
 
         # if do_scale:
         #     point *= scale
@@ -411,7 +414,8 @@ if __name__ == "__main__":
         # detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/good_results/coco_weight_bce_01_0.0010_24/model_59.pt"
         detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth"
         # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_07.pt"
-        desp_ckpt_file = "/home/zhangyuyang/model_megadepth_c4_14.pt"
+        # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_c4_14.pt"
+        desp_ckpt_file = "/home/zhangyuyang/model_megadepth_extract_00.pt"
         # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_half_08.pt"
         # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_11.pt"
 
