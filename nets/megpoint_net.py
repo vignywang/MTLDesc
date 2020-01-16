@@ -608,10 +608,13 @@ class ResNet(nn.Module):
                                        dilate=replace_stride_with_dilation[2])
         # self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         # self.fc = nn.Linear(512 * block.expansion, num_classes)
-        self.compress1 = nn.Conv2d(64, 32, kernel_size=1, stride=1)
-        self.compress2 = nn.Conv2d(128, 32, kernel_size=1, stride=1)
-        self.compress3 = nn.Conv2d(256, 32, kernel_size=1, stride=1)
-        self.compress4 = nn.Conv2d(512, 32, kernel_size=1, stride=1)
+        # self.compress1 = nn.Conv2d(64, 32, kernel_size=1, stride=1)
+        # self.compress2 = nn.Conv2d(128, 32, kernel_size=1, stride=1)
+        # self.compress3 = nn.Conv2d(256, 32, kernel_size=1, stride=1)
+        # self.compress4 = nn.Conv2d(512, 32, kernel_size=1, stride=1)
+
+        self.fc1 = nn.Linear((64+128+256+512)*block.expansion, 256)
+        self.fc2 = nn.Linear(256, 128)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -654,7 +657,7 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, point):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -665,12 +668,26 @@ class ResNet(nn.Module):
         c3 = self.layer3(c2)
         c4 = self.layer4(c3)
 
-        compress1 = self.compress1(c1)
-        compress2 = self.compress2(c2)
-        compress3 = self.compress3(c3)
-        compress4 = self.compress4(c4)
+        # compress1 = self.compress1(c1)
+        # compress2 = self.compress2(c2)
+        # compress3 = self.compress3(c3)
+        # compress4 = self.compress4(c4)
 
-        return compress1, compress2, compress3, compress4
+        c1_feature = f.grid_sample(
+            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c2_feature = f.grid_sample(
+            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c3_feature = f.grid_sample(
+            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c4_feature = f.grid_sample(
+            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
 
 
 class DescriptorExtractor(nn.Module):
