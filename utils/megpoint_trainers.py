@@ -351,10 +351,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             model = torch.nn.DataParallel(model)
         self.model = model.to(self.device)
 
-        extractor = DescriptorExtractor()
-        if self.multi_gpus:
-            extractor = torch.nn.DataParallel(extractor)
-        self.extractor = extractor.to(self.device)
+        # extractor = DescriptorExtractor()
+        # if self.multi_gpus:
+        #     extractor = torch.nn.DataParallel(extractor)
+        # self.extractor = extractor.to(self.device)
 
         self.descriptor = None
         if self.train_mode in ["only_detector", "only_detector_index"]:
@@ -455,7 +455,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
         self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr)
-        self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
+        # self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
 
     def _initialize_scheduler(self):
         # 初始化学习率调整算子
@@ -776,7 +776,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _train_only_descriptor(self, epoch_idx):
         self.model.train()
-        self.extractor.train()
+        # self.extractor.train()
         stime = time.time()
         for i, data in enumerate(self.train_dataloader):
 
@@ -798,24 +798,26 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # desp_pair = f.grid_sample(coarse_desp_pair, point_pair, mode="bilinear")[:, :, :, 0].transpose(1, 2)
             # desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
 
-            c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+            # c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+            desp_pair = self.model(image_pair, point_pair)
+            desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
 
-            c1_feature_pair = f.grid_sample(c1_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-            c2_feature_pair = f.grid_sample(c2_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-            c3_feature_pair = f.grid_sample(c3_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-            c4_feature_pair = f.grid_sample(c4_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            # c1_feature_pair = f.grid_sample(c1_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            # c2_feature_pair = f.grid_sample(c2_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            # c3_feature_pair = f.grid_sample(c3_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            # c4_feature_pair = f.grid_sample(c4_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
 
-            c1_0, c1_1 = torch.chunk(c1_feature_pair, 2, dim=0)
-            c2_0, c2_1 = torch.chunk(c2_feature_pair, 2, dim=0)
-            c3_0, c3_1 = torch.chunk(c3_feature_pair, 2, dim=0)
-            c4_0, c4_1 = torch.chunk(c4_feature_pair, 2, dim=0)
+            # c1_0, c1_1 = torch.chunk(c1_feature_pair, 2, dim=0)
+            # c2_0, c2_1 = torch.chunk(c2_feature_pair, 2, dim=0)
+            # c3_0, c3_1 = torch.chunk(c3_feature_pair, 2, dim=0)
+            # c4_0, c4_1 = torch.chunk(c4_feature_pair, 2, dim=0)
 
-            feature_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=2)
-            feature_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=2)
+            # feature_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=2)
+            # feature_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=2)
 
             # extract descriptor
-            desp_0 = self.extractor(feature_0)
-            desp_1 = self.extractor(feature_1)
+            # desp_0 = self.extractor(feature_0)
+            # desp_1 = self.extractor(feature_1)
 
             desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
 
@@ -825,11 +827,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 self.logger.error('loss is nan!')
 
             self.optimizer.zero_grad()
-            self.extractor_optimizer.zero_grad()
+            # self.extractor_optimizer.zero_grad()
             loss.backward()
 
             self.optimizer.step()
-            self.extractor_optimizer.step()
+            # self.extractor_optimizer.step()
 
             if i % self.log_freq == 0:
 
@@ -852,10 +854,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         # save the model
         if self.multi_gpus:
             torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
-            torch.save(self.extractor.module.state_dict(), os.path.join(self.ckpt_dir, 'extractor_%02d.pt' % epoch_idx))
+            # torch.save(self.extractor.module.state_dict(), os.path.join(self.ckpt_dir, 'extractor_%02d.pt' % epoch_idx))
         else:
             torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
-            torch.save(self.extractor.state_dict(), os.path.join(self.ckpt_dir, 'extractor_%02d.pt' % epoch_idx))
+            # torch.save(self.extractor.state_dict(), os.path.join(self.ckpt_dir, 'extractor_%02d.pt' % epoch_idx))
 
     def _validate_one_epoch(self, epoch_idx):
         self.logger.info("*****************************************************")
@@ -1383,7 +1385,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         用megadepth validation dataset进行验证的函数
         """
         self.model.eval()
-        self.extractor.eval()
+        # self.extractor.eval()
         avg_loss = []
         avg_desp_loss = []
         stime = time.time()
@@ -1402,24 +1404,26 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
 
             with torch.no_grad():
-                c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+                # c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+                desp_pair = self.model(image_pair, point_pair)
+                desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
 
-            c1_feature_pair = f.grid_sample(c1_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-            c2_feature_pair = f.grid_sample(c2_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-            c3_feature_pair = f.grid_sample(c3_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-            c4_feature_pair = f.grid_sample(c4_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            # c1_feature_pair = f.grid_sample(c1_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            # c2_feature_pair = f.grid_sample(c2_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            # c3_feature_pair = f.grid_sample(c3_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            # c4_feature_pair = f.grid_sample(c4_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
 
-            c1_0, c1_1 = torch.chunk(c1_feature_pair, 2, dim=0)
-            c2_0, c2_1 = torch.chunk(c2_feature_pair, 2, dim=0)
-            c3_0, c3_1 = torch.chunk(c3_feature_pair, 2, dim=0)
-            c4_0, c4_1 = torch.chunk(c4_feature_pair, 2, dim=0)
+            # c1_0, c1_1 = torch.chunk(c1_feature_pair, 2, dim=0)
+            # c2_0, c2_1 = torch.chunk(c2_feature_pair, 2, dim=0)
+            # c3_0, c3_1 = torch.chunk(c3_feature_pair, 2, dim=0)
+            # c4_0, c4_1 = torch.chunk(c4_feature_pair, 2, dim=0)
 
-            feature_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=2)
-            feature_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=2)
+            # feature_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=2)
+            # feature_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=2)
 
             # extract descriptor
-            desp_0 = self.extractor(feature_0)
-            desp_1 = self.extractor(feature_1)
+            # desp_0 = self.extractor(feature_0)
+            # desp_1 = self.extractor(feature_1)
 
             desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
 
