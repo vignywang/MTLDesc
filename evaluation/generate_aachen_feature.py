@@ -411,7 +411,8 @@ if __name__ == "__main__":
         # detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/good_results/coco_weight_bce_01_0.0010_24/model_59.pt"
         detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth"
         # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_07.pt"
-        desp_ckpt_file = "/home/zhangyuyang/model_megadepth_half_08.pt"
+        desp_ckpt_file = "/home/zhangyuyang/model_megadepth_c4_14.pt"
+        # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_half_08.pt"
         # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_11.pt"
 
         detection_threshold = 0.005  # for magicleap model
