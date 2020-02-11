@@ -40,6 +40,8 @@ from utils.evaluation_tools import MeanMatchingAccuracy
 from utils.utils import spatial_nms
 from utils.utils import DescriptorTripletLoss
 from utils.utils import DescriptorGeneralTripletLoss
+from utils.utils import DescriptorRankedListLoss
+from utils.utils import DescriptorValidator
 from utils.utils import Matcher
 from utils.utils import NearestNeighborThresholdMatcher
 from utils.utils import NearestNeighborRatioMatcher
@@ -170,7 +172,6 @@ class MegPointTrainerTester(object):
 
         self.network_arch = params.network_arch
         self.train_mode = params.train_mode
-        self.desp_loss = params.desp_loss
         self.detection_mode = params.detection_mode
         self.homo_pred_mode = params.homo_pred_mode
         self.match_mode = params.match_mode
@@ -184,6 +185,8 @@ class MegPointTrainerTester(object):
         self.repro_weight = params.repro_weight
         self.half_region_size = params.half_region_size
         self.dataset_type = params.dataset_type
+
+        self.desp_loss_type = params.desp_loss_type
 
         # todo:
         self.sift = cv.xfeatures2d.SIFT_create(1000)
@@ -403,8 +406,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         # 初始化描述子loss
         if self.train_mode == "only_descriptor":
-            self.logger.info("Initialize the DescriptorGeneralTripletLoss.")
-            self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
+            if self.desp_loss_type == "general":
+                self.logger.info("Initialize the DescriptorGeneralTripletLoss.")
+                self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
+            elif self.desp_loss_type == "rank":
+                self.logger.info("Initialize the DescriptorRnakedListLoss")
+                self.descriptor_loss = DescriptorRankedListLoss(margin=1.2, alpha=1.2, t=10, device=self.device)
+            else:
+                self.logger.error("Unrecognized desp_loss_type: %s" % self.desp_loss_type)
+                assert False
         else:
             # self.logger.info("Initialize the DescriptorTripletLoss.")
             # self.descriptor_loss = DescriptorTripletLoss(self.device)
@@ -415,6 +425,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.logger.info("Initialize the HomographyReprojectionLoss and ReprojectionLoss")
         self.homo_loss = HomographyReprojectionLoss(self.device, self.params.height, self.params.width, self.half_region_size)
         self.repro_loss = ReprojectionLoss(self.device, self.params.height, self.params.width, self.half_region_size)
+
+        # 初始化验证算子
+        self.descriptor_validator = DescriptorValidator()
 
     def _initialize_matcher(self):
         # 初始化匹配算子
@@ -441,8 +454,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 self.logger.info("Initialize training func mode of [only_detector_index] with baseline network.")
                 self._train_func = self._train_only_detector_index
             elif self.train_mode == "only_descriptor":
-                self.logger.info("Initialize training func mode of [only_descriptor] with baseline network.")
-                self._train_func = self._train_only_descriptor
+                if self.desp_loss_type == "general":
+                    self.logger.info("Initialize training func mode of [only_descriptor] with general train func.")
+                    self._train_func = self._train_only_descriptor
+                elif self.desp_loss_type == "rank":
+                    self.logger.info("Initialize training func mode of [only_descriptor] with rank train func.")
+                    self._train_func = self._train_only_descriptor_rank
             else:
                 # self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
                 # self._train_func = self._train_with_gt
@@ -858,6 +875,73 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         else:
             torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
             # torch.save(self.extractor.state_dict(), os.path.join(self.ckpt_dir, 'extractor_%02d.pt' % epoch_idx))
+
+    def _train_only_descriptor_rank(self, epoch_idx):
+        self.model.train()
+        stime = time.time()
+
+        # todo: debug use
+        torch.autograd.set_detect_anomaly(True)
+
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data["image"].to(self.device)
+            desp_point = data["desp_point"].to(self.device)
+
+            warped_image = data["warped_image"].to(self.device)
+            warped_desp_point = data["warped_desp_point"].to(self.device)
+
+            valid_mask = data["valid_mask"].to(self.device)
+            not_search_mask = data["not_search_mask"].to(self.device)
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
+
+            desp_pair = self.model(image_pair, point_pair)
+            desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
+
+            desp_loss, desp_positive_loss, desp_negative_loss = self.descriptor_loss(
+                desp_0, desp_1, valid_mask, not_search_mask)
+
+            loss = desp_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                desp_loss_val = desp_loss.item()
+                positive_loss_val = desp_positive_loss.item()
+                negative_loss_val = desp_negative_loss.item()
+
+                self.summary_writer.add_scalar("loss", desp_loss_val, global_step=int(i+epoch_idx*self.epoch_length))
+                self.summary_writer.add_scalar("positive_loss", positive_loss_val, int(i+epoch_idx*self.epoch_length))
+                self.summary_writer.add_scalar("negative_loss", negative_loss_val, int(i+epoch_idx*self.epoch_length))
+
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: "
+                    "loss=%.4f, "
+                    "positive_loss=%.4f, "
+                    "negative_loss=%.4f, "
+                    "cost %.4fs/step. " % (
+                        epoch_idx, i, self.epoch_length,
+                        desp_loss_val,
+                        positive_loss_val,
+                        negative_loss_val,
+                        (time.time() - stime) / self.params.log_freq,
+                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
 
     def _validate_one_epoch(self, epoch_idx):
         self.logger.info("*****************************************************")
@@ -1386,8 +1470,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         """
         self.model.eval()
         # self.extractor.eval()
-        avg_loss = []
-        avg_desp_loss = []
+        avg_correct_ratio = []
         stime = time.time()
         for i, data in enumerate(self.val_dataloader):
 
@@ -1404,33 +1487,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
 
             with torch.no_grad():
-                # c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
                 desp_pair = self.model(image_pair, point_pair)
                 desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
 
-            # c1_feature_pair = f.grid_sample(c1_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-            # c2_feature_pair = f.grid_sample(c2_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-            # c3_feature_pair = f.grid_sample(c3_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-            # c4_feature_pair = f.grid_sample(c4_pair, point_pair, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+            correct_ratio = self.descriptor_validator(desp_0, desp_1, valid_mask, not_search_mask)
 
-            # c1_0, c1_1 = torch.chunk(c1_feature_pair, 2, dim=0)
-            # c2_0, c2_1 = torch.chunk(c2_feature_pair, 2, dim=0)
-            # c3_0, c3_1 = torch.chunk(c3_feature_pair, 2, dim=0)
-            # c4_0, c4_1 = torch.chunk(c4_feature_pair, 2, dim=0)
-
-            # feature_0 = torch.cat((c1_0, c2_0, c3_0, c4_0), dim=2)
-            # feature_1 = torch.cat((c1_1, c2_1, c3_1, c4_1), dim=2)
-
-            # extract descriptor
-            # desp_0 = self.extractor(feature_0)
-            # desp_1 = self.extractor(feature_1)
-
-            desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
-
-            loss = desp_loss
-
-            loss_val = loss.item()
-            desp_val = desp_loss.item()
+            correct_ratio_val = correct_ratio.item()
 
             torch.cuda.empty_cache()
 
@@ -1438,33 +1500,26 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
                 self.logger.info(
                     "[Val Epoch:%2d][Step:%5d:%5d]: "
-                    "loss=%.4f, "
-                    "desp=%.4f, "
+                    "correct_ratio=%.4f, "
                     "cost %.4fs/step. " % (
                         epoch_idx, i, self.val_epoch_length,
-                        loss_val,
-                        desp_val,
+                        correct_ratio_val,
                         (time.time() - stime) / self.params.log_freq,
                     ))
                 stime = time.time()
 
-            avg_loss.append(loss_val)
-            avg_desp_loss.append(desp_val)
+            avg_correct_ratio.append(correct_ratio_val)
 
-        avg_loss = np.mean(np.stack(avg_loss))
-        avg_desp_loss = np.mean(np.stack(avg_desp_loss))
+        avg_correct_ratio = np.mean(np.stack(avg_correct_ratio))
 
-        self.summary_writer.add_scalar("validation/loss", avg_loss, global_step=epoch_idx)
-        self.summary_writer.add_scalar("validation/desp_loss", avg_desp_loss, global_step=epoch_idx)
+        self.summary_writer.add_scalar("validation/avg_correct_ratio", avg_correct_ratio, global_step=epoch_idx)
 
         self.logger.info(
             "[Val Epoch:%2d], "
-            "avg_loss=%.4f, "
-            "avg_desp=%.4f, "
+            "avg_correct_ratio=%.4f, "
             % (
                 epoch_idx,
-                avg_loss,
-                avg_desp_loss,
+                avg_correct_ratio,
             )
         )
 

@@ -203,6 +203,83 @@ class DescriptorGeneralTripletLoss(object):
         return loss
 
 
+class DescriptorRankedListLoss(object):
+    """
+    该类用于就算描述子的排序loss, 参考自论文
+    """
+    def __init__(self, margin, alpha, t, device):
+        self.device = device
+        self.positive_threshold = alpha - margin
+        self.negative_threshold = alpha
+        self.t = t
+
+    def __call__(self, desp_0, desp_1, matched_valid, not_search_mask):
+        desp_1 = torch.transpose(desp_1, 1, 2)
+
+        cos_similarity = torch.matmul(desp_0, desp_1)
+        dist = torch.sqrt(2.*(1.-cos_similarity) + 1e-4)
+
+        # 构造正样本对，正样本对中大于阈值的为有效正样本对
+        positive_pair = torch.diagonal(dist, dim1=1, dim2=2)
+        positive_mask = ((positive_pair >= self.positive_threshold).to(torch.float) * matched_valid).detach()
+        positive_loss = self.compute_masked_positive_loss(positive_pair, positive_mask)
+
+        # 除去正样本对以及无效的负样本对的距离，剩下的都为负样本对
+        # can't write as dist += 10*not_search_mask which will cost backprop error
+        dist = dist + 10*not_search_mask
+        negative_pair = dist
+        negative_mask = ((dist <= self.negative_threshold).to(torch.float)).detach()
+        negative_loss = self.negative_threshold - negative_pair
+        negative_loss = self.compute_masked_negative_loss(negative_loss, negative_mask)
+
+        loss = positive_loss + negative_loss
+
+        return loss, positive_loss, negative_loss
+
+    @staticmethod
+    def compute_masked_positive_loss(loss, mask):
+        """
+        loss与mask的形状应该相同
+        """
+        sum_loss = torch.sum(loss*mask)
+        sum_mask = torch.sum(mask)
+        loss = sum_loss / (sum_mask + 1e-5)
+        return loss
+
+    @staticmethod
+    def compute_masked_negative_loss(loss, mask):
+        sum_point_loss = torch.sum(loss*mask, dim=-1)
+        sum_point_mask = torch.sum(mask, dim=-1)
+        point_loss = sum_point_loss / (sum_point_mask + 1e-5)
+
+        loss = torch.mean(point_loss)
+        return loss
+
+
+class DescriptorValidator(object):
+    """
+    用于计算每一个Epoch结束后的模型在验证集上的匹配成功率
+    """
+    def __init__(self):
+        pass
+
+    def __call__(self, desp_0, desp_1, matched_valid, not_search_mask):
+        desp_1 = torch.transpose(desp_1, 1, 2)
+
+        cos_similarity = torch.matmul(desp_0, desp_1)
+        dist = torch.sqrt(2.*(1.-cos_similarity)+1e-4)
+
+        positive_dist = torch.diagonal(dist, dim1=1, dim2=2)
+        dist = dist + 10 * not_search_mask
+
+        negative_dist, _ = torch.min(dist, dim=2)
+
+        correct_match = (positive_dist < negative_dist).to(torch.float)
+        correct_ratio = torch.sum(correct_match * matched_valid) / (torch.sum(matched_valid) + 1e-5)
+
+        return correct_ratio
+
+
 class DescriptorPreciseTripletLoss(object):
     """该类默认输入的描述子是一一配对的，不需要输入配对信息"""
 

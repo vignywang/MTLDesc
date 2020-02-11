@@ -33,7 +33,6 @@ class MegPointHeatmapParameters(BasicParameters):
         self.network_arch = "baseline"
         self.train_mode = "with_gt"
         self.detection_mode = "use_network"
-        self.desp_loss = "triplet"
         self.align_weight = 1.0
         self.align_type = "general"
         self.adjust_lr = "False"
@@ -46,6 +45,8 @@ class MegPointHeatmapParameters(BasicParameters):
         self.tmp_ckpt_file = ""
         self.dataset_type = "coco"
         self.sample_num = 100
+
+        self.desp_loss_type = "general"
 
         # debug related
         self.debug_mode = "MegPoint"
@@ -110,7 +111,6 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--width", type=int, default=320)
         parser.add_argument("--network_arch", type=str, default="baseline")  # 目前为两种 baseline or resnet50
         parser.add_argument("--train_mode", type=str, default="with_gt")  # with_gt or without_gt
-        parser.add_argument("--desp_loss", type=str, default="triplet")  # triplet or tuplet
         parser.add_argument("--detection_mode", type=str, default="use_network")  # use_network or use_sift
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
@@ -129,6 +129,8 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--tmp_ckpt_file", type=str, default="")
         parser.add_argument("--dataset_type", type=str, default="coco")
         parser.add_argument("--sample_num", type=int, default=100)
+
+        parser.add_argument("--desp_loss_type", type=str, default="general")
 
         # megaDepth related
         parser.add_argument("--mega_dataset_dir", type=str, default="/data/MegaDepthOrder/preprocessed_train_dataset")
@@ -156,6 +158,8 @@ class MegPointHeatmapParameters(BasicParameters):
         self.logger.info("homo_weight: %.3f" % self.homo_weight)
         self.logger.info("repro_weight: %.3f" % self.repro_weight)
         self.logger.info("half_region_size: %d" % self.half_region_size)
+
+        self.logger.info("desp_loss_type: %s" % self.desp_loss_type)
 
         if self.adjust_lr == "True":
             self.adjust_lr = True
