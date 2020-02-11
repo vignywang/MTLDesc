@@ -3,6 +3,7 @@
 #
 import os
 import shutil
+import argparse
 
 import torch
 import numpy as np
@@ -411,22 +412,32 @@ if __name__ == "__main__":
     class Parameters:
         dataset_root = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright"
 
-        # detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/good_results/coco_weight_bce_01_0.0010_24/model_59.pt"
         detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth"
+
         # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_07.pt"
         # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_c4_14.pt"
-        desp_ckpt_file = "/home/zhangyuyang/model_megadepth_extract_00.pt"
+        # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_extract_00.pt"
         # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_half_08.pt"
         # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_11.pt"
+        # desp_ckpt_file = "/home/zhangyuyang/remote_model/megadepth_only_descriptor_resnet_extractor_0.0010_8/model_59.pt"
+        desp_ckpt_file = "/home/zhangyuyang/remote_model/megadepth_rank_0.0010_8/model_09.pt"
+
+        desp_ckpt_root = "/home/zhangyuyang/remote_model"
 
         detection_threshold = 0.005  # for magicleap model
         top_k = 5000
 
+    parse = argparse.ArgumentParser()
+    parse.add_argument("--desp_ckpt_file", type=str, default="")
+    args = parse.parse_args()
 
     params = Parameters()
+    params.desp_ckpt_file = os.path.join(params.desp_ckpt_root, args.desp_ckpt_file)
+
     feature_generator = FeatureGenerator(params)
     feature_generator.run()
 
+    # debug use
     # img_0 = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright/db/9.jpg"
     # img_1 = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright/db/11.jpg"
     # img_0 = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright/db/2125.jpg"
