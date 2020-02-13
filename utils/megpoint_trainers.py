@@ -322,7 +322,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         # 初始化验证集
         if self.train_mode == "only_descriptor":
             self.logger.info("Initialize MegaDepth validation dataset")
-            self.val_dataset = MegaDepthDatasetFromPreprocessed(dataset_dir=self.params.mega_val_dataset_dir)
+            self.val_dataset = MegaDepthDatasetFromPreprocessed(dataset_dir=self.params.mega_val_dataset_dir,
+                                                                do_augmentation=False)
             self.val_dataloader = DataLoader(
                 dataset=self.val_dataset,
                 batch_size=self.batch_size,

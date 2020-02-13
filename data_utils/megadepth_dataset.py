@@ -923,8 +923,9 @@ class MegaDepthDatasetFromPreprocessed(Dataset):
     """
     配合MegaDepthDatasetCreator使用，直接读取预处理好的数据集
     """
-    def __init__(self, dataset_dir):
+    def __init__(self, dataset_dir, do_augmentation=True):
         self.image_list, self.info_list = self._format_file_list(dataset_dir)
+        self.do_augmentation = True
 
         # 初始化增强算子
         ia.seed(3212)
@@ -1004,24 +1005,25 @@ class MegaDepthDatasetFromPreprocessed(Dataset):
         desp_point1 = ((desp_point1 + 1.) / 2. * scale)[:, 0, :]
         desp_point2 = ((desp_point2 + 1.) / 2. * scale)[:, 0, :]
 
-        # augmentation
-        aug_image1, aug_point1 = self.aug_seq(image=image1, keypoints=desp_point1[np.newaxis, :, :])
-        aug_image2, aug_point2 = self.aug_seq(image=image2, keypoints=desp_point2[np.newaxis, :, :])
+        if self.do_augmentation:
+            # augmentation
+            aug_image1, aug_point1 = self.aug_seq(image=image1, keypoints=desp_point1[np.newaxis, :, :])
+            aug_image2, aug_point2 = self.aug_seq(image=image2, keypoints=desp_point2[np.newaxis, :, :])
 
-        desp_point1, desp_point2 = aug_point1[0].copy(), aug_point2[0].copy()
-        image1, image2 = aug_image1.copy(), aug_image2.copy()
+            desp_point1, desp_point2 = aug_point1[0].copy(), aug_point2[0].copy()
+            image1, image2 = aug_image1.copy(), aug_image2.copy()
 
-        # rescale to (-1,1)
-        desp_point1 = ((desp_point1 / scale) * 2. - 1.)[:, np.newaxis, :]
-        desp_point2 = ((desp_point2 / scale) * 2. - 1.)[:, np.newaxis, :]
+            # rescale to (-1,1)
+            desp_point1 = ((desp_point1 / scale) * 2. - 1.)[:, np.newaxis, :]
+            desp_point2 = ((desp_point2 / scale) * 2. - 1.)[:, np.newaxis, :]
 
-        # valid_mask and not_search_mask after augmentation
-        aug_valid_mask = (desp_point1 >= -1.) & (desp_point1 <= 1.) & (desp_point2 >= -1.) & (desp_point2 <= 1.)
-        aug_valid_mask = np.all(aug_valid_mask[:, 0, :], axis=1)
-        valid_mask &= aug_valid_mask
+            # valid_mask and not_search_mask after augmentation
+            aug_valid_mask = (desp_point1 >= -1.) & (desp_point1 <= 1.) & (desp_point2 >= -1.) & (desp_point2 <= 1.)
+            aug_valid_mask = np.all(aug_valid_mask[:, 0, :], axis=1)
+            valid_mask &= aug_valid_mask
 
-        not_search_point2 = np.all(((desp_point2 < -1.) & (desp_point2 > 1.))[:, 0, :], axis=1)[np.newaxis, :]  # [1,n]
-        not_search_mask |= not_search_point2
+            not_search_point2 = np.all(((desp_point2 < -1.) & (desp_point2 > 1.))[:, 0, :], axis=1)[np.newaxis, :]
+            not_search_mask |= not_search_point2
 
         # debug use
         # desp_point1 = ((desp_point1 + 1) * 256 / 2.)[:, 0, :]
