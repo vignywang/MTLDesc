@@ -13,6 +13,7 @@ import torch.nn.functional as f
 from nets.megpoint_net import resnet18_all
 from nets.megpoint_net import half_resnet18_all
 from nets.megpoint_net import resnet18
+from nets.megpoint_net import resnet34
 from nets.megpoint_net import MegPointShuffleHeatmapOld
 from nets.superpoint_net import SuperPointNetFloat
 from evaluation.aachen_dataset import AachenDataset
@@ -35,11 +36,11 @@ class FeatureGenerator(object):
         self.detection_threshold = params.detection_threshold
         self.top_k = params.top_k
 
-        self._initialize_model(params.detector_ckpt_file, params.desp_ckpt_file)
+        self._initialize_model(params.model_type, params.detector_ckpt_file, params.desp_ckpt_file)
         self._initialize_dataset(params.dataset_root)
         self._initialize_matcher()
 
-    def _initialize_model(self, detector_ckpt_file, desp_ckpt_file):
+    def _initialize_model(self, model_type, detector_ckpt_file, desp_ckpt_file):
         """
         初始化模型
         """
@@ -60,8 +61,15 @@ class FeatureGenerator(object):
         self.detector = self._restore_model_params(detector, detector_ckpt_file)
 
         # 初始化描述子模型
-        print("Initialize model of resnet18")
-        descriptor = resnet18().to(self.device)
+        if model_type == "resnet18":
+            print("Initialize model of resnet18")
+            descriptor = resnet18().to(self.device)
+        elif model_type == "resnet34":
+            print("Initialize model of resnet34")
+            descriptor = resnet34().to(self.device)
+        else:
+            print("Unrecognized model_type: %s" % model_type)
+            assert False
         self.descriptor = self._restore_model_params(descriptor, desp_ckpt_file)
 
     def _initialize_dataset(self, dataset_dir):
@@ -410,29 +418,35 @@ class FeatureGenerator(object):
 if __name__ == "__main__":
 
     class Parameters:
-        dataset_root = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright"
 
-        detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth"
+        def __init__(self):
+            self.dataset_root = "/home/zhangyuyang/data/aachen/Aachen-Day-Night/images/images_upright"
 
-        # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_07.pt"
-        # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_c4_14.pt"
-        # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_extract_00.pt"
-        # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_half_08.pt"
-        # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_11.pt"
-        # desp_ckpt_file = "/home/zhangyuyang/remote_model/megadepth_only_descriptor_resnet_extractor_0.0010_8/model_59.pt"
-        desp_ckpt_file = "/home/zhangyuyang/remote_model/megadepth_rank_0.0010_8/model_09.pt"
+            self.detector_ckpt_file = "/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth"
 
-        desp_ckpt_root = "/home/zhangyuyang/remote_model"
+            # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_07.pt"
+            # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_c4_14.pt"
+            # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_extract_00.pt"
+            # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_half_08.pt"
+            # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_11.pt"
+            # desp_ckpt_file = "/home/zhangyuyang/remote_model/megadepth_only_descriptor_resnet_extractor_0.0010_8/model_59.pt"
+            self.desp_ckpt_file = "/home/zhangyuyang/remote_model/megadepth_rank_0.0010_8/model_09.pt"
 
-        detection_threshold = 0.005  # for magicleap model
-        top_k = 5000
+            self.desp_ckpt_root = "/home/zhangyuyang/remote_model"
+
+            self.detection_threshold = 0.005  # for magicleap model
+            self.top_k = 5000
+
+            self.model_type = "resnet18"
 
     parse = argparse.ArgumentParser()
     parse.add_argument("--desp_ckpt_file", type=str, default="")
+    parse.add_argument("--model_type", type=str, default="resnet18")
     args = parse.parse_args()
 
     params = Parameters()
     params.desp_ckpt_file = os.path.join(params.desp_ckpt_root, args.desp_ckpt_file)
+    params.model_type = args.model_type
 
     feature_generator = FeatureGenerator(params)
     feature_generator.run()
