@@ -925,7 +925,7 @@ class MegaDepthDatasetFromPreprocessed(Dataset):
     """
     def __init__(self, dataset_dir, do_augmentation=True):
         self.image_list, self.info_list = self._format_file_list(dataset_dir)
-        self.do_augmentation = True
+        self.do_augmentation = do_augmentation
 
         # 初始化增强算子
         ia.seed(3212)
@@ -1002,10 +1002,11 @@ class MegaDepthDatasetFromPreprocessed(Dataset):
         valid_mask = info["valid_mask"]
         not_search_mask = info["not_search_mask"]
 
-        desp_point1 = ((desp_point1 + 1.) / 2. * scale)[:, 0, :]
-        desp_point2 = ((desp_point2 + 1.) / 2. * scale)[:, 0, :]
-
         if self.do_augmentation:
+
+            desp_point1 = ((desp_point1 + 1.) / 2. * scale)[:, 0, :]
+            desp_point2 = ((desp_point2 + 1.) / 2. * scale)[:, 0, :]
+
             # augmentation
             aug_image1, aug_point1 = self.aug_seq(image=image1, keypoints=desp_point1[np.newaxis, :, :])
             aug_image2, aug_point2 = self.aug_seq(image=image2, keypoints=desp_point2[np.newaxis, :, :])
