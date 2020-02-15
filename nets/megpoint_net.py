@@ -576,10 +576,12 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
+    def __init__(self, block, layers, combines=None, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None):
         super(ResNet, self).__init__()
+        if combines is None:
+            combines = [1, 1, 1, 1]
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -614,7 +616,7 @@ class ResNet(nn.Module):
         # self.compress3 = nn.Conv2d(256, 32, kernel_size=1, stride=1)
         # self.compress4 = nn.Conv2d(512, 32, kernel_size=1, stride=1)
 
-        self.fc1 = nn.Linear((64+128+256+512)*block.expansion, 256)
+        self.fc1 = nn.Linear((combines[0]*64+combines[1]*128+combines[2]*256+combines[3]*512)*block.expansion, 256)
         self.fc2 = nn.Linear(256, 128)
 
         for m in self.modules():
@@ -623,6 +625,8 @@ class ResNet(nn.Module):
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
 
         # Zero-initialize the last BN in each residual branch,
         # so that the residual branch starts with zeros, and each residual block behaves like an identity.
@@ -736,5 +740,564 @@ def resnet34(pretrained=False, progress=True, **kwargs):
     """
     return _resnet('resnet34', BasicBlock, [3, 4, 6, 3], pretrained, progress,
                    **kwargs)
+
+
+#### 大规模实验准备
+# [1,0,0,0]
+class ResNetC1(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC1, self).__init__(
+            block, layers, combines=[1, 0, 0, 0], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+
+        c1_feature = f.grid_sample(
+            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = c1_feature
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c1():
+    return ResNetC1(BasicBlock, [2, 2, 2, 2])
+
+
+# [0,1,0,0]
+class ResNetC2(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC2, self).__init__(
+            block, layers, combines=[0, 1, 0, 0], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+
+        c2_feature = f.grid_sample(
+            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = c2_feature
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c2():
+    return ResNetC2(BasicBlock, [2, 2, 2, 2])
+
+
+# [0,0,1,0]
+class ResNetC3(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC3, self).__init__(
+            block, layers, combines=[0, 0, 1, 0], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+
+        c3_feature = f.grid_sample(
+            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = c3_feature
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c3():
+    return ResNetC3(BasicBlock, [2, 2, 2, 2])
+
+
+# [0,0,0,1]
+class ResNetC4(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC4, self).__init__(
+            block, layers, combines=[0, 0, 0, 1], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+
+        c4_feature = f.grid_sample(
+            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = c4_feature
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c4():
+    return ResNetC4(BasicBlock, [2, 2, 2, 2])
+
+
+# [1,1,0,0]
+class ResNetC1C2(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC1C2, self).__init__(
+            block, layers, combines=[1, 1, 0, 0], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        # c3 = self.layer3(c2)
+        # c4 = self.layer4(c3)
+
+        c1_feature = f.grid_sample(
+            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c2_feature = f.grid_sample(
+            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c1_feature, c2_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c1c2():
+    return ResNetC1C2(BasicBlock, [2, 2, 2, 2])
+
+# [1,0,1,0]
+class ResNetC1C3(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC1C3, self).__init__(
+            block, layers, combines=[1, 0, 1, 0], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        # c4 = self.layer4(c3)
+
+        c1_feature = f.grid_sample(
+            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c3_feature = f.grid_sample(
+            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c1_feature, c3_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c1c3():
+    return ResNetC1C3(BasicBlock, [2, 2, 2, 2])
+
+# [1,0,0,1]
+class ResNetC1C4(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC1C4, self).__init__(
+            block, layers, combines=[1, 0, 0, 1], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+
+        c1_feature = f.grid_sample(
+            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c4_feature = f.grid_sample(
+            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c1_feature, c4_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c1c4():
+    return ResNetC1C4(BasicBlock, [2, 2, 2, 2])
+
+# [0,1,1,0]
+class ResNetC2C3(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC2C3, self).__init__(
+            block, layers, combines=[0, 1, 1, 0], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        # c4 = self.layer4(c3)
+
+        c2_feature = f.grid_sample(
+            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c3_feature = f.grid_sample(
+            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c2_feature, c3_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c2c3():
+    return ResNetC2C3(BasicBlock, [2, 2, 2, 2])
+
+# [0,1,0,1]
+class ResNetC2C4(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC2C4, self).__init__(
+            block, layers, combines=[0, 1, 0, 1], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+
+        c2_feature = f.grid_sample(
+            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c4_feature = f.grid_sample(
+            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c2_feature, c4_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c2c4():
+    return ResNetC2C4(BasicBlock, [2, 2, 2, 2])
+
+# [0,0,1,1]
+class ResNetC3C4(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC3C4, self).__init__(
+            block, layers, combines=[0, 0, 1, 1], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+
+        c3_feature = f.grid_sample(
+            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c4_feature = f.grid_sample(
+            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c3_feature, c4_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c3c4():
+    return ResNetC3C4(BasicBlock, [2, 2, 2, 2])
+
+# [1,1,1,0]
+class ResNetC1C2C3(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC1C2C3, self).__init__(
+            block, layers, combines=[1, 1, 1, 0], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        # c4 = self.layer4(c3)
+
+        c1_feature = f.grid_sample(
+            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c2_feature = f.grid_sample(
+            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c3_feature = f.grid_sample(
+            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c1_feature, c2_feature, c3_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c1c2c3():
+    return ResNetC1C2C3(BasicBlock, [2, 2, 2, 2])
+
+# [1,1,0,1]
+class ResNetC1C2C4(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC1C2C4, self).__init__(
+            block, layers, combines=[1, 1, 0, 1], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+
+        c1_feature = f.grid_sample(
+            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c2_feature = f.grid_sample(
+            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c4_feature = f.grid_sample(
+            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c1_feature, c2_feature, c4_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c1c2c4():
+    return ResNetC1C2C4(BasicBlock, [2, 2, 2, 2])
+
+# [1,0,1,1]
+class ResNetC1C3C4(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC1C3C4, self).__init__(
+            block, layers, combines=[1, 0, 1, 1], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+
+        c1_feature = f.grid_sample(
+            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c3_feature = f.grid_sample(
+            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c4_feature = f.grid_sample(
+            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c1_feature, c3_feature, c4_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c1c3c4():
+    return ResNetC1C3C4(BasicBlock, [2, 2, 2, 2])
+
+# [0,1,1,1]
+class ResNetC2C3C4(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC2C3C4, self).__init__(
+            block, layers, combines=[0, 1, 1, 1], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+
+        c2_feature = f.grid_sample(
+            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c3_feature = f.grid_sample(
+            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c4_feature = f.grid_sample(
+            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c2_feature, c3_feature, c4_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c2c3c4():
+    return ResNetC2C3C4(BasicBlock, [2, 2, 2, 2])
+
+# [1,1,1,1]
+class ResNetC1C2C3C4(ResNet):
+
+    def __init__(self, block, layers):
+        super(ResNetC1C2C3C4, self).__init__(
+            block, layers, combines=[1, 1, 1, 1], zero_init_residual=False,
+            groups=1, width_per_group=64, replace_stride_with_dilation=None,
+            norm_layer=None
+        )
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        # x = self.maxpool(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+
+        c1_feature = f.grid_sample(
+            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c2_feature = f.grid_sample(
+            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c3_feature = f.grid_sample(
+            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c4_feature = f.grid_sample(
+            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_c1c2c3c4():
+    return ResNetC1C2C3C4(BasicBlock, [2, 2, 2, 2])
 
 

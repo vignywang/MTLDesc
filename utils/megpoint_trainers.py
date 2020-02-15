@@ -16,11 +16,25 @@ from nets.megpoint_net import MegPointShuffleHeatmap
 from nets.megpoint_net import MegPointShuffleHeatmapOld
 from nets.megpoint_net import resnet18
 from nets.megpoint_net import resnet34
+
+from nets.megpoint_net import resnet18_c1
+from nets.megpoint_net import resnet18_c2
+from nets.megpoint_net import resnet18_c3
+from nets.megpoint_net import resnet18_c4
+from nets.megpoint_net import resnet18_c1c2
+from nets.megpoint_net import resnet18_c1c3
+from nets.megpoint_net import resnet18_c1c4
+from nets.megpoint_net import resnet18_c2c3
+from nets.megpoint_net import resnet18_c2c4
+from nets.megpoint_net import resnet18_c3c4
+from nets.megpoint_net import resnet18_c1c2c3
+from nets.megpoint_net import resnet18_c1c2c4
+from nets.megpoint_net import resnet18_c1c3c4
+from nets.megpoint_net import resnet18_c2c3c4
+from nets.megpoint_net import resnet18_c1c2c3c4
+
 from nets.segment_net import deeplabv3_resnet50
-from nets.megpoint_net import resnet18_all
-from nets.megpoint_net import half_resnet18_all
 from nets.superpoint_net import SuperPointNetFloat
-from nets.megpoint_net import DescriptorExtractor
 
 from data_utils.coco_dataset import COCOMegPointHeatmapTrainDataset
 from data_utils.coco_dataset import COCOMegPointHeatmapOnlyDataset
@@ -302,7 +316,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # self.logger.info("Initialize COCOMegPointDescriptorOnlyDataset")
             # self.train_dataset = COCOMegPointDescriptorOnlyDataset(self.params)
             self.logger.info("Initialize MegaDepthDataset")
-            self.train_dataset = MegaDepthDatasetFromPreprocessed(dataset_dir=self.params.mega_dataset_dir)
+            self.train_dataset = MegaDepthDatasetFromPreprocessed(dataset_dir=self.params.mega_dataset_dir,
+                                                                  do_augmentation=False)
         else:
             assert False
 
@@ -339,14 +354,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_model(self):
         # 初始化模型
-        if self.network_arch == "baseline":
-            # self.logger.info("Initialize network arch : ShuffleHeatmap")
-            # model = MegPointShuffleHeatmap()
-            self.logger.info("Initialize network arch : resnet18_all")
-            model = resnet18_all()
-            # self.logger.info("Initialize network arch : half_resnet18_all")
-            # model = half_resnet18_all()
-        elif self.network_arch == "resnet18":
+        if self.network_arch == "resnet18":
             self.logger.info("Initialize network arch : restnet18")
             model = resnet18()
             # model = MegPointShuffleHeatmapOld()
@@ -356,6 +364,53 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         elif self.network_arch == "deeplabv3_resnet50":
             self.logger.info("Initialize network arch : deeplabv3_resnet50")
             model = deeplabv3_resnet50()
+
+        elif self.network_arch == "resnet18_c1":
+            self.logger.info("Initialize network arch : restnet18_c1")
+            model = resnet18_c1()
+        elif self.network_arch == "resnet18_c2":
+            self.logger.info("Initialize network arch : restnet18_c2")
+            model = resnet18_c2()
+        elif self.network_arch == "resnet18_c3":
+            self.logger.info("Initialize network arch : restnet18_c3")
+            model = resnet18_c3()
+        elif self.network_arch == "resnet18_c4":
+            self.logger.info("Initialize network arch : restnet18_c4")
+            model = resnet18_c4()
+        elif self.network_arch == "resnet18_c1c2":
+            self.logger.info("Initialize network arch : restnet18_c1c2")
+            model = resnet18_c1c2()
+        elif self.network_arch == "resnet18_c1c3":
+            self.logger.info("Initialize network arch : restnet18_c1c3")
+            model = resnet18_c1c3()
+        elif self.network_arch == "resnet18_c1c4":
+            self.logger.info("Initialize network arch : restnet18_c1c4")
+            model = resnet18_c1c4()
+        elif self.network_arch == "resnet18_c2c3":
+            self.logger.info("Initialize network arch : restnet18_c2c3")
+            model = resnet18_c2c3()
+        elif self.network_arch == "resnet18_c2c4":
+            self.logger.info("Initialize network arch : restnet18_c2c4")
+            model = resnet18_c2c4()
+        elif self.network_arch == "resnet18_c3c4":
+            self.logger.info("Initialize network arch : restnet18_c3c4")
+            model = resnet18_c3c4()
+        elif self.network_arch == "resnet18_c1c2c3":
+            self.logger.info("Initialize network arch : restnet18_c1c2c3")
+            model = resnet18_c1c2c3()
+        elif self.network_arch == "resnet18_c1c2c4":
+            self.logger.info("Initialize network arch : restnet18_c1c2c4")
+            model = resnet18_c1c2c4()
+        elif self.network_arch == "resnet18_c1c3c4":
+            self.logger.info("Initialize network arch : restnet18_c1c3c4")
+            model = resnet18_c1c3c4()
+        elif self.network_arch == "resnet18_c2c3c4":
+            self.logger.info("Initialize network arch : restnet18_c2c3c4")
+            model = resnet18_c2c3c4()
+        elif self.network_arch == "resnet18_c1c2c3c4":
+            self.logger.info("Initialize network arch : restnet18_c1c2c3c4")
+            model = resnet18_c1c2c3c4()
+
         else:
             self.logger.error("unrecognized network_arch:%s" % self.network_arch)
             assert False
@@ -379,9 +434,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         self.detector = None
         if self.train_mode in ["only_descriptor"]:
-            if self.network_arch not in  ["resnet18", "resnet34", "deeplabv3_resnet50"]:
-                self.logger.error("Only support resnet18/resnet34 as the descriptor model to be trained.")
-                assert False
+            # if self.network_arch not in  ["resnet18", "resnet34", "deeplabv3_resnet50"]:
+            #     self.logger.error("Only support resnet18/resnet34 as the descriptor model to be trained.")
+            #     assert False
             self.logger.info("Initialize pretrained detector")
             detector = MegPointShuffleHeatmapOld()
             if self.multi_gpus:
@@ -455,7 +510,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_train_func(self):
         # 根据不同结构选择不同的训练函数
-        if self.network_arch in ["baseline", "resnet18", "resnet34", "deeplabv3_resnet50"]:
+        if self.network_arch in ["resnet18", "resnet34", "deeplabv3_resnet50",
+                                 "resnet18_c1", "resnet18_c2", "resnet18_c3", "resnet18_c4",
+                                 "resnet18_c1c2", "resnet18_c1c3", "resnet18_c1c4", "resnet18_c2c3",
+                                 "resnet18_c2c4", "resnet18_c3c4", "resnet18_c1c2c3", "resnet18_c1c2c4",
+                                 "resnet18_c1c3c4", "resnet18_c2c3c4", "resnet18_c1c2c3c4", ]:
             if self.train_mode == "only_detector":
                 self.logger.info("Initialize training func mode of [only_detector] with baseline network.")
                 self._train_func = self._train_only_detector
