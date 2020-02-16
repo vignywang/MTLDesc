@@ -101,7 +101,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--dataset_dir", type=str, default="/data/MegPoint/dataset/coco/train2014/pseudo_image_points_0")
         parser.add_argument("--batch_size", type=int, default=16)
         parser.add_argument("--num_workers", type=int, default=8)
-        parser.add_argument("--epoch_num", type=int, default=6)
+        parser.add_argument("--epoch_num", type=int, default=12)
         parser.add_argument("--log_freq", type=int, default=50)
         parser.add_argument("--lr", type=float, default=0.001)
         parser.add_argument("--prefix", type=str, default='exp')
