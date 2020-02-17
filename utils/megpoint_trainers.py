@@ -42,6 +42,8 @@ from nets.megpoint_net import resnet18_s1s2s3s4
 from nets.megpoint_net import resnet18_s0s2s3s4
 from nets.megpoint_net import resnet18_s0s2s3s4_maxpool
 from nets.megpoint_net import resnet18_s0s2s3s4_avgpool
+from nets.megpoint_net import resnet18_s0s2s3s4_256
+from nets.megpoint_net import resnet18_s0s2s3s4_512
 
 from nets.megpoint_net import resnet50_s0s2s3s4
 from nets.megpoint_net import resnet34_s0s2s3s4
@@ -452,6 +454,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         elif self.network_arch == "resnet18_s0s2s3s4_avgpool":
             self.logger.info("Initialize network arch : restnet18_s0s2s3s4_avgpool")
             model = resnet18_s0s2s3s4_avgpool()
+        elif self.network_arch == "resnet18_s0s2s3s4_256":
+            self.logger.info("Initialize network arch : resnet18_s0s2s3s4_256")
+            model = resnet18_s0s2s3s4_256()
+        elif self.network_arch == "resnet18_s0s2s3s4_512":
+            self.logger.info("Initialize network arch : resnet18_s0s2s3s4_512")
+            model = resnet18_s0s2s3s4_512()
 
         elif self.network_arch == "resnet50_s0s2s3s4":
             self.logger.info("Initialize network arch : resnet50_s0s2s3s4")
@@ -575,7 +583,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                                  "resnet18_s3s4", "resnet18_s1s2s3s4", "resnet18_s0s2s3s4",
                                  "resnet18_s0s2s3s4_maxpool", "resnet18_s0s2s3s4_avgpool",
                                  "resnet34_s0s2s3s4", "resnet50_s0s2s3s4",
-                                 "resnet18_s0s2s3s4_c4", "resnet34_s0s2s3s4_c4"]:
+                                 "resnet18_s0s2s3s4_c4", "resnet34_s0s2s3s4_c4",
+                                 "resnet18_s0s2s3s4_256", "resnet18_s0s2s3s4_512"]:
             if self.train_mode == "only_detector":
                 self.logger.info("Initialize training func mode of [only_detector] with baseline network.")
                 self._train_func = self._train_only_detector
