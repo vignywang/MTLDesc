@@ -1995,6 +1995,46 @@ class ResNetS0S2S3S4(nn.Module):
 def resnet18_s0s2s3s4():
     return ResNetS0S2S3S4(BasicBlock, [2, 2, 2, 2])
 
+def resnet34_s0s2s3s4():
+    return ResNetS0S2S3S4(BasicBlock, [3, 4, 6, 3])
+
+def resnet50_s0s2s3s4():
+    return ResNetS0S2S3S4(Bottleneck, [3, 4, 6, 3])
+
+
+class ResNetS0S2S3S4C4(ResNetS0S2S3S4):
+
+    def __init__(self, block, layers, combines=None, zero_init_residual=False,
+                 groups=1, width_per_group=64, replace_stride_with_dilation=None,
+                 norm_layer=None):
+        super(ResNetS0S2S3S4C4, self).__init__(block, layers, combines=[0, 0, 0, 1])
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+
+        c4_feature = f.grid_sample(c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        feature = c4_feature
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        feature = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return feature
+
+
+def resnet18_s0s2s3s4_c4():
+    return ResNetS0S2S3S4C4(BasicBlock, [2, 2, 2, 2])
+
+def resnet34_s0s2s3s4_c4():
+    return ResNetS0S2S3S4(BasicBlock, [3, 4, 6, 3])
+
 
 class ResNetS0S2S3S4MaxPool(nn.Module):
 
