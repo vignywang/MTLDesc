@@ -16,6 +16,7 @@ from nets.megpoint_net import resnet34
 from nets.megpoint_net import resnet18_s0s2s3s4
 from nets.megpoint_net import resnet18_s0s2s3s4_256
 from nets.megpoint_net import resnet18_s0s2s3s4_512
+from nets.megpoint_net import resnet18_s0s2s3s4_auxiliary
 
 from nets.megpoint_net import MegPointShuffleHeatmapOld
 from nets.superpoint_net import SuperPointNetFloat
@@ -80,6 +81,9 @@ class FeatureGenerator(object):
         elif model_type == "resnet18_s0s2s3s4_512":
             print("Initialize model of resnet18_s0s2s3s4_512")
             descriptor = resnet18_s0s2s3s4_512().to(self.device)
+        elif model_type == "resnet18_s0s2s3s4_auxiliary":
+            print("Initialize model of resnet18_s0s2s3s4_auxiliary")
+            descriptor = resnet18_s0s2s3s4_auxiliary().to(self.device)
 
         else:
             print("Unrecognized model_type: %s" % model_type)
