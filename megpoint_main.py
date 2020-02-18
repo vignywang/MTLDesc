@@ -131,6 +131,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--sample_num", type=int, default=100)
 
         parser.add_argument("--desp_loss_type", type=str, default="general")
+        parser.add_argument("--do_augmentation", type=str, default="False")
 
         # megaDepth related
         parser.add_argument("--mega_dataset_dir", type=str, default="/data/MegaDepthOrder/preprocessed_train_dataset")
@@ -166,7 +167,13 @@ class MegPointHeatmapParameters(BasicParameters):
         else:
             self.adjust_lr = False
 
+        if self.do_augmentation == "True":
+            self.do_augmentation = True
+        else:
+            self.do_augmentation = False
+
         self.logger.info("adjust_lr: %s" % self.adjust_lr)
+        self.logger.info("do_augmentation: %s" % self.do_augmentation)
 
         self.logger.info("mega_dataset_dir: %s" % self.mega_dataset_dir)
         self.logger.info("mega_val_dataset_dir: %s" % self.mega_val_dataset_dir)
