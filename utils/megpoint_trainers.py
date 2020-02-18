@@ -17,28 +17,6 @@ from nets.megpoint_net import MegPointShuffleHeatmapOld
 from nets.megpoint_net import resnet18
 from nets.megpoint_net import resnet34
 
-from nets.megpoint_net import resnet18_c1
-from nets.megpoint_net import resnet18_c2
-from nets.megpoint_net import resnet18_c3
-from nets.megpoint_net import resnet18_c4
-from nets.megpoint_net import resnet18_c1c2
-from nets.megpoint_net import resnet18_c1c3
-from nets.megpoint_net import resnet18_c1c4
-from nets.megpoint_net import resnet18_c2c3
-from nets.megpoint_net import resnet18_c2c4
-from nets.megpoint_net import resnet18_c3c4
-from nets.megpoint_net import resnet18_c1c2c3
-from nets.megpoint_net import resnet18_c1c2c4
-from nets.megpoint_net import resnet18_c1c3c4
-from nets.megpoint_net import resnet18_c2c3c4
-from nets.megpoint_net import resnet18_c1c2c3c4
-
-from nets.megpoint_net import resnet18_s1s2s3
-from nets.megpoint_net import resnet18_s1s2s4
-from nets.megpoint_net import resnet18_s1s3s4
-from nets.megpoint_net import resnet18_s3s4
-from nets.megpoint_net import resnet18_s1s2s3s4
-
 from nets.megpoint_net import resnet18_s0s2s3s4
 from nets.megpoint_net import resnet18_s0s2s3s4_maxpool
 from nets.megpoint_net import resnet18_s0s2s3s4_avgpool
@@ -46,6 +24,7 @@ from nets.megpoint_net import resnet18_s0s2s3s4_256
 from nets.megpoint_net import resnet18_s0s2s3s4_512
 from nets.megpoint_net import resnet18_s0s2s3s4_auxiliary
 from nets.megpoint_net import resnet34_s0s2s3s4_auxiliary
+from nets.megpoint_net import resnet18_s0s2s3s4_auxiliary_256
 
 from nets.megpoint_net import resnet50_s0s2s3s4
 from nets.megpoint_net import resnet34_s0s2s3s4
@@ -386,68 +365,6 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             self.logger.info("Initialize network arch : deeplabv3_resnet50")
             model = deeplabv3_resnet50()
 
-        elif self.network_arch == "resnet18_c1":
-            self.logger.info("Initialize network arch : restnet18_c1")
-            model = resnet18_c1()
-        elif self.network_arch == "resnet18_c2":
-            self.logger.info("Initialize network arch : restnet18_c2")
-            model = resnet18_c2()
-        elif self.network_arch == "resnet18_c3":
-            self.logger.info("Initialize network arch : restnet18_c3")
-            model = resnet18_c3()
-        elif self.network_arch == "resnet18_c4":
-            self.logger.info("Initialize network arch : restnet18_c4")
-            model = resnet18_c4()
-        elif self.network_arch == "resnet18_c1c2":
-            self.logger.info("Initialize network arch : restnet18_c1c2")
-            model = resnet18_c1c2()
-        elif self.network_arch == "resnet18_c1c3":
-            self.logger.info("Initialize network arch : restnet18_c1c3")
-            model = resnet18_c1c3()
-        elif self.network_arch == "resnet18_c1c4":
-            self.logger.info("Initialize network arch : restnet18_c1c4")
-            model = resnet18_c1c4()
-        elif self.network_arch == "resnet18_c2c3":
-            self.logger.info("Initialize network arch : restnet18_c2c3")
-            model = resnet18_c2c3()
-        elif self.network_arch == "resnet18_c2c4":
-            self.logger.info("Initialize network arch : restnet18_c2c4")
-            model = resnet18_c2c4()
-        elif self.network_arch == "resnet18_c3c4":
-            self.logger.info("Initialize network arch : restnet18_c3c4")
-            model = resnet18_c3c4()
-        elif self.network_arch == "resnet18_c1c2c3":
-            self.logger.info("Initialize network arch : restnet18_c1c2c3")
-            model = resnet18_c1c2c3()
-        elif self.network_arch == "resnet18_c1c2c4":
-            self.logger.info("Initialize network arch : restnet18_c1c2c4")
-            model = resnet18_c1c2c4()
-        elif self.network_arch == "resnet18_c1c3c4":
-            self.logger.info("Initialize network arch : restnet18_c1c3c4")
-            model = resnet18_c1c3c4()
-        elif self.network_arch == "resnet18_c2c3c4":
-            self.logger.info("Initialize network arch : restnet18_c2c3c4")
-            model = resnet18_c2c3c4()
-        elif self.network_arch == "resnet18_c1c2c3c4":
-            self.logger.info("Initialize network arch : restnet18_c1c2c3c4")
-            model = resnet18_c1c2c3c4()
-
-        elif self.network_arch == "resnet18_s1s2s3":
-            self.logger.info("Initialize network arch : restnet18_s1s2s3")
-            model = resnet18_s1s2s3()
-        elif self.network_arch == "resnet18_s1s2s4":
-            self.logger.info("Initialize network arch : restnet18_s1s2s4")
-            model = resnet18_s1s2s4()
-        elif self.network_arch == "resnet18_s1s3s4":
-            self.logger.info("Initialize network arch : restnet18_s1s3s4")
-            model = resnet18_s1s3s4()
-        elif self.network_arch == "resnet18_s3s4":
-            self.logger.info("Initialize network arch : restnet18_s3s4")
-            model = resnet18_s3s4()
-        elif self.network_arch == "resnet18_s1s2s3s4":
-            self.logger.info("Initialize network arch : restnet18_s1s2s3s4")
-            model = resnet18_s1s2s3s4()
-
         elif self.network_arch == "resnet18_s0s2s3s4":
             self.logger.info("Initialize network arch : restnet18_s0s2s3s4")
             model = resnet18_s0s2s3s4()
@@ -469,6 +386,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         elif self.network_arch == "resnet34_s0s2s3s4_auxiliary":
             self.logger.info("Initialize network arch : resnet34_s0s2s3s4_auxiliary")
             model = resnet34_s0s2s3s4_auxiliary()
+        elif self.network_arch == "resnet18_s0s2s3s4_auxiliary_256":
+            self.logger.info("Initialize network arch : resnet18_s0s2s3s4_auxiliary_256")
+            model = resnet18_s0s2s3s4_auxiliary_256()
 
         elif self.network_arch == "resnet50_s0s2s3s4":
             self.logger.info("Initialize network arch : resnet50_s0s2s3s4")
@@ -589,17 +509,13 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
     def _initialize_train_func(self):
         # 根据不同结构选择不同的训练函数
         if self.network_arch in ["resnet18", "resnet34", "deeplabv3_resnet50",
-                                 "resnet18_c1", "resnet18_c2", "resnet18_c3", "resnet18_c4",
-                                 "resnet18_c1c2", "resnet18_c1c3", "resnet18_c1c4", "resnet18_c2c3",
-                                 "resnet18_c2c4", "resnet18_c3c4", "resnet18_c1c2c3", "resnet18_c1c2c4",
-                                 "resnet18_c1c3c4", "resnet18_c2c3c4", "resnet18_c1c2c3c4",
-                                 "resnet18_s1s2s3", "resnet18_s1s2s4", "resnet18_s1s3s4",
-                                 "resnet18_s3s4", "resnet18_s1s2s3s4", "resnet18_s0s2s3s4",
+                                 "resnet18_s0s2s3s4",
                                  "resnet18_s0s2s3s4_maxpool", "resnet18_s0s2s3s4_avgpool",
                                  "resnet34_s0s2s3s4", "resnet50_s0s2s3s4",
                                  "resnet18_s0s2s3s4_c4", "resnet34_s0s2s3s4_c4",
                                  "resnet18_s0s2s3s4_256", "resnet18_s0s2s3s4_512",
-                                 "resnet18_s0s2s3s4_auxiliary", "resnet34_s0s2s3s4_auxiliary"]:
+                                 "resnet18_s0s2s3s4_auxiliary", "resnet34_s0s2s3s4_auxiliary",
+                                 "resnet18_s0s2s3s4_auxiliary_256"]:
             if self.train_mode == "only_detector":
                 self.logger.info("Initialize training func mode of [only_detector] with baseline network.")
                 self._train_func = self._train_only_detector

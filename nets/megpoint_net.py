@@ -743,1145 +743,7 @@ def resnet34(pretrained=False, progress=True, **kwargs):
 
 
 #### 大规模实验准备
-# [1,0,0,0]
-class ResNetC1(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC1, self).__init__(
-            block, layers, combines=[1, 0, 0, 0], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = c1_feature
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c1():
-    return ResNetC1(BasicBlock, [2, 2, 2, 2])
-
-
-# [0,1,0,0]
-class ResNetC2(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC2, self).__init__(
-            block, layers, combines=[0, 1, 0, 0], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = c2_feature
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c2():
-    return ResNetC2(BasicBlock, [2, 2, 2, 2])
-
-
-# [0,0,1,0]
-class ResNetC3(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC3, self).__init__(
-            block, layers, combines=[0, 0, 1, 0], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = c3_feature
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c3():
-    return ResNetC3(BasicBlock, [2, 2, 2, 2])
-
-
-# [0,0,0,1]
-class ResNetC4(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC4, self).__init__(
-            block, layers, combines=[0, 0, 0, 1], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = c4_feature
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c4():
-    return ResNetC4(BasicBlock, [2, 2, 2, 2])
-
-
-# [1,1,0,0]
-class ResNetC1C2(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC1C2, self).__init__(
-            block, layers, combines=[1, 1, 0, 0], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        # c3 = self.layer3(c2)
-        # c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c2_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c1c2():
-    return ResNetC1C2(BasicBlock, [2, 2, 2, 2])
-
-# [1,0,1,0]
-class ResNetC1C3(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC1C3, self).__init__(
-            block, layers, combines=[1, 0, 1, 0], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        # c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c3_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c1c3():
-    return ResNetC1C3(BasicBlock, [2, 2, 2, 2])
-
-# [1,0,0,1]
-class ResNetC1C4(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC1C4, self).__init__(
-            block, layers, combines=[1, 0, 0, 1], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c1c4():
-    return ResNetC1C4(BasicBlock, [2, 2, 2, 2])
-
-# [0,1,1,0]
-class ResNetC2C3(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC2C3, self).__init__(
-            block, layers, combines=[0, 1, 1, 0], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        # c4 = self.layer4(c3)
-
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c2_feature, c3_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c2c3():
-    return ResNetC2C3(BasicBlock, [2, 2, 2, 2])
-
-# [0,1,0,1]
-class ResNetC2C4(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC2C4, self).__init__(
-            block, layers, combines=[0, 1, 0, 1], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c2_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c2c4():
-    return ResNetC2C4(BasicBlock, [2, 2, 2, 2])
-
-# [0,0,1,1]
-class ResNetC3C4(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC3C4, self).__init__(
-            block, layers, combines=[0, 0, 1, 1], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c3_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c3c4():
-    return ResNetC3C4(BasicBlock, [2, 2, 2, 2])
-
-# [1,1,1,0]
-class ResNetC1C2C3(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC1C2C3, self).__init__(
-            block, layers, combines=[1, 1, 1, 0], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        # c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c2_feature, c3_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c1c2c3():
-    return ResNetC1C2C3(BasicBlock, [2, 2, 2, 2])
-
-# [1,1,0,1]
-class ResNetC1C2C4(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC1C2C4, self).__init__(
-            block, layers, combines=[1, 1, 0, 1], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c2_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c1c2c4():
-    return ResNetC1C2C4(BasicBlock, [2, 2, 2, 2])
-
-# [1,0,1,1]
-class ResNetC1C3C4(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC1C3C4, self).__init__(
-            block, layers, combines=[1, 0, 1, 1], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c3_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c1c3c4():
-    return ResNetC1C3C4(BasicBlock, [2, 2, 2, 2])
-
-# [0,1,1,1]
-class ResNetC2C3C4(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC2C3C4, self).__init__(
-            block, layers, combines=[0, 1, 1, 1], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c2_feature, c3_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c2c3c4():
-    return ResNetC2C3C4(BasicBlock, [2, 2, 2, 2])
-
-# [1,1,1,1]
-class ResNetC1C2C3C4(ResNet):
-
-    def __init__(self, block, layers):
-        super(ResNetC1C2C3C4, self).__init__(
-            block, layers, combines=[1, 1, 1, 1], zero_init_residual=False,
-            groups=1, width_per_group=64, replace_stride_with_dilation=None,
-            norm_layer=None
-        )
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_c1c2c3c4():
-    return ResNetC1C2C3C4(BasicBlock, [2, 2, 2, 2])
-
-
-################测试不同stride带来的影响
-class ResNetS1S2S3(nn.Module):
-    """
-    从第一个残差模块开始stride
-    """
-
-    def __init__(self, block, layers, combines=None, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None):
-        super(ResNetS1S2S3, self).__init__()
-        if combines is None:
-            combines = [1, 1, 1, 1]
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
-
-        self.inplanes = 64
-        self.dilation = 1
-        if replace_stride_with_dilation is None:
-            # each element in the tuple indicates if we should replace
-            # the 2x2 stride with a dilated convolution instead
-            replace_stride_with_dilation = [False, False, False]
-        if len(replace_stride_with_dilation) != 3:
-            raise ValueError("replace_stride_with_dilation should be None "
-                             "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
-        self.groups = groups
-        self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=1, padding=3,
-                               bias=False)
-        self.bn1 = norm_layer(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
-                                       dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
-                                       dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3],
-                                       dilate=replace_stride_with_dilation[2])
-
-        self.fc1 = nn.Linear((combines[0]*64+combines[1]*128+combines[2]*256+combines[3]*512)*block.expansion, 256)
-        self.fc2 = nn.Linear(256, 128)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-
-        # Zero-initialize the last BN in each residual branch,
-        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
-        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
-        if zero_init_residual:
-            for m in self.modules():
-                if isinstance(m, Bottleneck):
-                    nn.init.constant_(m.bn3.weight, 0)
-                elif isinstance(m, BasicBlock):
-                    nn.init.constant_(m.bn2.weight, 0)
-
-    def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
-        norm_layer = self._norm_layer
-        downsample = None
-        previous_dilation = self.dilation
-        if dilate:
-            self.dilation *= stride
-            stride = 1
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                norm_layer(planes * block.expansion),
-            )
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                            self.base_width, previous_dilation, norm_layer))
-        self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, groups=self.groups,
-                                base_width=self.base_width, dilation=self.dilation,
-                                norm_layer=norm_layer))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_s1s2s3():
-    return ResNetS1S2S3(BasicBlock, [2, 2, 2, 2])
-
-
-class ResNetS1S2S4(nn.Module):
-    """
-    从第一个残差模块开始stride
-    """
-
-    def __init__(self, block, layers, combines=None, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None):
-        super(ResNetS1S2S4, self).__init__()
-        if combines is None:
-            combines = [1, 1, 1, 1]
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
-
-        self.inplanes = 64
-        self.dilation = 1
-        if replace_stride_with_dilation is None:
-            # each element in the tuple indicates if we should replace
-            # the 2x2 stride with a dilated convolution instead
-            replace_stride_with_dilation = [False, False, False]
-        if len(replace_stride_with_dilation) != 3:
-            raise ValueError("replace_stride_with_dilation should be None "
-                             "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
-        self.groups = groups
-        self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=1, padding=3,
-                               bias=False)
-        self.bn1 = norm_layer(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
-                                       dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2],
-                                       dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
-                                       dilate=replace_stride_with_dilation[2])
-
-        self.fc1 = nn.Linear((combines[0]*64+combines[1]*128+combines[2]*256+combines[3]*512)*block.expansion, 256)
-        self.fc2 = nn.Linear(256, 128)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-
-        # Zero-initialize the last BN in each residual branch,
-        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
-        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
-        if zero_init_residual:
-            for m in self.modules():
-                if isinstance(m, Bottleneck):
-                    nn.init.constant_(m.bn3.weight, 0)
-                elif isinstance(m, BasicBlock):
-                    nn.init.constant_(m.bn2.weight, 0)
-
-    def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
-        norm_layer = self._norm_layer
-        downsample = None
-        previous_dilation = self.dilation
-        if dilate:
-            self.dilation *= stride
-            stride = 1
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                norm_layer(planes * block.expansion),
-            )
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                            self.base_width, previous_dilation, norm_layer))
-        self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, groups=self.groups,
-                                base_width=self.base_width, dilation=self.dilation,
-                                norm_layer=norm_layer))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_s1s2s4():
-    return ResNetS1S2S4(BasicBlock, [2, 2, 2, 2])
-
-
-class ResNetS1S3S4(nn.Module):
-    """
-    从第一个残差模块开始stride
-    """
-
-    def __init__(self, block, layers, combines=None, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None):
-        super(ResNetS1S3S4, self).__init__()
-        if combines is None:
-            combines = [1, 1, 1, 1]
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
-
-        self.inplanes = 64
-        self.dilation = 1
-        if replace_stride_with_dilation is None:
-            # each element in the tuple indicates if we should replace
-            # the 2x2 stride with a dilated convolution instead
-            replace_stride_with_dilation = [False, False, False]
-        if len(replace_stride_with_dilation) != 3:
-            raise ValueError("replace_stride_with_dilation should be None "
-                             "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
-        self.groups = groups
-        self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=1, padding=3,
-                               bias=False)
-        self.bn1 = norm_layer(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
-        self.layer2 = self._make_layer(block, 128, layers[1],
-                                       dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
-                                       dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
-                                       dilate=replace_stride_with_dilation[2])
-
-        self.fc1 = nn.Linear((combines[0]*64+combines[1]*128+combines[2]*256+combines[3]*512)*block.expansion, 256)
-        self.fc2 = nn.Linear(256, 128)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-
-        # Zero-initialize the last BN in each residual branch,
-        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
-        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
-        if zero_init_residual:
-            for m in self.modules():
-                if isinstance(m, Bottleneck):
-                    nn.init.constant_(m.bn3.weight, 0)
-                elif isinstance(m, BasicBlock):
-                    nn.init.constant_(m.bn2.weight, 0)
-
-    def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
-        norm_layer = self._norm_layer
-        downsample = None
-        previous_dilation = self.dilation
-        if dilate:
-            self.dilation *= stride
-            stride = 1
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                norm_layer(planes * block.expansion),
-            )
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                            self.base_width, previous_dilation, norm_layer))
-        self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, groups=self.groups,
-                                base_width=self.base_width, dilation=self.dilation,
-                                norm_layer=norm_layer))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_s1s3s4():
-    return ResNetS1S3S4(BasicBlock, [2, 2, 2, 2])
-
-
-class ResNetS1S2S3S4(nn.Module):
-    """
-    从第一个残差模块开始stride
-    """
-
-    def __init__(self, block, layers, combines=None, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None):
-        super(ResNetS1S2S3S4, self).__init__()
-        if combines is None:
-            combines = [1, 1, 1, 1]
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
-
-        self.inplanes = 64
-        self.dilation = 1
-        if replace_stride_with_dilation is None:
-            # each element in the tuple indicates if we should replace
-            # the 2x2 stride with a dilated convolution instead
-            replace_stride_with_dilation = [False, False, False]
-        if len(replace_stride_with_dilation) != 3:
-            raise ValueError("replace_stride_with_dilation should be None "
-                             "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
-        self.groups = groups
-        self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=1, padding=3,
-                               bias=False)
-        self.bn1 = norm_layer(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
-                                       dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
-                                       dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
-                                       dilate=replace_stride_with_dilation[2])
-
-        self.fc1 = nn.Linear((combines[0]*64+combines[1]*128+combines[2]*256+combines[3]*512)*block.expansion, 256)
-        self.fc2 = nn.Linear(256, 128)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-
-        # Zero-initialize the last BN in each residual branch,
-        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
-        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
-        if zero_init_residual:
-            for m in self.modules():
-                if isinstance(m, Bottleneck):
-                    nn.init.constant_(m.bn3.weight, 0)
-                elif isinstance(m, BasicBlock):
-                    nn.init.constant_(m.bn2.weight, 0)
-
-    def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
-        norm_layer = self._norm_layer
-        downsample = None
-        previous_dilation = self.dilation
-        if dilate:
-            self.dilation *= stride
-            stride = 1
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                norm_layer(planes * block.expansion),
-            )
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                            self.base_width, previous_dilation, norm_layer))
-        self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, groups=self.groups,
-                                base_width=self.base_width, dilation=self.dilation,
-                                norm_layer=norm_layer))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_s1s2s3s4():
-    return ResNetS1S2S3S4(BasicBlock, [2, 2, 2, 2])
-
-
-class ResNetS3S4(nn.Module):
-    """
-    从第一个残差模块开始stride
-    """
-
-    def __init__(self, block, layers, combines=None, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None):
-        super(ResNetS3S4, self).__init__()
-        if combines is None:
-            combines = [1, 1, 1, 1]
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
-
-        self.inplanes = 64
-        self.dilation = 1
-        if replace_stride_with_dilation is None:
-            # each element in the tuple indicates if we should replace
-            # the 2x2 stride with a dilated convolution instead
-            replace_stride_with_dilation = [False, False, False]
-        if len(replace_stride_with_dilation) != 3:
-            raise ValueError("replace_stride_with_dilation should be None "
-                             "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
-        self.groups = groups
-        self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=1, padding=3,
-                               bias=False)
-        self.bn1 = norm_layer(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1],
-                                       dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
-                                       dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
-                                       dilate=replace_stride_with_dilation[2])
-
-        self.fc1 = nn.Linear((combines[0]*64+combines[1]*128+combines[2]*256+combines[3]*512)*block.expansion, 256)
-        self.fc2 = nn.Linear(256, 128)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-
-        # Zero-initialize the last BN in each residual branch,
-        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
-        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
-        if zero_init_residual:
-            for m in self.modules():
-                if isinstance(m, Bottleneck):
-                    nn.init.constant_(m.bn3.weight, 0)
-                elif isinstance(m, BasicBlock):
-                    nn.init.constant_(m.bn2.weight, 0)
-
-    def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
-        norm_layer = self._norm_layer
-        downsample = None
-        previous_dilation = self.dilation
-        if dilate:
-            self.dilation *= stride
-            stride = 1
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                norm_layer(planes * block.expansion),
-            )
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                            self.base_width, previous_dilation, norm_layer))
-        self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, groups=self.groups,
-                                base_width=self.base_width, dilation=self.dilation,
-                                norm_layer=norm_layer))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x, point):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2)
-        c4 = self.layer4(c3)
-
-        c1_feature = f.grid_sample(
-            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c2_feature = f.grid_sample(
-            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c3_feature = f.grid_sample(
-            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-        c4_feature = f.grid_sample(
-            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
-
-        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
-        feature = feature / torch.norm(feature, dim=2, keepdim=True)
-
-        return feature
-
-
-def resnet18_s3s4():
-    return ResNetS3S4(BasicBlock, [2, 2, 2, 2])
-
-
+###############测试不同stride带来的影响
 # original stride resnet
 class ResNetS0S2S3S4(nn.Module):
 
@@ -2000,6 +862,142 @@ def resnet34_s0s2s3s4():
 
 def resnet50_s0s2s3s4():
     return ResNetS0S2S3S4(Bottleneck, [3, 4, 6, 3])
+
+
+class ResNetS0S2S3S4Auxiliary256(nn.Module):
+
+    def __init__(self, block, layers, combines=None, zero_init_residual=False,
+                 groups=1, width_per_group=64, replace_stride_with_dilation=None,
+                 norm_layer=None):
+        super(ResNetS0S2S3S4Auxiliary256, self).__init__()
+        if combines is None:
+            combines = [1, 1, 1, 1]
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        self._norm_layer = norm_layer
+
+        self.inplanes = 64
+        self.dilation = 1
+        if replace_stride_with_dilation is None:
+            # each element in the tuple indicates if we should replace
+            # the 2x2 stride with a dilated convolution instead
+            replace_stride_with_dilation = [False, False, False]
+        if len(replace_stride_with_dilation) != 3:
+            raise ValueError("replace_stride_with_dilation should be None "
+                             "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
+        self.groups = groups
+        self.base_width = width_per_group
+        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
+                               bias=False)
+        self.bn1 = norm_layer(self.inplanes)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
+                                       dilate=replace_stride_with_dilation[0])
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
+                                       dilate=replace_stride_with_dilation[1])
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
+                                       dilate=replace_stride_with_dilation[2])
+
+        # self.fc1 = nn.Linear((combines[0]*64+combines[1]*128+combines[2]*256+combines[3]*512)*block.expansion, 256)
+        # self.fc2 = nn.Linear(256, 128)
+        self.fc1 = nn.Linear(64*block.expansion, 64)
+        self.fc2 = nn.Linear(128*block.expansion, 128)
+        self.fc3 = nn.Linear(256*block.expansion, 256)
+        self.fc4 = nn.Linear(512*block.expansion, 512)
+
+        self.final_fc1 = nn.Linear((64+128+256+512)*block.expansion, 256)
+        self.final_fc2 = nn.Linear(256, 256)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+
+        # Zero-initialize the last BN in each residual branch,
+        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
+        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck):
+                    nn.init.constant_(m.bn3.weight, 0)
+                elif isinstance(m, BasicBlock):
+                    nn.init.constant_(m.bn2.weight, 0)
+
+    def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
+        norm_layer = self._norm_layer
+        downsample = None
+        previous_dilation = self.dilation
+        if dilate:
+            self.dilation *= stride
+            stride = 1
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                conv1x1(self.inplanes, planes * block.expansion, stride),
+                norm_layer(planes * block.expansion),
+            )
+
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
+                            self.base_width, previous_dilation, norm_layer))
+        self.inplanes = planes * block.expansion
+        for _ in range(1, blocks):
+            layers.append(block(self.inplanes, planes, groups=self.groups,
+                                base_width=self.base_width, dilation=self.dilation,
+                                norm_layer=norm_layer))
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x, point):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+
+        c1_feature = f.grid_sample(
+            c1, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c2_feature = f.grid_sample(
+            c2, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c3_feature = f.grid_sample(
+            c3, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+        c4_feature = f.grid_sample(
+            c4, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)
+
+        c1_desp = self.fc1(c1_feature)
+        c2_desp = self.fc2(c2_feature)
+        c3_desp = self.fc3(c3_feature)
+        c4_desp = self.fc4(c4_feature)
+
+        c1_desp = c1_desp / torch.norm(c1_desp, dim=2, keepdim=True)
+        c2_desp = c2_desp / torch.norm(c2_desp, dim=2, keepdim=True)
+        c3_desp = c3_desp / torch.norm(c3_desp, dim=2, keepdim=True)
+        c4_desp = c4_desp / torch.norm(c4_desp, dim=2, keepdim=True)
+
+        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
+        feature = self.final_fc2(self.relu(self.final_fc1(feature)))
+        desp = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        if self.training:
+            return desp, c1_desp, c2_desp, c3_desp, c4_desp
+        else:
+            return desp
+
+
+def resnet18_s0s2s3s4_auxiliary_256():
+    return ResNetS0S2S3S4Auxiliary256(BasicBlock, [2, 2, 2, 2])
+
+
+def resnet34_s0s2s3s4_auxiliary_256():
+    return ResNetS0S2S3S4Auxiliary256(BasicBlock, [3, 4, 6, 3])
 
 
 class ResNetS0S2S3S4Auxiliary(nn.Module):
