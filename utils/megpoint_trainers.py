@@ -44,6 +44,8 @@ from nets.megpoint_net import resnet18_s0s2s3s4_maxpool
 from nets.megpoint_net import resnet18_s0s2s3s4_avgpool
 from nets.megpoint_net import resnet18_s0s2s3s4_256
 from nets.megpoint_net import resnet18_s0s2s3s4_512
+from nets.megpoint_net import resnet18_s0s2s3s4_auxiliary
+from nets.megpoint_net import resnet34_s0s2s3s4_auxiliary
 
 from nets.megpoint_net import resnet50_s0s2s3s4
 from nets.megpoint_net import resnet34_s0s2s3s4
@@ -221,6 +223,7 @@ class MegPointTrainerTester(object):
         self.dataset_type = params.dataset_type
 
         self.desp_loss_type = params.desp_loss_type
+        self.do_augmentation = params.do_augmentation
 
         # todo:
         self.sift = cv.xfeatures2d.SIFT_create(1000)
@@ -335,7 +338,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             # self.train_dataset = COCOMegPointDescriptorOnlyDataset(self.params)
             self.logger.info("Initialize MegaDepthDataset")
             self.train_dataset = MegaDepthDatasetFromPreprocessed(dataset_dir=self.params.mega_dataset_dir,
-                                                                  do_augmentation=False)
+                                                                  do_augmentation=self.do_augmentation)
         else:
             assert False
 
@@ -460,6 +463,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         elif self.network_arch == "resnet18_s0s2s3s4_512":
             self.logger.info("Initialize network arch : resnet18_s0s2s3s4_512")
             model = resnet18_s0s2s3s4_512()
+        elif self.network_arch == "resnet18_s0s2s3s4_auxiliary":
+            self.logger.info("Initialize network arch : resnet18_s0s2s3s4_auxiliary")
+            model = resnet18_s0s2s3s4_auxiliary()
+        elif self.network_arch == "resnet34_s0s2s3s4_auxiliary":
+            self.logger.info("Initialize network arch : resnet34_s0s2s3s4_auxiliary")
+            model = resnet34_s0s2s3s4_auxiliary()
 
         elif self.network_arch == "resnet50_s0s2s3s4":
             self.logger.info("Initialize network arch : resnet50_s0s2s3s4")
@@ -538,8 +547,13 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 self.logger.info("Initialize the DescriptorGeneralTripletLoss.")
                 self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
             elif self.desp_loss_type == "rank":
-                self.logger.info("Initialize the DescriptorRnakedListLoss")
+                self.logger.info("Initialize the DescriptorRankedListLoss")
                 self.descriptor_loss = DescriptorRankedListLoss(margin=1.2, alpha=1.2, t=10, device=self.device)
+            elif self.desp_loss_type == "auxiliary":
+                self.logger.info("Initialize the DescritptorGeneralTripletLoss.")
+                self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
+                # self.logger.info("Initialize the DescriptorRankedListLoss")
+                # self.descriptor_loss = DescriptorRankedListLoss(margin=0.8, alpha=1.2, t=10, device=self.device)
             else:
                 self.logger.error("Unrecognized desp_loss_type: %s" % self.desp_loss_type)
                 assert False
@@ -584,7 +598,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                                  "resnet18_s0s2s3s4_maxpool", "resnet18_s0s2s3s4_avgpool",
                                  "resnet34_s0s2s3s4", "resnet50_s0s2s3s4",
                                  "resnet18_s0s2s3s4_c4", "resnet34_s0s2s3s4_c4",
-                                 "resnet18_s0s2s3s4_256", "resnet18_s0s2s3s4_512"]:
+                                 "resnet18_s0s2s3s4_256", "resnet18_s0s2s3s4_512",
+                                 "resnet18_s0s2s3s4_auxiliary", "resnet34_s0s2s3s4_auxiliary"]:
             if self.train_mode == "only_detector":
                 self.logger.info("Initialize training func mode of [only_detector] with baseline network.")
                 self._train_func = self._train_only_detector
@@ -598,6 +613,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 elif self.desp_loss_type == "rank":
                     self.logger.info("Initialize training func mode of [only_descriptor] with rank train func.")
                     self._train_func = self._train_only_descriptor_rank
+                elif self.desp_loss_type == "auxiliary":
+                    self.logger.info("Initialize training func mode of [only_descriptor] with auxiliary train func.")
+                    self._train_func = self._train_only_descriptor_auxiliary
             else:
                 # self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
                 # self._train_func = self._train_with_gt
@@ -1075,6 +1093,133 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                         (time.time() - stime) / self.params.log_freq,
                     ))
                 stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
+    def _train_only_descriptor_auxiliary(self, epoch_idx):
+        self.model.train()
+        stime = time.time()
+
+        # todo: debug use
+        torch.autograd.set_detect_anomaly(True)
+
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data["image"].to(self.device)
+            desp_point = data["desp_point"].to(self.device)
+
+            warped_image = data["warped_image"].to(self.device)
+            warped_desp_point = data["warped_desp_point"].to(self.device)
+
+            valid_mask = data["valid_mask"].to(self.device)
+            not_search_mask = data["not_search_mask"].to(self.device)
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
+
+            desp_pair, c1_desp_pair, c2_desp_pair, c3_desp_pair, c4_desp_pair = self.model(image_pair, point_pair)
+            desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
+
+            c1_desp_0, c1_desp_1 = torch.chunk(c1_desp_pair, 2, dim=0)
+            c2_desp_0, c2_desp_1 = torch.chunk(c2_desp_pair, 2, dim=0)
+            c3_desp_0, c3_desp_1 = torch.chunk(c3_desp_pair, 2, dim=0)
+            c4_desp_0, c4_desp_1 = torch.chunk(c4_desp_pair, 2, dim=0)
+
+            # rank list loss
+            # desp_loss, desp_positive_loss, desp_negative_loss = self.descriptor_loss(
+            #     desp_0, desp_1, valid_mask, not_search_mask)
+            # c1_desp_loss, c1_desp_positive_loss, c1_desp_negative_loss = self.descriptor_loss(
+            #     c1_desp_0, c1_desp_1, valid_mask, not_search_mask)
+            # c2_desp_loss, c2_desp_positive_loss, c2_desp_negative_loss = self.descriptor_loss(
+            #     c2_desp_0, c2_desp_1, valid_mask, not_search_mask)
+            # c3_desp_loss, c3_desp_positive_loss, c3_desp_negative_loss = self.descriptor_loss(
+            #     c3_desp_0, c3_desp_1, valid_mask, not_search_mask)
+            # c4_desp_loss, c4_desp_positive_loss, c4_desp_negative_loss = self.descriptor_loss(
+            #     c4_desp_0, c4_desp_1, valid_mask, not_search_mask)
+
+            # triplet hard loss
+            desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
+            c1_desp_loss = self.descriptor_loss(c1_desp_0, c1_desp_1, valid_mask, not_search_mask)
+            c2_desp_loss = self.descriptor_loss(c2_desp_0, c2_desp_1, valid_mask, not_search_mask)
+            c3_desp_loss = self.descriptor_loss(c3_desp_0, c3_desp_1, valid_mask, not_search_mask)
+            c4_desp_loss = self.descriptor_loss(c4_desp_0, c4_desp_1, valid_mask, not_search_mask)
+
+            loss = desp_loss + 0.01 * c1_desp_loss + 0.1 * c2_desp_loss + 0.5 * c3_desp_loss + 1.0 * c4_desp_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                # triplet hard loss
+                desp_loss_val = desp_loss.item()
+                c1_desp_loss_val = c1_desp_loss.item()
+                c2_desp_loss_val = c2_desp_loss.item()
+                c3_desp_loss_val = c3_desp_loss.item()
+                c4_desp_loss_val = c4_desp_loss.item()
+
+                self.summary_writer.add_scalar("desp", desp_loss_val, int(i+epoch_idx*self.epoch_length))
+                self.summary_writer.add_scalar("c1_desp", c1_desp_loss_val, int(i+epoch_idx*self.epoch_length))
+                self.summary_writer.add_scalar("c2_desp", c2_desp_loss_val, int(i+epoch_idx*self.epoch_length))
+                self.summary_writer.add_scalar("c3_desp", c3_desp_loss_val, int(i+epoch_idx*self.epoch_length))
+                self.summary_writer.add_scalar("c4_desp", c4_desp_loss_val, int(i+epoch_idx*self.epoch_length))
+
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: "
+                    "desp=%.4f, "
+                    "c1_desp=%.4f, "
+                    "c2_desp=%.4f, "
+                    "c3_desp=%.4f, "
+                    "c4_desp=%.4f, "
+                    "cost %.4fs/step. " % (
+                        epoch_idx, i, self.epoch_length,
+                        desp_loss_val,
+                        c1_desp_loss_val,
+                        c2_desp_loss_val,
+                        c3_desp_loss_val,
+                        c4_desp_loss_val,
+                        (time.time() - stime) / self.params.log_freq,
+                    ))
+                stime = time.time()
+
+                # deep rank loss
+                # desp_positive = desp_positive_loss.item()
+                # desp_negative = desp_negative_loss.item()
+
+                # c3_positive = c3_desp_positive_loss.item()
+                # c3_negative = c3_desp_negative_loss.item()
+
+                # c4_positive = c4_desp_positive_loss.item()
+                # c4_negative = c4_desp_negative_loss.item()
+
+                # self.logger.info(
+                #     "[Epoch:%2d][Step:%5d:%5d]: "
+                #     "desp_positive=%.4f, "
+                #     "desp_negative=%.4f, "
+                #     "c3_positive=%.4f, "
+                #     "c3_negative=%.4f, "
+                #     "c4_positive=%.4f, "
+                #     "c4_negative=%.4f, "
+                #     "%.4fs/step. " % (
+                #         epoch_idx, i, self.epoch_length,
+                #         desp_positive,
+                #         desp_negative,
+                #         c3_positive,
+                #         c3_negative,
+                #         c4_positive,
+                #         c4_negative,
+                #         (time.time() - stime) / self.params.log_freq,
+                #     ))
+                # stime = time.time()
 
         # save the model
         if self.multi_gpus:
