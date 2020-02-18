@@ -10,10 +10,13 @@ import numpy as np
 import cv2 as cv
 import torch.nn.functional as f
 
-from nets.megpoint_net import resnet18_all
-from nets.megpoint_net import half_resnet18_all
 from nets.megpoint_net import resnet18
 from nets.megpoint_net import resnet34
+
+from nets.megpoint_net import resnet18_s0s2s3s4
+from nets.megpoint_net import resnet18_s0s2s3s4_256
+from nets.megpoint_net import resnet18_s0s2s3s4_512
+
 from nets.megpoint_net import MegPointShuffleHeatmapOld
 from nets.superpoint_net import SuperPointNetFloat
 from evaluation.aachen_dataset import AachenDataset
@@ -67,6 +70,17 @@ class FeatureGenerator(object):
         elif model_type == "resnet34":
             print("Initialize model of resnet34")
             descriptor = resnet34().to(self.device)
+
+        elif model_type == "resnet18_s0s2s3s4":
+            print("Initialize model of resnet18_s0s2s3s4")
+            descriptor = resnet18_s0s2s3s4().to(self.device)
+        elif model_type == "resnet18_s0s2s3s4_256":
+            print("Initialize model of resnet18_s0s2s3s4_256")
+            descriptor = resnet18_s0s2s3s4_256().to(self.device)
+        elif model_type == "resnet18_s0s2s3s4_512":
+            print("Initialize model of resnet18_s0s2s3s4_512")
+            descriptor = resnet18_s0s2s3s4_512().to(self.device)
+
         else:
             print("Unrecognized model_type: %s" % model_type)
             assert False
