@@ -41,6 +41,7 @@ from data_utils.coco_dataset import COCOMegPointHeatmapOnlyIndexDataset
 from data_utils.coco_dataset import COCOMegPointDescriptorOnlyDataset
 from data_utils.coco_dataset import COCOMegPointHeatmapAllTrainDataset
 from data_utils.megadepth_dataset import MegaDepthDatasetFromPreprocessed
+from data_utils.megadepth_dataset import MegaDepthDatasetFromPreprocessedEnhanced
 from data_utils.synthetic_dataset import SyntheticHeatmapDataset
 from data_utils.synthetic_dataset import SyntheticValTestDataset
 from data_utils.hpatch_dataset import HPatchDataset
@@ -56,6 +57,7 @@ from utils.utils import spatial_nms
 from utils.utils import DescriptorTripletLoss
 from utils.utils import DescriptorGeneralTripletLoss
 from utils.utils import DescriptorRankedListLoss
+from utils.utils import DescriptorTripletAugmentationLoss
 from utils.utils import DescriptorValidator
 from utils.utils import Matcher
 from utils.utils import NearestNeighborThresholdMatcher
@@ -315,9 +317,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             #     assert False
             # self.logger.info("Initialize COCOMegPointDescriptorOnlyDataset")
             # self.train_dataset = COCOMegPointDescriptorOnlyDataset(self.params)
-            self.logger.info("Initialize MegaDepthDataset")
-            self.train_dataset = MegaDepthDatasetFromPreprocessed(dataset_dir=self.params.mega_dataset_dir,
-                                                                  do_augmentation=self.do_augmentation)
+            if self.desp_loss_type == "triplet_augmentation":
+                self.logger.info("Initialize MegaDepthDatasetFromPreprocessedEnhanced")
+                self.train_dataset = MegaDepthDatasetFromPreprocessedEnhanced(
+                    dataset_dir=self.params.mega_dataset_dir, do_augmentation=self.do_augmentation
+                )
+            else:
+                self.logger.info("Initialize MegaDepthDatasetFromPreprocessed")
+                self.train_dataset = MegaDepthDatasetFromPreprocessed(dataset_dir=self.params.mega_dataset_dir,
+                                                                      do_augmentation=self.do_augmentation)
         else:
             assert False
 
@@ -474,6 +482,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
                 # self.logger.info("Initialize the DescriptorRankedListLoss")
                 # self.descriptor_loss = DescriptorRankedListLoss(margin=0.8, alpha=1.2, t=10, device=self.device)
+            elif self.desp_loss_type == "triplet_augmentation":
+                # self.logger.info("Initialize the DescriptorTripletAugmentationLoss")
+                # self.descriptor_loss = DescriptorTripletAugmentationLoss(self.device)
+                self.logger.info("Initialize the DescritptorGeneralTripletLoss.")
+                self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
             else:
                 self.logger.error("Unrecognized desp_loss_type: %s" % self.desp_loss_type)
                 assert False
@@ -532,6 +545,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 elif self.desp_loss_type == "auxiliary":
                     self.logger.info("Initialize training func mode of [only_descriptor] with auxiliary train func.")
                     self._train_func = self._train_only_descriptor_auxiliary
+                elif self.desp_loss_type == "triplet_augmentation":
+                    self.logger.info("Initialize training func mode of [only_descriptor] with augmentation train func.")
+                    self._train_func = self._train_only_descriptor_augmentation
             else:
                 # self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
                 # self._train_func = self._train_with_gt
@@ -544,12 +560,20 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
-        self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr)
-        # self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
+        if self.params.optimizer_method == "adam":
+            self.logger.info("Initialize Adam optimizer.")
+            self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr)
+            # self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
+        elif self.params.optimizer_method == "sgd":
+            self.logger.info("Initialize SGD optimizer.")
+            self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, momentum=0.9)
+        else:
+            self.logger.error("Unrecognized optimizer_method: %s " % self.params.optimizer_method)
+            assert False
 
     def _initialize_scheduler(self):
         # 初始化学习率调整算子
-        milestones = [10, 20, 30]
+        milestones = [5, 10, 15]
         self.logger.info("Initialize lr_scheduler of MultiStepLR: (%d, %d, %d)" % (
             milestones[0], milestones[1], milestones[2]))
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=milestones, gamma=0.1)
@@ -948,6 +972,86 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         else:
             torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
             # torch.save(self.extractor.state_dict(), os.path.join(self.ckpt_dir, 'extractor_%02d.pt' % epoch_idx))
+
+    def _train_only_descriptor_augmentation(self, epoch_idx):
+        self.model.train()
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image1 = data["image1"].to(self.device)
+            image2 = data["image2"].to(self.device)
+            image3 = data["image3"].to(self.device)
+            image4 = data["image4"].to(self.device)
+
+            desp_point1 = data["desp_point1"].to(self.device)
+            desp_point2 = data["desp_point2"].to(self.device)
+            desp_point3 = data["desp_point3"].to(self.device)
+            desp_point4 = data["desp_point4"].to(self.device)
+
+            valid_mask12 = data["valid_mask12"].to(self.device)
+            valid_mask13 = data["valid_mask13"].to(self.device)
+            valid_mask42 = data["valid_mask42"].to(self.device)
+
+            not_search_mask12 = data["not_search_mask12"].to(self.device)
+            not_search_mask13 = data["not_search_mask13"].to(self.device)
+            not_search_mask42 = data["not_search_mask42"].to(self.device)
+
+            image_cat = torch.cat((image1, image2, image3, image4), dim=0)
+            point_cat = torch.cat((desp_point1, desp_point2, desp_point3, desp_point4), dim=0)
+
+            desp_cat = self.model(image_cat, point_cat)
+            desp1, desp2, desp3, desp4 = torch.chunk(desp_cat, 4, dim=0)
+
+            loss12 = self.descriptor_loss(desp1, desp2, valid_mask12, not_search_mask12)
+            loss13 = self.descriptor_loss(desp1, desp3, valid_mask13, not_search_mask13)
+            loss42 = self.descriptor_loss(desp4, desp2, valid_mask42, not_search_mask42)
+
+            loss = (loss12 + loss13 + loss42) / 3.
+
+            # loss, loss12, loss13, loss14, loss23, loss24, loss34, var_loss = self.descriptor_loss(
+            #     desp0, desp1, desp2, desp3,
+            #     valid_mask12, valid_mask13, valid_mask14, valid_mask23, valid_mask24, valid_mask34,
+            #     valid_mask, not_search_mask
+            # )
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                loss_val = loss.item()
+                loss12_val = loss12.item()
+                loss13_val = loss13.item()
+                loss42_val = loss42.item()
+
+                self.summary_writer.add_scalar("loss", loss_val, global_step=int(i+epoch_idx*self.epoch_length))
+
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: "
+                    "loss=%.4f, "
+                    "loss12=%.4f, "
+                    "loss13=%.4f, "
+                    "loss42=%.4f, "
+                    "%.4fs/step. " % (
+                        epoch_idx, i, self.epoch_length,
+                        loss_val,
+                        loss12_val,
+                        loss13_val,
+                        loss42_val,
+                        (time.time() - stime) / self.params.log_freq,
+                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
 
     def _train_only_descriptor_rank(self, epoch_idx):
         self.model.train()

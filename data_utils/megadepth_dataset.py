@@ -934,17 +934,17 @@ class MegaDepthDatasetFromPreprocessed(Dataset):
                 # apply the following augmenters to most images
                 # iaa.Fliplr(0.5),  # horizontally flip 50% of all images
                 # iaa.Flipud(0.2),  # vertically flip 20% of all images
-                # self.sometimes(iaa.Affine(
-                #     scale={"x": (0.8, 1.2), "y": (0.8, 1.2)},
-                #     # scale images to 80-120% of their size, individually per axis
-                #     translate_percent={"x": (-0.2, 0.2), "y": (-0.2, 0.2)},
-                #     # translate by -20 to +20 percent (per axis)
-                #     rotate=(-45, 45),  # rotate by -45 to +45 degrees
-                #     shear=(-16, 16),  # shear by -16 to +16 degrees
-                #     order=[0, 1],  # use nearest neighbour or bilinear interpolation (fast)
-                #     cval=(0, 255),  # if mode is constant, use a cval between 0 and 255
-                #     mode="constant"  # use any of scikit-image's warping modes (see 2nd image from the top for examples)
-                # )),
+                self.sometimes(iaa.Affine(
+                    scale={"x": (0.8, 1.2), "y": (0.8, 1.2)},
+                    # scale images to 80-120% of their size, individually per axis
+                    translate_percent={"x": (-0.2, 0.2), "y": (-0.2, 0.2)},
+                    # translate by -20 to +20 percent (per axis)
+                    rotate=(-20, 20),  # rotate by -45 to +45 degrees
+                    shear=(-10, 10),  # shear by -16 to +16 degrees
+                    order=[0, 1],  # use nearest neighbour or bilinear interpolation (fast)
+                    cval=(0, 255),  # if mode is constant, use a cval between 0 and 255
+                    mode="constant"  # use any of scikit-image's warping modes (see 2nd image from the top for examples)
+                )),
                 # execute 0 to 5 of the following (less important) augmenters per image
                 # don't execute all of them, as that would often be way too strong
                 iaa.SomeOf(
@@ -1066,6 +1066,98 @@ class MegaDepthDatasetFromPreprocessed(Dataset):
     @staticmethod
     def sometimes(aug):
         return iaa.Sometimes(0.5, aug)
+
+
+class MegaDepthDatasetFromPreprocessedEnhanced(MegaDepthDatasetFromPreprocessed):
+    """
+    配合MegaDepthDatasetCreator使用，直接读取预处理好的数据集
+    """
+    def __init__(self, dataset_dir, do_augmentation=True):
+        super(MegaDepthDatasetFromPreprocessedEnhanced, self).__init__(dataset_dir=dataset_dir,
+                                                                       do_augmentation=do_augmentation)
+
+    def __getitem__(self, idx):
+        image_dir = self.image_list[idx]
+        info_dir = self.info_list[idx]
+
+        image12 = cv.imread(image_dir)[:, :, ::-1].copy()  # 交换BGR为RGB
+        image1, image2 = np.split(image12, 2, axis=1)
+        h, w, _ = image1.shape
+        scale = np.array((w-1, h-1), dtype=np.float32)
+
+        info = np.load(info_dir)
+        desp_point1 = info["desp_point1"]
+        desp_point2 = info["desp_point2"]
+        valid_mask = info["valid_mask"]
+        not_search_mask = info["not_search_mask"]
+
+        # prepare for augmentation
+        desp_point3 = ((desp_point2 + 1.) / 2. * scale)[:, 0, :]
+        desp_point4 = ((desp_point1 + 1.) / 2. * scale)[:, 0, :]
+
+        # same image pair do the same augmentation
+        # self.aug_seq.seed_(3213+idx)
+
+        # image1, image2
+        #   |       |
+        #   v       v
+        # image4, image3
+        # augmentation
+        image3, desp_point3 = self.aug_seq(image=image2, keypoints=desp_point3[np.newaxis, :, :])
+        image4, desp_point4 = self.aug_seq(image=image1, keypoints=desp_point4[np.newaxis, :, :])
+
+        # rescale to (-1,1)
+        desp_point3 = ((desp_point3 / scale) * 2. - 1.)[0][:, np.newaxis, :].copy()
+        desp_point4 = ((desp_point4 / scale) * 2. - 1.)[0][:, np.newaxis, :].copy()
+
+        # construct valid mask
+        valid_mask12 = valid_mask.copy()
+        valid_mask13 = np.all(((desp_point3 >= -1.) & (desp_point3 <= 1.))[:, 0, :], axis=1) & valid_mask
+        valid_mask42 = np.all(((desp_point4 >= -1.) & (desp_point4 <= 1.))[:, 0, :], axis=1) & valid_mask
+
+        # construct not search mask
+        not_search_mask12 = not_search_mask
+        not_search_mask42 = not_search_mask
+        not_search_point3 = np.all(((desp_point3 < -1.) & (desp_point3 > 1.))[:, 0, :], axis=1)[np.newaxis, :]
+        not_search_mask13 = not_search_point3 | not_search_mask
+
+        image1 = (torch.from_numpy(image1).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).contiguous()
+        image2 = (torch.from_numpy(image2).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).contiguous()
+        image3 = (torch.from_numpy(image3).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).contiguous()
+        image4 = (torch.from_numpy(image4).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).contiguous()
+
+        desp_point1 = torch.from_numpy(desp_point1)
+        desp_point2 = torch.from_numpy(desp_point2)
+        desp_point3 = torch.from_numpy(desp_point3)
+        desp_point4 = torch.from_numpy(desp_point4)
+
+        valid_mask12 = torch.from_numpy(valid_mask12).to(torch.float)
+        valid_mask13 = torch.from_numpy(valid_mask13).to(torch.float)
+        valid_mask42 = torch.from_numpy(valid_mask42).to(torch.float)
+
+        not_search_mask12 = torch.from_numpy(not_search_mask12).to(torch.float)
+        not_search_mask13 = torch.from_numpy(not_search_mask13).to(torch.float)
+        not_search_mask42 = torch.from_numpy(not_search_mask42).to(torch.float)
+
+        return {
+            "image1": image1,
+            "image2": image2,
+            "image3": image3,
+            "image4": image4,
+
+            "desp_point1": desp_point1,
+            "desp_point2": desp_point2,
+            "desp_point3": desp_point3,
+            "desp_point4": desp_point4,
+
+            "valid_mask12": valid_mask12,
+            "valid_mask13": valid_mask13,
+            "valid_mask42": valid_mask42,
+
+            "not_search_mask12": not_search_mask12,
+            "not_search_mask13": not_search_mask13,
+            "not_search_mask42": not_search_mask42,
+        }
 
 
 if __name__ == "__main__":
