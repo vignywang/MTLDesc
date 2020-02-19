@@ -205,6 +205,7 @@ class MegPointTrainerTester(object):
 
         self.desp_loss_type = params.desp_loss_type
         self.do_augmentation = params.do_augmentation
+        self.weight_decay = params.weight_decay
 
         # todo:
         self.sift = cv.xfeatures2d.SIFT_create(1000)
@@ -561,8 +562,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
         if self.params.optimizer_method == "adam":
-            self.logger.info("Initialize Adam optimizer.")
-            self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr, weight_decay=1e-5)
+            self.logger.info("Initialize Adam optimizer with weight_decay: %.5f." % self.params.weight_decay)
+            self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
             # self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
         elif self.params.optimizer_method == "sgd":
             self.logger.info("Initialize SGD optimizer.")

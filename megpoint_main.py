@@ -48,6 +48,7 @@ class MegPointHeatmapParameters(BasicParameters):
 
         self.desp_loss_type = "general"
         self.optimizer_method = "adam"
+        self.weight_decay = 1e-5
 
         # debug related
         self.debug_mode = "MegPoint"
@@ -134,6 +135,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--desp_loss_type", type=str, default="general")
         parser.add_argument("--do_augmentation", type=str, default="False")
         parser.add_argument("--optimizer_method", type=str, default="adam")
+        parser.add_argument("--weight_decay", type=float, default=1e-5)
 
         # megaDepth related
         parser.add_argument("--mega_dataset_dir", type=str, default="/data/MegaDepthOrder/preprocessed_train_dataset")
