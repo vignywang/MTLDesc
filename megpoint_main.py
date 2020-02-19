@@ -47,6 +47,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.sample_num = 100
 
         self.desp_loss_type = "general"
+        self.optimizer_method = "adam"
 
         # debug related
         self.debug_mode = "MegPoint"
@@ -101,7 +102,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--dataset_dir", type=str, default="/data/MegPoint/dataset/coco/train2014/pseudo_image_points_0")
         parser.add_argument("--batch_size", type=int, default=16)
         parser.add_argument("--num_workers", type=int, default=8)
-        parser.add_argument("--epoch_num", type=int, default=12)
+        parser.add_argument("--epoch_num", type=int, default=15)
         parser.add_argument("--log_freq", type=int, default=50)
         parser.add_argument("--lr", type=float, default=0.001)
         parser.add_argument("--prefix", type=str, default='exp')
@@ -132,6 +133,7 @@ class MegPointHeatmapParameters(BasicParameters):
 
         parser.add_argument("--desp_loss_type", type=str, default="general")
         parser.add_argument("--do_augmentation", type=str, default="False")
+        parser.add_argument("--optimizer_method", type=str, default="adam")
 
         # megaDepth related
         parser.add_argument("--mega_dataset_dir", type=str, default="/data/MegaDepthOrder/preprocessed_train_dataset")
