@@ -483,10 +483,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 # self.logger.info("Initialize the DescriptorRankedListLoss")
                 # self.descriptor_loss = DescriptorRankedListLoss(margin=0.8, alpha=1.2, t=10, device=self.device)
             elif self.desp_loss_type == "triplet_augmentation":
-                # self.logger.info("Initialize the DescriptorTripletAugmentationLoss")
-                # self.descriptor_loss = DescriptorTripletAugmentationLoss(self.device)
-                self.logger.info("Initialize the DescritptorGeneralTripletLoss.")
-                self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
+                self.logger.info("Initialize the DescriptorTripletAugmentationLoss")
+                self.descriptor_loss = DescriptorTripletAugmentationLoss(self.device)
+                # self.logger.info("Initialize the DescritptorGeneralTripletLoss.")
+                # self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
             else:
                 self.logger.error("Unrecognized desp_loss_type: %s" % self.desp_loss_type)
                 assert False
@@ -562,7 +562,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         # 初始化网络训练优化器
         if self.params.optimizer_method == "adam":
             self.logger.info("Initialize Adam optimizer.")
-            self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr)
+            self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr, weight_decay=1e-5)
             # self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
         elif self.params.optimizer_method == "sgd":
             self.logger.info("Initialize SGD optimizer.")
@@ -1002,11 +1002,14 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             desp_cat = self.model(image_cat, point_cat)
             desp1, desp2, desp3, desp4 = torch.chunk(desp_cat, 4, dim=0)
 
-            loss12 = self.descriptor_loss(desp1, desp2, valid_mask12, not_search_mask12)
-            loss13 = self.descriptor_loss(desp1, desp3, valid_mask13, not_search_mask13)
-            loss42 = self.descriptor_loss(desp4, desp2, valid_mask42, not_search_mask42)
+            loss, loss12, loss13, loss42 = self.descriptor_loss(desp1, desp2, desp3, desp4, valid_mask12,
+                                                                valid_mask13, valid_mask42, not_search_mask12,
+                                                                not_search_mask13, not_search_mask42)
+            # loss12 = self.descriptor_loss(desp1, desp2, valid_mask12, not_search_mask12)
+            # loss13 = self.descriptor_loss(desp1, desp3, valid_mask13, not_search_mask13)
+            # loss42 = self.descriptor_loss(desp4, desp2, valid_mask42, not_search_mask42)
 
-            loss = (loss12 + loss13 + loss42) / 3.
+            # loss = (loss12 + loss13 + loss42) / 3.
 
             # loss, loss12, loss13, loss14, loss23, loss24, loss34, var_loss = self.descriptor_loss(
             #     desp0, desp1, desp2, desp3,

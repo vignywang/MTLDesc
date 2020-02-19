@@ -209,83 +209,33 @@ class DescriptorTripletAugmentationLoss(object):
     def __init__(self, device):
         self.device = device
 
-    def __call__(
-            self,
-            desp1,
-            desp2,
-            desp3,
-            desp4,
-            valid_mask12,
-            valid_mask13,
-            valid_mask14,
-            valid_mask23,
-            valid_mask24,
-            valid_mask34,
-            valid_mask,
-            not_search_mask,
-    ):
-        # 暂时只从12中提取困难负样本用于构造loss
-        cos_similarity = torch.matmul(desp1, desp2.transpose(1, 2))  # [bt,n,n]
+    def __call__(self, desp1, desp2, desp3, desp4, valid_mask12, valid_mask13, valid_mask42, not_search_mask12,
+                 not_search_mask13, not_search_mask42):
+        loss12 = self.compute_loss(desp1, desp2, valid_mask12, not_search_mask12)
+        loss13 = self.compute_loss(desp1, desp3, valid_mask13, not_search_mask13)
+        loss42 = self.compute_loss(desp4, desp2, valid_mask42, not_search_mask42)
+
+        loss = (loss12 + loss13 + loss42) / 3.
+        return loss, loss12, loss13, loss42
+
+    @staticmethod
+    def compute_loss(desp_0, desp_1, valid_mask, not_search_mask):
+        desp_1 = desp_1.transpose(1, 2)  # [bt,dim,n]
+
+        cos_similarity = torch.matmul(desp_0, desp_1)  # [bt,n,n]
         dist = torch.sqrt(2.*(1.-cos_similarity)+1e-4)
 
-        positive_pair12 = torch.diagonal(dist, dim1=1, dim2=2)  # [bt,n]
+        positive_pair = torch.diagonal(dist, dim1=1, dim2=2)  # [bt,n]
         dist = dist + 10*not_search_mask
 
         hardest_negative_pair, hardest_negative_idx = torch.min(dist, dim=2)  # [bt,n]
 
-        # 构造其他描述子之间的正样本对应关系，13，14，23，24，34
-        dist12 = torch.norm(desp1-desp2, dim=2)
-        dist13 = torch.norm(desp1-desp3, dim=2)
-        dist14 = torch.norm(desp1-desp4, dim=2)
-        dist23 = torch.norm(desp2-desp3, dim=2)
-        dist24 = torch.norm(desp2-desp4, dim=2)
-        dist34 = torch.norm(desp3-desp4, dim=2)
+        loss_total = torch.relu(1.+positive_pair-hardest_negative_pair)
+        loss_total *= valid_mask
 
-        # normal hard triplet loss
-        loss_triplet = torch.relu(1.+positive_pair12-hardest_negative_pair)
-        loss_triplet = self.compute_masked_loss(loss_triplet, valid_mask)
+        valid_num = torch.sum(valid_mask, dim=1)
+        loss = torch.mean(torch.sum(loss_total, dim=1)/(valid_num + 1.))
 
-        # augmentation positive loss
-        loss12 = self.compute_masked_loss(dist12, valid_mask12)
-        loss13 = self.compute_masked_loss(dist13, valid_mask13)
-        loss14 = self.compute_masked_loss(dist14, valid_mask14)
-        loss23 = self.compute_masked_loss(dist23, valid_mask23)
-        loss24 = self.compute_masked_loss(dist24, valid_mask24)
-        loss34 = self.compute_masked_loss(dist34, valid_mask34)
-
-        # 类内方差
-        mean12 = loss12.detach()
-        mean13 = loss13.detach()
-        mean14 = loss14.detach()
-        mean23 = loss23.detach()
-        mean24 = loss24.detach()
-        mean34 = loss34.detach()
-
-        var12 = (dist12 - mean12)**2
-        var13 = (dist13 - mean12)**2
-        var14 = (dist14 - mean12)**2
-        var23 = (dist23 - mean12)**2
-        var24 = (dist24 - mean12)**2
-        var34 = (dist34 - mean12)**2
-
-        var_loss12 = self.compute_masked_loss(var12, valid_mask12)
-        var_loss13 = self.compute_masked_loss(var13, valid_mask13)
-        var_loss14 = self.compute_masked_loss(var14, valid_mask14)
-        var_loss23 = self.compute_masked_loss(var23, valid_mask23)
-        var_loss24 = self.compute_masked_loss(var24, valid_mask24)
-        var_loss34 = self.compute_masked_loss(var34, valid_mask34)
-
-        var_loss = var_loss13 + var_loss14 + var_loss23 + var_loss24 + var_loss34
-
-        loss = loss_triplet + (loss13 + loss14 + loss23 + loss24 + loss34) * 0.01 + 0.01 * var_loss
-
-        return loss, loss12, loss13, loss14, loss23, loss24, loss34, var_loss
-
-    @staticmethod
-    def compute_masked_loss(loss, mask):
-        loss = loss * mask
-        valid_num = torch.sum(mask, dim=1)
-        loss = torch.mean(torch.sum(loss, dim=1)/(valid_num + 1.))
         return loss
 
 
