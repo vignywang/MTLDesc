@@ -311,9 +311,10 @@ class DescriptorValidator(object):
         negative_dist, _ = torch.min(dist, dim=2)
 
         correct_match = (positive_dist < negative_dist).to(torch.float)
-        correct_ratio = torch.sum(correct_match * matched_valid) / (torch.sum(matched_valid) + 1e-5)
+        correct_sum = torch.sum(correct_match * matched_valid).item()
+        valid_sum = torch.sum(matched_valid).item()
 
-        return correct_ratio
+        return correct_sum, valid_sum
 
 
 class DescriptorPreciseTripletLoss(object):
