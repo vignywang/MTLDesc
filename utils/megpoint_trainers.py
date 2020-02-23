@@ -32,6 +32,13 @@ from nets.megpoint_net import resnet34_s0s2s3s4
 from nets.megpoint_net import resnet18_s0s2s3s4_c4
 from nets.megpoint_net import resnet34_s0s2s3s4_c4
 
+from nets.megpoint_net import resnet18_c1c2c3c4
+from nets.megpoint_net import resnet18_c1c2c3c4_avgpool
+from nets.megpoint_net import resnet18_c1c2c3c4_maxpool
+from nets.megpoint_net import resnet18_c2c3c4
+from nets.megpoint_net import resnet18_c3c4
+from nets.megpoint_net import resnet18_c4
+
 from nets.segment_net import deeplabv3_resnet50
 from nets.superpoint_net import SuperPointNetFloat
 
@@ -413,6 +420,31 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             self.logger.info("Initialize network arch : resnet34_s0s2s3s4_c4")
             model = resnet34_s0s2s3s4_c4()
 
+        elif self.network_arch == "resnet18_c1c2c3c4":
+            self.logger.info("Initialize network arch : resnet18_c1c2c3c4")
+            model = resnet18_c1c2c3c4()
+            pass
+        elif self.network_arch == "resnet18_c2c3c4":
+            self.logger.info("Initialize network arch : resnet18_c2c3c4")
+            model = resnet18_c2c3c4()
+            pass
+        elif self.network_arch == "resnet18_c3c4":
+            self.logger.info("Initialize network arch : resnet18_c3c4")
+            model = resnet18_c3c4()
+            pass
+        elif self.network_arch == "resnet18_c4":
+            self.logger.info("Initialize network arch : resnet18_c4")
+            model = resnet18_c4()
+            pass
+        elif self.network_arch == "resnet18_c1c2c3c4_avgpool":
+            self.logger.info("Initialize network arch : resnet18_c1c2c3c4_avgpool")
+            model = resnet18_c1c2c3c4_avgpool()
+            pass
+        elif self.network_arch == "resnet18_c1c2c3c4_maxpool":
+            self.logger.info("Initialize network arch : resnet18_c1c2c3c4_maxpool")
+            model = resnet18_c1c2c3c4_maxpool()
+            pass
+
         else:
             self.logger.error("unrecognized network_arch:%s" % self.network_arch)
             assert False
@@ -529,7 +561,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                                  "resnet18_s0s2s3s4_c4", "resnet34_s0s2s3s4_c4",
                                  "resnet18_s0s2s3s4_256", "resnet18_s0s2s3s4_512",
                                  "resnet18_s0s2s3s4_auxiliary", "resnet34_s0s2s3s4_auxiliary",
-                                 "resnet18_s0s2s3s4_auxiliary_256"]:
+                                 "resnet18_s0s2s3s4_auxiliary_256",
+                                 "resnet18_c1c2c3c4", "resnet18_c2c3c4", "resnet18_c3c4",
+                                 "resnet18_c4", "resnet18_c1c2c3c4_avgpool", "resnet18_c1c2c3c4_maxpool", ]:
             if self.train_mode == "only_detector":
                 self.logger.info("Initialize training func mode of [only_detector] with baseline network.")
                 self._train_func = self._train_only_detector
