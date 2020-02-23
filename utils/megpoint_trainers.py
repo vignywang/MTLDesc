@@ -1779,6 +1779,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.model.eval()
         # self.extractor.eval()
         avg_correct_ratio = []
+        tstime = time.time()
+        sample_count = 0
         total_correct_sum = []
         total_valid_sum = []
         stime = time.time()
@@ -1806,6 +1808,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
             torch.cuda.empty_cache()
 
+            sample_count += 1
+
             if i % self.log_freq == 0:
 
                 self.logger.info(
@@ -1825,14 +1829,19 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         total_valid_sum = np.sum(np.stack(total_valid_sum))
         avg_correct_ratio = total_correct_sum / (total_valid_sum + 1e-5)
 
+        total_time = time.time() - tstime
+        average_time = total_time / sample_count
+
         self.summary_writer.add_scalar("validation/avg_correct_ratio", avg_correct_ratio, global_step=epoch_idx)
 
         self.logger.info(
             "[Val Epoch:%2d], "
             "avg_correct_ratio=%.4f, "
+            "average_time=%.4fs, "
             % (
                 epoch_idx,
                 avg_correct_ratio,
+                average_time,
             )
         )
 
