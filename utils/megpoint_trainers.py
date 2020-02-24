@@ -16,6 +16,7 @@ from nets.megpoint_net import MegPointShuffleHeatmap
 from nets.megpoint_net import MegPointShuffleHeatmapOld
 from nets.megpoint_net import resnet18
 from nets.megpoint_net import resnet34
+from nets.megpoint_net import resnet18_all
 
 from nets.megpoint_net import resnet18_s0s2s3s4
 from nets.megpoint_net import resnet18_s0s2s3s4_maxpool
@@ -370,7 +371,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_model(self):
         # 初始化模型
-        if self.network_arch == "resnet18":
+        if self.network_arch == "resnet18_all":
+            self.logger.info("Initialize network arch : resnet18_all")
+            model = resnet18_all()
+        elif self.network_arch == "resnet18":
             self.logger.info("Initialize network arch : restnet18")
             model = resnet18()
             # model = MegPointShuffleHeatmapOld()
@@ -563,7 +567,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                                  "resnet18_s0s2s3s4_auxiliary", "resnet34_s0s2s3s4_auxiliary",
                                  "resnet18_s0s2s3s4_auxiliary_256",
                                  "resnet18_c1c2c3c4", "resnet18_c2c3c4", "resnet18_c3c4",
-                                 "resnet18_c4", "resnet18_c1c2c3c4_avgpool", "resnet18_c1c2c3c4_maxpool", ]:
+                                 "resnet18_c4", "resnet18_c1c2c3c4_avgpool", "resnet18_c1c2c3c4_maxpool",
+                                 "resnet18_all", ]:
             if self.train_mode == "only_detector":
                 self.logger.info("Initialize training func mode of [only_detector] with baseline network.")
                 self._train_func = self._train_only_detector
