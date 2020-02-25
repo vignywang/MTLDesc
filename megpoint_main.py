@@ -43,6 +43,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.half_region_size = 7
         self.repro_weight = 0.1
         self.tmp_ckpt_file = ""
+        self.extractor_ckpt_file = ""
         self.dataset_type = "coco"
         self.sample_num = 100
 
@@ -129,6 +130,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--repro_weight", type=float, default=0.1)
         parser.add_argument("--half_region_size", type=int, default=7)
         parser.add_argument("--tmp_ckpt_file", type=str, default="")
+        parser.add_argument("--extractor_ckpt_file", type=str, default="")
         parser.add_argument("--dataset_type", type=str, default="coco")
         parser.add_argument("--sample_num", type=int, default=100)
 
@@ -196,9 +198,9 @@ def main():
     if params.run_mode == "train":
         megpoint_trainer.train()
     elif params.run_mode == "test":
-        megpoint_trainer.test(params.tmp_ckpt_file)
+        megpoint_trainer.test(params.tmp_ckpt_file, params.extractor_ckpt_file)
     elif params.run_mode == "test_folder":
-        models = generate_testing_file(params.ckpt_folder)
+        models = generate_testing_file(params.ckpt_folder, params.extractor_ckpt_file)
         for m in models:
             megpoint_trainer.test(m)
     elif params.run_mode == "test_debug":

@@ -1427,8 +1427,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.logger.info("Validating epoch %2d done." % epoch_idx)
         self.logger.info("*****************************************************")
 
-    def test(self, ckpt_file):
+    def test(self, ckpt_file, extrator_ckpt_file=None):
         self.model = self._load_model_params(ckpt_file, self.model)
+        if self.network_arch == "resnet18_fast":
+            self.extractor = self._load_model_params(extrator_ckpt_file, self.extractor)
 
         self.model.eval()
         # 重置测评算子参数
@@ -1461,9 +1463,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             if self.train_mode == "only_descriptor":
                 results = self._descriptor_inference_func(image_pair)
             else:
-                # results = self._baseline_inference_func(image_pair)
-                results = self._inference_func(image_pair)
-            # results = self._baseline_inference_func(image_pair)
+                if self.network_arch == "resnet18_fast":
+                    results = self._inference_func_fast(image_pair)
+                else:
+                    results = self._inference_func(image_pair)
 
             if results is None:
                 skip += 1
