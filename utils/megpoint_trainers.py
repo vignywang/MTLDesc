@@ -17,6 +17,8 @@ from nets.megpoint_net import MegPointShuffleHeatmapOld
 from nets.megpoint_net import resnet18
 from nets.megpoint_net import resnet34
 from nets.megpoint_net import resnet18_all
+from nets.megpoint_net import resnet18_fast
+from nets.megpoint_net import Extractor
 
 from nets.megpoint_net import resnet18_s0s2s3s4
 from nets.megpoint_net import resnet18_s0s2s3s4_maxpool
@@ -374,6 +376,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         if self.network_arch == "resnet18_all":
             self.logger.info("Initialize network arch : resnet18_all")
             model = resnet18_all()
+        elif self.network_arch == "resnet18_fast":
+            self.logger.info("Initialize network arch : resnet18_fast")
+            model = resnet18_fast()
         elif self.network_arch == "resnet18":
             self.logger.info("Initialize network arch : restnet18")
             model = resnet18()
@@ -456,10 +461,14 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             model = torch.nn.DataParallel(model)
         self.model = model.to(self.device)
 
-        # extractor = DescriptorExtractor()
-        # if self.multi_gpus:
-        #     extractor = torch.nn.DataParallel(extractor)
-        # self.extractor = extractor.to(self.device)
+        if self.network_arch == "resnet18_fast":
+            self.logger.info("Initialize extractor")
+            extractor = Extractor()
+            if self.multi_gpus:
+                extractor = torch.nn.DataParallel(extractor)
+            self.extractor = extractor.to(self.device)
+        else:
+            self.extractor = None
 
         self.descriptor = None
         if self.train_mode in ["only_detector", "only_detector_index"]:
@@ -568,7 +577,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                                  "resnet18_s0s2s3s4_auxiliary_256",
                                  "resnet18_c1c2c3c4", "resnet18_c2c3c4", "resnet18_c3c4",
                                  "resnet18_c4", "resnet18_c1c2c3c4_avgpool", "resnet18_c1c2c3c4_maxpool",
-                                 "resnet18_all", ]:
+                                 "resnet18_all", "resnet18_fast"]:
             if self.train_mode == "only_detector":
                 self.logger.info("Initialize training func mode of [only_detector] with baseline network.")
                 self._train_func = self._train_only_detector
@@ -591,8 +600,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             else:
                 # self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
                 # self._train_func = self._train_with_gt
-                self.logger.info("Initialize training func mode of _train_with_gt_all.")
-                self._train_func = self._train_with_gt_all
+                if self.network_arch == "resnet18_fast":
+                    self.logger.info("Initialize training func mode of _train_with_gt_fast")
+                    self._train_func = self._train_with_gt_fast
+                else:
+                    self.logger.info("Initialize training func mode of _train_with_gt_all.")
+                    self._train_func = self._train_with_gt_all
 
         else:
             self.logger.error("Unrecognized network_arch: %s" % self.network_arch)
@@ -603,7 +616,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         if self.params.optimizer_method == "adam":
             self.logger.info("Initialize Adam optimizer with weight_decay: %.5f." % self.params.weight_decay)
             self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-            # self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
+            if self.network_arch == "resnet18_fast":
+                self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
+            else:
+                self.extractor_optimizer = None
         elif self.params.optimizer_method == "sgd":
             self.logger.info("Initialize SGD optimizer.")
             self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, momentum=0.9)
@@ -927,6 +943,92 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
         else:
             torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
+    def _train_with_gt_fast(self, epoch_idx):
+        self.model.train()
+        self.extractor.train()
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            # 读取相关数据
+            image = data["image"].to(self.device)
+            heatmap_gt = data['heatmap'].to(self.device)
+            point_mask = data['point_mask'].to(self.device)
+            desp_point = data["desp_point"].to(self.device)
+
+            warped_image = data["warped_image"].to(self.device)
+            warped_heatmap_gt = data['warped_heatmap'].to(self.device)
+            warped_point_mask = data['warped_point_mask'].to(self.device)
+            warped_desp_point = data["warped_desp_point"].to(self.device)
+
+            valid_mask = data["valid_mask"].to(self.device)
+            not_search_mask = data["not_search_mask"].to(self.device)
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+
+            # 模型预测
+            heatmap_pred_pair, c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+
+            # 计算描述子loss
+            desp_point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
+            c1_feature_pair = f.grid_sample(c1_pair, desp_point_pair, mode="bilinear", padding_mode="border")
+            c2_feature_pair = f.grid_sample(c2_pair, desp_point_pair, mode="bilinear", padding_mode="border")
+            c3_feature_pair = f.grid_sample(c3_pair, desp_point_pair, mode="bilinear", padding_mode="border")
+            c4_feature_pair = f.grid_sample(c4_pair, desp_point_pair, mode="bilinear", padding_mode="border")
+
+            feature_pair = torch.cat((c1_feature_pair, c2_feature_pair, c3_feature_pair, c4_feature_pair), dim=1)
+            feature_pair = feature_pair[:, :, :, 0].transpose(1, 2)
+            desp_pair = self.extractor(feature_pair)
+            desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
+
+            desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
+
+            # 计算关键点loss
+            heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
+            point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
+            point_loss = self.point_loss(heatmap_pred_pair[:, 0, :, :], heatmap_gt_pair, point_mask_pair)
+
+            loss = desp_loss + point_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            self.extractor_optimizer.zero_grad()
+
+            loss.backward()
+
+            self.optimizer.step()
+            self.extractor_optimizer.step()
+
+            # debug use
+            if i == 200:
+                break
+
+            if i % self.log_freq == 0:
+
+                point_loss_val = point_loss.item()
+                desp_loss_val = desp_loss.item()
+                loss_val = loss.item()
+
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
+                    " one step cost %.4fs. " % (
+                        epoch_idx, i, self.epoch_length,
+                        loss_val,
+                        point_loss_val,
+                        desp_loss_val,
+                        (time.time() - stime) / self.params.log_freq,
+                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+            torch.save(self.extractor.module.state_dict(), os.path.join(self.ckpt_dir, 'extractor_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+            torch.save(self.extractor.state_dict(), os.path.join(self.ckpt_dir, 'extractor_%02d.pt' % epoch_idx))
 
     def _train_only_descriptor(self, epoch_idx):
         self.model.train()
@@ -1352,92 +1454,27 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             gt_homography = data['gt_homography']
             image_type = data['image_type']
 
-            # if image_type == "illumination":
-            #     print("sikp")
-            #     skip += 1
-            #     continue
-
             image_pair = np.stack((first_image, second_image), axis=0)
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
-            image_pair = image_pair*2./255. - 1.
+            image_pair = image_pair * 2. / 255. - 1.
 
-            if self.network_arch == "residual":
-                heatmap_pair, desp_pair, _ = self.model(image_pair)
+            if self.train_mode == "only_descriptor":
+                results = self._descriptor_inference_func(image_pair)
             else:
-                heatmap_pair, desp_pair = self.model(image_pair)
+                # results = self._baseline_inference_func(image_pair)
+                results = self._inference_func(image_pair)
+            # results = self._baseline_inference_func(image_pair)
 
-            # 若模式是只训练描述子，则检测子端采用预训练的网络实现
-            if self.train_mode in ["only_descriptor"]:
-                heatmap_pair, _ = self.detector(image_pair)
-
-            # 若模式是只训检测子，则描述子端采用预训练的网络实现
-            if self.train_mode in ["only_detector", "only_detector_index"]:
-                _, desp_pair = self.descriptor(image_pair)
-
-            heatmap_pair = torch.sigmoid(heatmap_pair)  # 用BCEloss
-            prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold*2+1))
-
-            desp_pair = desp_pair.detach().cpu().numpy()
-            first_desp = desp_pair[0]
-            second_desp = desp_pair[1]
-            prob_pair = prob_pair.detach().cpu().numpy()
-            first_prob = prob_pair[0, 0]
-            second_prob = prob_pair[1, 0]
-
-            if self.train_mode == "only_detector_index":
-                org_prob_pair = heatmap_pair
-                org_prob_pair = org_prob_pair.detach().cpu().numpy()
-                org_first_prob = org_prob_pair[0, 0]
-                org_second_prob = org_prob_pair[1, 0]
-
-            # 得到对应的预测点
-            if self.detection_mode == "use_network":
-                first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
-                second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
-
-                if self.train_mode == "only_detector_index":
-                    first_point = self._generate_subpixel_point(org_first_prob, first_point)
-                    second_point = self._generate_subpixel_point(org_second_prob, second_point)
-
-            elif self.detection_mode == "use_sift":
-                first_point_cv, _ = self.sift.detectAndCompute(first_image, None)
-                second_point_cv, _ = self.sift.detectAndCompute(second_image, None)
-                first_point_num = len(first_point_cv)
-                second_point_num = len(second_point_cv)
-                first_point = self._cvpoint2numpy(first_point_cv)
-                second_point = self._cvpoint2numpy(second_point_cv)
-            else:
-                self.logger.error("unrecognized detection_mode: %s" % self.detection_mode)
-                assert False
-
-            # debug use
-            # first_image, second_image = torch.chunk(image_pair, 2, dim=0)
-            # first_image = ((first_image.detach().cpu().squeeze() + 1) * 255. / 2.).to(torch.uint8).numpy()
-            # second_image = ((second_image.detach().cpu().squeeze() + 1) * 255. / 2.).to(torch.uint8).numpy()
-            # cat_image = np.concatenate((first_image, second_image), axis=1)
-            # f_heatmap, s_heatmap = torch.chunk(heatmap_pair, 2, dim=0)
-            # f_heatmap = f_heatmap.squeeze().detach().cpu()
-            # s_heatmap = s_heatmap.squeeze().detach().cpu()
-            # cat_heatmap = torch.cat((f_heatmap, s_heatmap), dim=1)
-            # heatmap_image = self._debug_show(cat_heatmap, cat_image, show=False)
-
-            # f_image_point = draw_image_keypoints(first_image, first_point, show=False, color=(0, 0, 255))
-            # s_image_point = draw_image_keypoints(second_image, second_point, show=False, color=(0, 0, 255))
-            # image_point = np.concatenate((f_image_point, s_image_point), axis=1)
-            # cv.imwrite("/home/zhangyuyang/tmp_images/megpoint/image_%03d.jpg" % i, image_point)
-            # heatmap_image_point = np.concatenate((heatmap_image, image_point), axis=0)
-            # cv.imshow("all", heatmap_image_point)
-            # cv.imshow("image_point", image_point)
-            # cv.waitKey()
-
-            if first_point_num <= 4 or second_point_num <= 4:
-                print("skip this pair because there's little point!")
+            if results is None:
                 skip += 1
                 continue
 
-            # 得到点对应的描述子
-            select_first_desp = self._generate_predict_descriptor(first_point, first_desp)
-            select_second_desp = self._generate_predict_descriptor(second_point, second_desp)
+            first_point = results[0]
+            first_point_num = results[1]
+            second_point = results[2]
+            second_point_num = results[3]
+            select_first_desp = results[4]
+            select_second_desp = results[5]
 
             # 得到匹配点
             matched_point = self.general_matcher(first_point, select_first_desp,
@@ -1449,14 +1486,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 continue
 
             # 计算得到单应变换
-            if self.homo_pred_mode == "RANSAC":
-                pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
-                                                       matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
-            elif self.homo_pred_mode == "LMEDS":
-                pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
-                                                       matched_point[1][:, np.newaxis, ::-1], cv.LMEDS)
-            else:
-                assert False
+            pred_homography, _ = cv.findHomography(matched_point[0][:, np.newaxis, ::-1],
+                                                   matched_point[1][:, np.newaxis, ::-1], cv.RANSAC)
+
             if pred_homography is None:
                 print("skip this pair because no homo can be predicted!.")
                 skip += 1
@@ -1487,7 +1519,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 assert False
 
             # 统计检测的点的数目
-            self.point_statistics.update((first_point_num+second_point_num)/2.)
+            self.point_statistics.update((first_point_num + second_point_num) / 2.)
 
             if i % 10 == 0:
                 print("Having tested %d samples, which takes %.3fs" % (i, (time.time() - start_time)))
@@ -1499,12 +1531,20 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         # 计算各自的重复率以及总的重复率
         illum_repeat, view_repeat, total_repeat = self._compute_total_metric(self.illum_repeat,
                                                                              self.view_repeat)
+        self.illum_repeat_mov.push(illum_repeat)
+        self.view_repeat_mov.push(view_repeat)
+
         # 计算估计的单应变换准确度
         illum_homo_acc, view_homo_acc, total_homo_acc = self._compute_total_metric(self.illum_homo_acc,
                                                                                    self.view_homo_acc)
+        self.illum_homo_acc_mov.push(illum_homo_acc)
+        self.view_homo_acc_mov.push(view_homo_acc)
+
         # 计算匹配的准确度
         illum_match_acc, view_match_acc, total_match_acc = self._compute_total_metric(self.illum_mma,
                                                                                       self.view_mma)
+        self.illum_mma_mov.push(illum_match_acc)
+        self.view_mma_mov.push(view_match_acc)
 
         # 计算匹配外点的分布情况
         illum_dis, view_dis = self._compute_match_outlier_distribution(self.illum_mma,
@@ -1590,8 +1630,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             if self.train_mode == "only_descriptor":
                 results = self._descriptor_inference_func(image_pair)
             else:
-                # results = self._baseline_inference_func(image_pair)
-                results = self._inference_func(image_pair)
+                if self.network_arch == "resnet18_fast":
+                    results = self._inference_func_fast(image_pair)
+                else:
+                    results = self._inference_func(image_pair)
             # results = self._baseline_inference_func(image_pair)
 
             if results is None:
@@ -1808,6 +1850,41 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         select_second_desp = self._generate_combined_descriptor(second_point, c1_1, c2_1, c3_1, c4_1, height, width)
         # select_second_desp = self._generate_combined_descriptor(second_point, c1_1, c2_1, height, width)
         # select_second_desp = self._generate_combined_descriptor(second_point, c1_1, height, width)
+
+        return first_point, first_point_num, second_point, second_point_num, select_first_desp, select_second_desp
+
+    def _inference_func_fast(self, image_pair):
+        """
+        image_pair: [2,1,h,w]
+        """
+        self.model.eval()
+        self.extractor.eval()
+        _, _, height, width = image_pair.shape
+        heatmap_pair, c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+
+        c1_0, c1_1 = torch.chunk(c1_pair, 2, dim=0)
+        c2_0, c2_1 = torch.chunk(c2_pair, 2, dim=0)
+        c3_0, c3_1 = torch.chunk(c3_pair, 2, dim=0)
+        c4_0, c4_1 = torch.chunk(c4_pair, 2, dim=0)
+
+        heatmap_pair = torch.sigmoid(heatmap_pair)
+        prob_pair = spatial_nms(heatmap_pair, kernel_size=int(self.nms_threshold * 2 + 1))
+
+        prob_pair = prob_pair.detach().cpu().numpy()
+        first_prob = prob_pair[0, 0]
+        second_prob = prob_pair[1, 0]
+
+        # 得到对应的预测点
+        first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+        second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+
+        if first_point_num <= 4 or second_point_num <= 4:
+            print("skip this pair because there's little point!")
+            return None
+
+        # 得到点对应的描述子
+        select_first_desp = self._generate_combined_descriptor_fast(first_point, c1_0, c2_0, c3_0, c4_0, height, width)
+        select_second_desp = self._generate_combined_descriptor_fast(second_point, c1_1, c2_1, c3_1, c4_1, height, width)
 
         return first_point, first_point_num, second_point, second_point_num, select_first_desp, select_second_desp
 
@@ -2067,16 +2144,16 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         c4_feature = f.grid_sample(c4, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
 
         # 分开进行归一化
-        c1_feature = c1_feature / torch.norm(c1_feature, dim=1, keepdim=True)
-        c2_feature = c2_feature / torch.norm(c2_feature, dim=1, keepdim=True)
-        c3_feature = c3_feature / torch.norm(c3_feature, dim=1, keepdim=True)
-        c4_feature = c4_feature / torch.norm(c4_feature, dim=1, keepdim=True)
+        # c1_feature = c1_feature / torch.norm(c1_feature, dim=1, keepdim=True)
+        # c2_feature = c2_feature / torch.norm(c2_feature, dim=1, keepdim=True)
+        # c3_feature = c3_feature / torch.norm(c3_feature, dim=1, keepdim=True)
+        # c4_feature = c4_feature / torch.norm(c4_feature, dim=1, keepdim=True)
 
         desp = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=1)
         # desp = torch.cat((c1_feature, c2_feature), dim=1)
         # desp = c1_feature
-        # desp = desp / torch.norm(desp, dim=1, keepdim=True)
-        desp = desp / 2.
+        desp = desp / torch.norm(desp, dim=1, keepdim=True)
+        # desp = desp / 2.
 
         # c1_feature = f.grid_sample(c1, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
         # c2_feature = f.grid_sample(c2, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
@@ -2084,6 +2161,32 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         # c4_feature = f.grid_sample(c4, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
         # feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
         # desp = self.extractor(feature)[0]  # [n,128]
+
+        desp = desp.detach().cpu().numpy()
+
+        return desp
+
+    def _generate_combined_descriptor_fast(self, point, c1, c2, c3, c4, height, width):
+        """
+        用多层级的组合特征构造描述子
+        Args:
+            point: [n,2] 顺序是y,x
+            c1,c2,c3,c4: 分别对应resnet4个block输出的特征,batchsize都是1
+        Returns:
+            desp: [n,dim]
+        """
+        point = torch.from_numpy(point[:, ::-1].copy()).to(torch.float).to(self.device)
+        # 归一化采样坐标到[-1,1]
+        point = point * 2. / torch.tensor((width-1, height-1), dtype=torch.float, device=self.device) - 1
+        point = point.unsqueeze(dim=0).unsqueeze(dim=2)  # [1,n,1,2]
+
+        c1_feature = f.grid_sample(c1, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
+        c2_feature = f.grid_sample(c2, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
+        c3_feature = f.grid_sample(c3, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
+        c4_feature = f.grid_sample(c4, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
+
+        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
+        desp = self.extractor(feature)[0]  # [n,128]
 
         desp = desp.detach().cpu().numpy()
 
