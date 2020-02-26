@@ -868,10 +868,12 @@ def resnet18_all():
 
 class Extractor(nn.Module):
 
-    def __init__(self):
+    def __init__(self, combines=None):
         super(Extractor, self).__init__()
+        if combines is None:
+            combines = [1, 1, 1, 1]
         self.relu = nn.ReLU()
-        self.fc1 = nn.Linear((64+128+256+512), 256)
+        self.fc1 = nn.Linear((64*combines[0]+128*combines[1]+256*combines[2]+512*combines[3]), 256)
         self.fc2 = nn.Linear(256, 128)
 
         for m in self.modules():

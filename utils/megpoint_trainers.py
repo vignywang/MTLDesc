@@ -379,6 +379,28 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         elif self.network_arch == "resnet18_fast":
             self.logger.info("Initialize network arch : resnet18_fast")
             model = resnet18_fast()
+        elif self.network_arch == "resnet18_fast_c2c3c4":
+            self.logger.info("Initialize network arch : resnet18_fast_c2c3c4")
+            model = resnet18_fast()
+        elif self.network_arch == "resnet18_fast_c3c4":
+            self.logger.info("Initialize network arch : resnet18_fast_c3c4")
+            model = resnet18_fast()
+        elif self.network_arch == "resnet18_fast_c4":
+            self.logger.info("Initialize network arch : resnet18_fast_c4")
+            model = resnet18_fast()
+        elif self.network_arch == "resnet18_fast_c1c2c4":
+            self.logger.info("Initialize network arch : resnet18_fast_c1c2c4")
+            model = resnet18_fast()
+        elif self.network_arch == "resnet18_fast_c2c4":
+            self.logger.info("Initialize network arch : resnet18_fast_c2c4")
+            model = resnet18_fast()
+        elif self.network_arch == "resnet18_fast_c1c4":
+            self.logger.info("Initialize network arch : resnet18_fast_c1c4")
+            model = resnet18_fast()
+        elif self.network_arch == "resnet18_fast_c1c3c4":
+            self.logger.info("Initialize network arch : resnet18_fast_c1c3c4")
+            model = resnet18_fast()
+
         elif self.network_arch == "resnet18":
             self.logger.info("Initialize network arch : restnet18")
             model = resnet18()
@@ -461,9 +483,43 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             model = torch.nn.DataParallel(model)
         self.model = model.to(self.device)
 
-        if self.network_arch == "resnet18_fast":
-            self.logger.info("Initialize extractor")
-            extractor = Extractor()
+        if self.network_arch[:13] == "resnet18_fast":
+            if self.network_arch == "resnet18_fast":
+                self.logger.info("Initialize extractor")
+                extractor = Extractor()
+                self.cat = self._cat_c1c2c3c4
+            elif self.network_arch == "resnet18_fast_c2c3c4":
+                self.logger.info("Initialize extractor c2c3c4")
+                extractor = Extractor(combines=[0, 1, 1, 1])
+                self.cat = self._cat_c2c3c4
+            elif self.network_arch == "resnet18_fast_c3c4":
+                self.logger.info("Initialize extractor c3c4")
+                extractor = Extractor(combines=[0, 0, 1, 1])
+                self.cat = self._cat_c3c4
+            elif self.network_arch == "resnet18_fast_c4":
+                self.logger.info("Initialize extractor c4")
+                extractor = Extractor(combines=[0, 0, 0, 1])
+                self.cat = self._cat_c4
+            elif self.network_arch == "resnet18_fast_c1c4":
+                self.logger.info("Initialize extractor c1c4")
+                extractor = Extractor(combines=[1, 0, 0, 1])
+                self.cat = self._cat_c1c4
+            elif self.network_arch == "resnet18_fast_c1c2c4":
+                self.logger.info("Initialize extractor c1c2c4")
+                extractor = Extractor(combines=[1, 1, 0, 1])
+                self.cat = self._cat_c1c2c4
+            elif self.network_arch == "resnet18_fast_c2c4":
+                self.logger.info("Initialize extractor c2c4")
+                extractor = Extractor(combines=[0, 1, 0, 1])
+                self.cat = self._cat_c2c4
+            elif self.network_arch == "resnet18_fast_c1c3c4":
+                self.logger.info("Initialize extractor c1c3c4")
+                extractor = Extractor(combines=[1, 0, 1, 1])
+                self.cat = self._cat_c1c3c4
+            else:
+                self.logger.error("Unrecognized network_arch: %s" % self.network_arch)
+                assert False
+
             if self.multi_gpus:
                 extractor = torch.nn.DataParallel(extractor)
             self.extractor = extractor.to(self.device)
@@ -577,7 +633,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                                  "resnet18_s0s2s3s4_auxiliary_256",
                                  "resnet18_c1c2c3c4", "resnet18_c2c3c4", "resnet18_c3c4",
                                  "resnet18_c4", "resnet18_c1c2c3c4_avgpool", "resnet18_c1c2c3c4_maxpool",
-                                 "resnet18_all", "resnet18_fast"]:
+                                 "resnet18_all", "resnet18_fast",
+                                 "resnet18_fast_c2c4", "resnet18_fast_c3c4", "resnet18_fast_c1c4",
+                                 "resnet18_fast_c1c2c4", "resnet18_fast_c1c3c4", "resnet18_fast_c2c3c4",
+                                 "resnet18_fast_c4"]:
             if self.train_mode == "only_detector":
                 self.logger.info("Initialize training func mode of [only_detector] with baseline network.")
                 self._train_func = self._train_only_detector
@@ -600,7 +659,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             else:
                 # self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
                 # self._train_func = self._train_with_gt
-                if self.network_arch == "resnet18_fast":
+                if self.network_arch in ["resnet18_fast", "resnet18_fast_c1c2c4", "resnet18_fast_c1c3c4",
+                                         "resnet18_fast_c2c3c4", "resnet18_fast_c1c4", "resnet18_fast_c2c4",
+                                         "resnet18_fast_c3c4", "resnet18_fast_c4"]:
                     self.logger.info("Initialize training func mode of _train_with_gt_fast")
                     self._train_func = self._train_with_gt_fast
                 else:
@@ -616,7 +677,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         if self.params.optimizer_method == "adam":
             self.logger.info("Initialize Adam optimizer with weight_decay: %.5f." % self.params.weight_decay)
             self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-            if self.network_arch == "resnet18_fast":
+            if self.network_arch[:13] == "resnet18_fast":
                 self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
             else:
                 self.extractor_optimizer = None
@@ -976,7 +1037,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             c3_feature_pair = f.grid_sample(c3_pair, desp_point_pair, mode="bilinear", padding_mode="border")
             c4_feature_pair = f.grid_sample(c4_pair, desp_point_pair, mode="bilinear", padding_mode="border")
 
-            feature_pair = torch.cat((c1_feature_pair, c2_feature_pair, c3_feature_pair, c4_feature_pair), dim=1)
+            feature_pair = self.cat(c1_feature_pair, c2_feature_pair, c3_feature_pair, c4_feature_pair, dim=1)
             feature_pair = feature_pair[:, :, :, 0].transpose(1, 2)
             desp_pair = self.extractor(feature_pair)
             desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
@@ -1002,8 +1063,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             self.extractor_optimizer.step()
 
             # debug use
-            if i == 200:
-                break
+            # if i == 200:
+            #     break
 
             if i % self.log_freq == 0:
 
@@ -2188,7 +2249,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         c3_feature = f.grid_sample(c3, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
         c4_feature = f.grid_sample(c4, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
 
-        feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
+        feature = self.cat(c1_feature, c2_feature, c3_feature, c4_feature, dim=2)
         desp = self.extractor(feature)[0]  # [n,128]
 
         desp = desp.detach().cpu().numpy()
@@ -2740,6 +2801,38 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 count += 1
 
         return cv_first_point, cv_second_point, cv_matched_list
+
+    @staticmethod
+    def _cat_c1c2c3c4(c1, c2, c3, c4, dim):
+        return torch.cat((c1, c2, c3, c4), dim=dim)
+
+    @staticmethod
+    def _cat_c2c3c4(c1, c2, c3, c4, dim):
+        return torch.cat((c2, c3, c4), dim=dim)
+
+    @staticmethod
+    def _cat_c1c2c4(c1, c2, c3, c4, dim):
+        return torch.cat((c1, c2, c4), dim=dim)
+
+    @staticmethod
+    def _cat_c1c3c4(c1, c2, c3, c4, dim):
+        return torch.cat((c1, c3, c4), dim=dim)
+
+    @staticmethod
+    def _cat_c1c4(c1, c2, c3, c4, dim):
+        return torch.cat((c1, c4), dim=dim)
+
+    @staticmethod
+    def _cat_c2c4(c1, c2, c3, c4, dim):
+        return torch.cat((c2, c4), dim=dim)
+
+    @staticmethod
+    def _cat_c3c4(c1, c2, c3, c4, dim):
+        return torch.cat((c3, c4), dim=dim)
+
+    @staticmethod
+    def _cat_c4(c1, c2, c3, c4, dim):
+        return c4
 
     @staticmethod
     def _convert_pt2cv(point_list):
