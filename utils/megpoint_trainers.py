@@ -1524,7 +1524,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             if self.train_mode == "only_descriptor":
                 results = self._descriptor_inference_func(image_pair)
             else:
-                if self.network_arch == "resnet18_fast":
+                if self.network_arch[:13] == "resnet18_fast":
                     results = self._inference_func_fast(image_pair)
                 else:
                     results = self._inference_func(image_pair)
@@ -1694,7 +1694,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             if self.train_mode == "only_descriptor":
                 results = self._descriptor_inference_func(image_pair)
             else:
-                if self.network_arch == "resnet18_fast":
+                if self.network_arch[:13] == "resnet18_fast":
                     results = self._inference_func_fast(image_pair)
                 else:
                     results = self._inference_func(image_pair)
