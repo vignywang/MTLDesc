@@ -19,6 +19,9 @@ from nets.megpoint_net import resnet34
 from nets.megpoint_net import resnet18_all
 from nets.megpoint_net import resnet18_fast
 from nets.megpoint_net import Extractor
+from nets.megpoint_net import resnet18_fast_s4
+from nets.megpoint_net import resnet18_fast_s3s4
+from nets.megpoint_net import resnet18_fast_s2s3s4
 
 from nets.megpoint_net import resnet18_s0s2s3s4
 from nets.megpoint_net import resnet18_s0s2s3s4_maxpool
@@ -400,6 +403,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         elif self.network_arch == "resnet18_fast_c1c3c4":
             self.logger.info("Initialize network arch : resnet18_fast_c1c3c4")
             model = resnet18_fast()
+        elif self.network_arch == "resnet18_fast_s4":
+            self.logger.info("Initialize network arch : resnet18_fast_s4")
+            model = resnet18_fast_s4()
+        elif self.network_arch == "resnet18_fast_s3s4":
+            self.logger.info("Initialize network arch : resnet18_fast_s3s4")
+            model = resnet18_fast_s3s4()
+        elif self.network_arch == "resnet18_fast_s2s3s4":
+            self.logger.info("Initialize network arch : resnet18_fast_s2s3s4")
+            model = resnet18_fast_s2s3s4()
 
         elif self.network_arch == "resnet18":
             self.logger.info("Initialize network arch : restnet18")
@@ -484,7 +496,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.model = model.to(self.device)
 
         if self.network_arch[:13] == "resnet18_fast":
-            if self.network_arch == "resnet18_fast":
+            if self.network_arch in ["resnet18_fast", "resnet18_fast_s2s3s4", "resnet18_fast_s3s4", "resnet18_fast_s4"]:
                 self.logger.info("Initialize extractor")
                 extractor = Extractor()
                 self.cat = self._cat_c1c2c3c4
@@ -636,7 +648,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                                  "resnet18_all", "resnet18_fast",
                                  "resnet18_fast_c2c4", "resnet18_fast_c3c4", "resnet18_fast_c1c4",
                                  "resnet18_fast_c1c2c4", "resnet18_fast_c1c3c4", "resnet18_fast_c2c3c4",
-                                 "resnet18_fast_c4"]:
+                                 "resnet18_fast_c4", "resnet18_fast_s2s3s4", "resnet18_fast_s3s4",
+                                 "resnet18_fast_s4"]:
             if self.train_mode == "only_detector":
                 self.logger.info("Initialize training func mode of [only_detector] with baseline network.")
                 self._train_func = self._train_only_detector
@@ -661,7 +674,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 # self._train_func = self._train_with_gt
                 if self.network_arch in ["resnet18_fast", "resnet18_fast_c1c2c4", "resnet18_fast_c1c3c4",
                                          "resnet18_fast_c2c3c4", "resnet18_fast_c1c4", "resnet18_fast_c2c4",
-                                         "resnet18_fast_c3c4", "resnet18_fast_c4"]:
+                                         "resnet18_fast_c3c4", "resnet18_fast_c4",
+                                         "resnet18_fast_s2s3s4", "resnet18_fast_s3s4", "resnet18_fast_s4"]:
                     self.logger.info("Initialize training func mode of _train_with_gt_fast")
                     self._train_func = self._train_with_gt_fast
                 else:
@@ -1490,7 +1504,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def test(self, ckpt_file, extrator_ckpt_file=None):
         self.model = self._load_model_params(ckpt_file, self.model)
-        if self.network_arch == "resnet18_fast":
+        if self.network_arch[:13] == "resnet18_fast":
             self.extractor = self._load_model_params(extrator_ckpt_file, self.extractor)
 
         self.model.eval()
