@@ -19,7 +19,7 @@ class MagicPointParameters(BasicParameters):
 
     def __init__(self):
         super(MagicPointParameters, self).__init__()
-        self.ckpt_root = '/data/MegPoint/magicpoint_ckpt'
+        self.ckpt_root = './magicpoint_ckpt'
         self.log_root = './magicpoint_log'
         self.nms_threshold = 4
         self.epoch_num = 60
@@ -27,6 +27,7 @@ class MagicPointParameters(BasicParameters):
     @staticmethod
     def my_parser():
         parser = argparse.ArgumentParser(description="Pytorch Training")
+        parser.add_argument("--synthetic_dataset_dir", type=str, required=True)
         parser.add_argument("--gpus", type=str, default='0')
         parser.add_argument("--lr", type=float, default=0.001)
         parser.add_argument("--batch_size", type=int, default=64)
@@ -55,15 +56,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_adaption_0.0010_64/model_99.pt'
-    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/model_59.pt'
-    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adaption_0/model_99.pt'
-    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/superpoint_magicleap.pth'
-
-
-
-
-
-
 
