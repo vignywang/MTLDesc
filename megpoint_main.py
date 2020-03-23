@@ -23,41 +23,17 @@ class MegPointHeatmapParameters(BasicParameters):
 
     def __init__(self):
         super(MegPointHeatmapParameters, self).__init__()
-        self.ckpt_root = '/data/MegPoint/megpoint_ckpt'
+        self.ckpt_root = './megpoint_ckpt'
         self.log_root = './megpoint_log'
         self.ckpt_folder = ""
 
         self.detection_threshold = 0.9
         self.dataset_dir = None
 
-        self.network_arch = "baseline"
-        self.train_mode = "with_gt"
-        self.detection_mode = "use_network"
-        self.align_weight = 1.0
-        self.align_type = "general"
         self.adjust_lr = "False"
-        self.point_type = "general"
-        self.fn_scale = 1.0
-        self.point_gamma = 2.0
-        self.homo_weight = 0.1
-        self.half_region_size = 7
-        self.repro_weight = 0.1
         self.tmp_ckpt_file = ""
         self.extractor_ckpt_file = ""
-        self.dataset_type = "coco"
-        self.sample_num = 100
-
-        self.desp_loss_type = "general"
-        self.optimizer_method = "adam"
         self.weight_decay = 1e-5
-
-        # debug related
-        self.debug_mode = "MegPoint"
-        self.debug_ckpt = None
-
-        # MegaDepth dataset related
-        self.mega_dataset_dir = "/data/MegaDepthOrder/preprocessed_train_dataset"
-        self.mega_val_dataset_dir = "/data/MegaDepthOrder/preprocessed_val_dataset"
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -101,8 +77,8 @@ class MegPointHeatmapParameters(BasicParameters):
     def my_parser():
         parser = argparse.ArgumentParser(description="Pytorch Training")
         parser.add_argument("--gpus", type=str, default='0')
-        parser.add_argument("--dataset_dir", type=str, default="/data/MegPoint/dataset/coco/train2014/pseudo_image_points_0")
-        parser.add_argument("--batch_size", type=int, default=16)
+        parser.add_argument("--dataset_dir", type=str, required=True)
+        parser.add_argument("--batch_size", type=int, default=8)
         parser.add_argument("--num_workers", type=int, default=8)
         parser.add_argument("--epoch_num", type=int, default=15)
         parser.add_argument("--log_freq", type=int, default=50)
@@ -112,40 +88,11 @@ class MegPointHeatmapParameters(BasicParameters):
 
         parser.add_argument("--height", type=int, default=240)
         parser.add_argument("--width", type=int, default=320)
-        parser.add_argument("--network_arch", type=str, default="baseline")  # 目前为两种 baseline or resnet50
-        parser.add_argument("--train_mode", type=str, default="with_gt")  # with_gt or without_gt
-        parser.add_argument("--detection_mode", type=str, default="use_network")  # use_network or use_sift
         parser.add_argument("--run_mode", type=str, default="train")
         parser.add_argument("--ckpt_file", type=str, default="")
         parser.add_argument("--ckpt_folder", type=str, default="")
-        parser.add_argument("--homo_pred_mode", type=str, default="RANSAC")
-        parser.add_argument("--match_mode", type=str, default="NN")
-        parser.add_argument("--align_weight", type=float, default=1.0)
-        parser.add_argument("--align_type", type=str, default="general")  # general or weighted
-        parser.add_argument("--adjust_lr", type=str, default="False")  # True or False
-        parser.add_argument("--point_type", type=str, default="general")  # general or spatial
-        parser.add_argument("--fn_scale", type=float, default=1.0)
-        parser.add_argument("--point_gamma", type=float, default=2.0)
-        parser.add_argument("--homo_weight", type=float, default=0.1)
-        parser.add_argument("--repro_weight", type=float, default=0.1)
-        parser.add_argument("--half_region_size", type=int, default=7)
         parser.add_argument("--tmp_ckpt_file", type=str, default="")
         parser.add_argument("--extractor_ckpt_file", type=str, default="")
-        parser.add_argument("--dataset_type", type=str, default="coco")
-        parser.add_argument("--sample_num", type=int, default=100)
-
-        parser.add_argument("--desp_loss_type", type=str, default="general")
-        parser.add_argument("--do_augmentation", type=str, default="False")
-        parser.add_argument("--optimizer_method", type=str, default="adam")
-        parser.add_argument("--weight_decay", type=float, default=1e-5)
-
-        # megaDepth related
-        parser.add_argument("--mega_dataset_dir", type=str, default="/data/MegaDepthOrder/preprocessed_train_dataset")
-        parser.add_argument("--mega_val_dataset_dir", type=str, default="/data/MegaDepthOrder/preprocessed_val_dataset")
-
-        # debug related
-        parser.add_argument("--debug_mode", type=str, default="MegPoint")
-        parser.add_argument("--debug_ckpt", type=str, default=None)
 
         return parser.parse_args()
 
@@ -155,18 +102,6 @@ class MegPointHeatmapParameters(BasicParameters):
         self.logger.info("heatmap important params:")
 
         self.logger.info("dataset_dir: %s" % self.dataset_dir)
-        self.logger.info("train mode: %s" % self.train_mode)
-        self.logger.info("network_arch: %s" % self.network_arch)
-        self.logger.info("align_weight: %.4f" % self.align_weight)
-        self.logger.info("align_type: %s" % self.align_type)
-        self.logger.info("point_type: %s" % self.point_type)
-        self.logger.info("fn_scale: %.1f" % self.fn_scale)
-        self.logger.info("point_gamma: %.1f" % self.point_gamma)
-        self.logger.info("homo_weight: %.3f" % self.homo_weight)
-        self.logger.info("repro_weight: %.3f" % self.repro_weight)
-        self.logger.info("half_region_size: %d" % self.half_region_size)
-
-        self.logger.info("desp_loss_type: %s" % self.desp_loss_type)
 
         if self.adjust_lr == "True":
             self.adjust_lr = True
@@ -180,9 +115,6 @@ class MegPointHeatmapParameters(BasicParameters):
 
         self.logger.info("adjust_lr: %s" % self.adjust_lr)
         self.logger.info("do_augmentation: %s" % self.do_augmentation)
-
-        self.logger.info("mega_dataset_dir: %s" % self.mega_dataset_dir)
-        self.logger.info("mega_val_dataset_dir: %s" % self.mega_val_dataset_dir)
 
         self.logger.info("------------------------------------------")
 
@@ -203,13 +135,7 @@ def main():
         models = generate_testing_file(params.ckpt_folder, params.extractor_ckpt_file)
         for m in models:
             megpoint_trainer.test(m)
-    elif params.run_mode == "test_debug":
-        megpoint_trainer.test_debug(params.ckpt_file, params.debug_mode, params.debug_ckpt)
 
-    # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_01_0.0010_24/model_59.pt
-    # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_heatmap_00_0.0010_24/model_99.pt
-    # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/coco_weight_bce_residual_0.0010_16/model_59.pt
-    # /home/zhangyuyang/project/development/MegPoint/megpoint_ckpt/good_results/coco_weight_bce_precise_0.0010_16/model_19.pt
 
 if __name__ == '__main__':
     main()
