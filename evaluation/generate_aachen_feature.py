@@ -10,15 +10,6 @@ import numpy as np
 import cv2 as cv
 import torch.nn.functional as f
 
-from nets.megpoint_net import resnet18
-from nets.megpoint_net import resnet34
-
-from nets.megpoint_net import resnet18_s0s2s3s4
-from nets.megpoint_net import resnet18_s0s2s3s4_256
-from nets.megpoint_net import resnet18_s0s2s3s4_512
-from nets.megpoint_net import resnet18_s0s2s3s4_auxiliary
-
-from nets.megpoint_net import MegPointShuffleHeatmapOld
 from nets.superpoint_net import SuperPointNetFloat
 from evaluation.aachen_dataset import AachenDataset
 from utils.utils import spatial_nms
@@ -447,7 +438,7 @@ if __name__ == "__main__":
             # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_extract_00.pt"
             # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_half_08.pt"
             # desp_ckpt_file = "/home/zhangyuyang/model_megadepth_11.pt"
-            # desp_ckpt_file = "/home/zhangyuyang/remote_model/megadepth_only_descriptor_resnet_extractor_0.0010_8/model_59.pt"
+            # desp_ckpt_file = "/home/zhangyuyang/remote_model/megadepth_only_descriptor_resnet_extractor_0.0010_8/magicpoint_synthesized.pt"
             self.desp_ckpt_file = "/home/zhangyuyang/remote_model/megadepth_rank_0.0010_8/model_09.pt"
 
             self.desp_ckpt_root = "/home/zhangyuyang/remote_model"
