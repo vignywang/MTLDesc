@@ -29,7 +29,7 @@ class BasicParameters(object):
 
         # training params
         self.lr = 0.001
-        self.batch_size = 64
+        self.batch_size = 32
         self.epoch_num = 100
         self.log_freq = 100
         self.num_workers = 8
