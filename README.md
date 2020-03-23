@@ -7,7 +7,9 @@ numpy == 3.6
 
 # 训练MagicPoint
 ## 构造合成数据集
-`python synthetic_dataset_generation.py --data_root=/path/to/the/synthesized_dataset`
+```
+python synthetic_dataset_generation.py --data_root=/path/to/the/synthesized_dataset
+```
 
 ## 训练MagicPoint
 ```
