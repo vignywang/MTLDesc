@@ -77,7 +77,8 @@ class MegPointHeatmapParameters(BasicParameters):
     def my_parser():
         parser = argparse.ArgumentParser(description="Pytorch Training")
         parser.add_argument("--gpus", type=str, default='0')
-        parser.add_argument("--dataset_dir", type=str, required=True)
+        parser.add_argument("--dataset_dir", type=str, default='')
+        parser.add_argument("--hpatch_dataset_dir", type=str, required=True)
         parser.add_argument("--batch_size", type=int, default=8)
         parser.add_argument("--num_workers", type=int, default=8)
         parser.add_argument("--epoch_num", type=int, default=15)

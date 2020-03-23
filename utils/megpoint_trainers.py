@@ -45,6 +45,8 @@ class MegPointTrainerTester(object):
         self.detection_threshold = params.detection_threshold
         self.correct_epsilon = params.correct_epsilon
 
+        self.run_mode = params.run_mode
+
         self.ckpt_file = params.ckpt_file
         self.adjust_lr = params.adjust_lr
 
@@ -143,16 +145,20 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self.logger.info("Initialize COCOMegPointHeatmapAllTrainDataset")
         self.train_dataset = COCOMegPointHeatmapAllTrainDataset(self.params)
 
-        self.train_dataloader = DataLoader(
-            dataset=self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            drop_last=True
-        )
-        self.epoch_length = len(self.train_dataset) // self.batch_size
+        if self.run_mode == "test":
+            pass
+        else:
+            self.train_dataloader = DataLoader(
+                dataset=self.train_dataset,
+                batch_size=self.batch_size,
+                shuffle=True,
+                num_workers=self.num_workers,
+                drop_last=True
+            )
+            self.epoch_length = len(self.train_dataset) // self.batch_size
 
         # 初始化测试集
+        self.logger.info("Initialize HPatchDataset")
         self.test_dataset = HPatchDataset(self.params)
         self.test_length = len(self.test_dataset)
 
