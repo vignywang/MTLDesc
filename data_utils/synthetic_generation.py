@@ -66,7 +66,7 @@ drawing_primitives = [
 
 
 def dump_primitive_data(primitive, config, project_data_root):  # 其中primitive指定生成图形化的种类（圆，线，多边形，星。。）
-    temp_dir = Path(project_data_root + "/dataset/synthetic", primitive)
+    temp_dir = Path(project_data_root + "/synthetic", primitive)
     if os.path.exists(temp_dir):
         print("{} is already prepared".format(primitive))
         return
