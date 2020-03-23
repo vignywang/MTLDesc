@@ -2,6 +2,8 @@
 # Created by ZhangYuyang on 2019/8/30
 # 摘自superpoint，待整理
 #
+import argparse
+
 import numpy as np
 import cv2
 import os
@@ -93,19 +95,4 @@ def dump_primitive_data(primitive, config, project_data_root):  # 其中primitiv
 # 写入图像并以npy形式保存对应的兴趣点
             cv2.imwrite(str(Path(im_dir, '{}.png'.format(i))), image)
             np.save(Path(pts_dir, '{}.npy'.format(i)), points)
-"""
-            # 压缩打包，暂时先不进行
-        tar = tarfile.open(tar_path, mode='w:gz')
-        tar.add(temp_dir, arcname=primitive)
-        tar.close()
-        shutil.rmtree(temp_dir)
-        tf.logging.info('Tarfile dumped to {}.'.format(tar_path))
-"""
-
-if __name__ == "__main__":
-    for i in drawing_primitives:
-        project_data_root = '/data/MegPoint'
-        dump_primitive_data(i, default_config, project_data_root)
-
-
 
