@@ -1,7 +1,8 @@
 #
 # Created by ZhangYuyang on 2019/8/19
 #
-import torch
+import argparse
+
 import numpy as np
 from utils.adaption_maker import AdaptionMaker
 
@@ -9,31 +10,48 @@ from utils.adaption_maker import AdaptionMaker
 np.random.seed(3242)
 
 
-class AdaptionParameters:
-    # # first round
-    # ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adam_0.0010_64/' \
-    #             'model_59.pt'
-    # # scond round
-    ckpt_file = '/home/zhangyuyang/project/development/MegPoint/magicpoint_ckpt/good_results/adaption_0/model_99.pt'
+def my_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--rounds", type=int, default=0)
+    parser.add_argument("--first_ckpt_file", type=str, default="")
+    parser.add_argument("--second_ckpt_file", type=str, default="")
+    parser.add_argument("--coco_dataset_dir", type=str, required=True)
+    parser.add_argument("--height", type=int, default=240)
+    parser.add_argument("--width", type=int, default=320)
+    parser.add_argument("--adaption_num", type=int, default=100)
+    parser.add_argument("--top_k", type=int, default=300)
+    parser.add_argument("--nms_threshold", type=int, default=8)
+    parser.add_argument("--first_threshold", type=float, default=0.005)
+    parser.add_argument("--second_threshold", type=float, default=0.04)
 
-    out_root = '/data/MegPoint/dataset/coco'
-    coco_dataset_root = '/data/MegPoint/dataset/coco'
-
-    height = 240
-    width = 320
-    adaption_num = 100
-    top_k = 300
-    nms_threshold = 8  # 7
-
-    # first round
-    # detection_threshold = 0.005
-    # second round
-    detection_threshold = 0.04
+    return parser.parse_args()
 
 
-params = AdaptionParameters()
-adaption_maker = AdaptionMaker(params=params)
-adaption_maker.run()
+if __name__ == "__main__":
+    params = my_parser()
+    if params.rounds == 0:
+        if params.first_ckpt_file == "":
+            print("Must have first_ckpt_file!")
+            assert False
+        params.ckpt_file = params.first_ckpt_file
+        params.detection_threshold = params.first_threshold
+    elif params.rounds == 1:
+        if params.second_ckpt_file == "":
+            print("Must have second_ckpt_file!")
+            assert False
+        params.ckpt_file = params.second_ckpt_file
+        params.detection_threshold = params.second_threshold
+    else:
+        print("Only support rounds of 0 or 1, current is %d" % params.rounds)
+        assert False
+    params.out_root = params.coco_dataset_dir
+
+    print("rounds: %d" % params.rounds)
+    print("thresholds: %.4f" % params.detection_threshold)
+
+    adaption_maker = AdaptionMaker(params=params)
+    adaption_maker.run()
+
 
 
 

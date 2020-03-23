@@ -57,18 +57,11 @@ class AdaptionMaker(object):
         self.train_out_dir = os.path.join(self.out_root, 'train2014', 'pseudo_image_points')
         self.val_out_dir = os.path.join(self.out_root, 'val2014', 'pseudo_image_points')
 
-        count = 0
-        train_out_dir = self.train_out_dir
-        val_out_dir = self.val_out_dir
-        while os.path.exists(train_out_dir):
-            train_out_dir = self.train_out_dir + '_%d' % count
-            val_out_dir = self.val_out_dir + '_%d' % count
-            count += 1
+        train_out_dir = self.train_out_dir + '_%d' % self.params.rounds
+        val_out_dir = self.val_out_dir + '_%d' % self.params.rounds
 
         self.train_out_dir = train_out_dir
         self.val_out_dir = val_out_dir
-        # self.train_out_dir += '_debug'
-        # self.val_out_dir += '_debug'
 
         if not os.path.exists(self.train_out_dir):
             os.mkdir(self.train_out_dir)
@@ -104,7 +97,7 @@ class AdaptionMaker(object):
             images.append(image)
             inv_homographies.append(np.eye(3))
             for j in range(self.adaption_num):
-                homography = self.homography.sample()
+                homography = self.homography.sample(height=self.height, width=self.width)
                 inv_homography = np.linalg.inv(homography)
                 transformed_image = cv.warpPerspective(image, homography, (self.width, self.height),
                                                        flags=cv.INTER_LINEAR)
