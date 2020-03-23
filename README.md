@@ -18,7 +18,7 @@ python magicpoint_synthetic_main.py --synthetic_dataset_dir=/path/to/the/synthes
 ```  
 
 # 准备COCO原始数据
-从http://cocodataset.org/#download下载COCO原始数据，并整理成如下结构：  
+从 http://cocodataset.org/#download 下载COCO原始数据，并整理成如下结构：  
 ```
 coco
  -train2014
