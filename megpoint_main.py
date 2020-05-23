@@ -35,6 +35,8 @@ class MegPointHeatmapParameters(BasicParameters):
         self.extractor_ckpt_file = ""
         self.weight_decay = 1e-5
 
+        self.model_type = "MegPoint"
+
         # homography & photometric relating params using in training
         self.homography_params = {
             'patch_ratio': 0.8,  # 1.0
@@ -95,6 +97,8 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--tmp_ckpt_file", type=str, default="")
         parser.add_argument("--extractor_ckpt_file", type=str, default="")
 
+        parser.add_argument("--model_type", type=str, default="MegPoint")
+
         return parser.parse_args()
 
     def initialize(self):
@@ -116,6 +120,7 @@ class MegPointHeatmapParameters(BasicParameters):
 
         self.logger.info("adjust_lr: %s" % self.adjust_lr)
         self.logger.info("do_augmentation: %s" % self.do_augmentation)
+        self.logger.info("model_type: %s" % self.model_type)
 
         self.logger.info("------------------------------------------")
 

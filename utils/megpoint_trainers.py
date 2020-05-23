@@ -15,6 +15,9 @@ from torch.utils.data import DataLoader
 from nets.megpoint_net import resnet18_fast
 from nets.megpoint_net import Extractor
 
+from nets.superpoint_net import SuperPointNetBackbone
+from nets.superpoint_net import SuperPointExtractor
+
 from data_utils.coco_dataset import COCOMegPointHeatmapAllTrainDataset
 from data_utils.hpatch_dataset import HPatchDataset
 
@@ -169,15 +172,30 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_model(self):
         # 初始化模型
-        self.logger.info("Initialize network arch : resnet18_fast")
-        model = resnet18_fast()
+        if self.params.model_type == "MegPoint":
+            self.logger.info("Initialize network arch for MegPoint : resnet18_fast")
+            model = resnet18_fast()
+        elif self.params.model_type == "SuperPointBackbone":
+            self.logger.info("Initialize network arch for SuperPointBackbone : superpoint_backbone")
+            model = SuperPointNetBackbone()
+        else:
+            self.logger.error("Unrecognized model_type: %s" % self.params.model_type)
+            assert False
 
         if self.multi_gpus:
             model = torch.nn.DataParallel(model)
         self.model = model.to(self.device)
 
-        self.logger.info("Initialize extractor")
-        extractor = Extractor()
+        if self.params.model_type == "MegPoint":
+            self.logger.info("Initialize MegPoint extractor")
+            extractor = Extractor()
+        elif self.params.model_type == "SuperPointBackbone":
+            self.logger.info("Initialize SuperPointBackbone extractor")
+            extractor = SuperPointExtractor()
+        else:
+            self.logger.error("Unrecognized model_type: %s" % self.params.model_type)
+            assert False
+
         self.cat = self._cat_c1c2c3c4
 
         if self.multi_gpus:

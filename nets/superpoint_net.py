@@ -4,6 +4,7 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Function
+import torch.nn.functional as f
 
 # from torchvision.models import ResNet
 
@@ -218,6 +219,77 @@ class SuperPointNetTanh(BasicSuperPointNet):
         desc = self.tanh(scale*feature)
 
         return logit, desc, prob, feature
+
+
+class SuperPointNetBackbone(nn.Module):
+
+    def __init__(self):
+        super(SuperPointNetBackbone, self).__init__()
+        self.relu = torch.nn.ReLU(inplace=True)
+        self.pool = torch.nn.MaxPool2d(kernel_size=2, stride=2)
+        # Shared Encoder.
+        self.conv1a = nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1)
+        self.conv1b = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+        self.conv2a = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+        self.conv2b = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+        self.conv3a = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.conv3b = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+        self.conv4a = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+        self.conv4b = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+
+        self.softmax = nn.Softmax(dim=1)
+
+        self.heatmap = nn.Conv2d((64 + 16 + 8 + 2), 1, kernel_size=3, stride=1, padding=1)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+    def forward(self, x):
+        x = self.relu(self.conv1a(x))
+        c1 = self.relu(self.conv1b(x))  # 64
+
+        c2 = self.pool(c1)
+        c2 = self.relu(self.conv2a(c2))
+        c2 = self.relu(self.conv2b(c2))  # 64
+
+        c3 = self.pool(c2)
+        c3 = self.relu(self.conv3a(c3))
+        c3 = self.relu(self.conv3b(c3))  # 128
+
+        c4 = self.pool(c3)
+        c4 = self.relu(self.conv4a(c4))
+        c4 = self.relu(self.conv4b(c4))  # 128
+
+        heatmap1 = c1  # [h,w,64]
+        heatmap2 = f.pixel_shuffle(c2, 2)  # [h,w,16]
+        heatmap3 = f.pixel_shuffle(c3, 4)  # [h,w,8]
+        heatmap4 = f.pixel_shuffle(c4, 8)  # [h,w,2]
+        heatmap = self.heatmap(torch.cat((heatmap1, heatmap2, heatmap3, heatmap4), dim=1))
+
+        return heatmap, c1, c2, c3, c4
+
+
+class SuperPointExtractor(nn.Module):
+
+    def __init__(self, combines=None):
+        super(SuperPointExtractor, self).__init__()
+        if combines is None:
+            combines = [1, 1, 1, 1]
+        self.relu = nn.ReLU()
+        self.fc1 = nn.Linear((64*combines[0]+64*combines[1]+128*combines[2]+128*combines[3]), 256)
+        self.fc2 = nn.Linear(256, 128)
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+
+    def __call__(self, feature):
+        feature = self.relu(self.fc1(self.relu(feature)))
+        feature = self.fc2(feature)
+        desp = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return desp
 
 
 if __name__ == "__main__":
