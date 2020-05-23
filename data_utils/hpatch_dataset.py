@@ -2,6 +2,7 @@
 # Created by ZhangYuyang on 2019/8/21
 #
 import os
+import argparse
 import glob
 import cv2 as cv
 import numpy as np
@@ -124,10 +125,8 @@ class HPatchDataset(Dataset):
 
 if __name__ == "__main__":
     # # uncomment to generate the data list
-    # hpatch_dir = '/data/MegPoint/dataset/hpatch'
-    # generate_hpatch_data_list(hpatch_dir)
-
-    pass
-
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--hpatch_dir", type=str, required=True)
+    arg = parser.parse_args()
+    generate_hpatch_data_list(arg.hpatch_dir)
 
