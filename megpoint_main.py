@@ -33,7 +33,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.adjust_lr = "False"
         self.tmp_ckpt_file = ""
         self.extractor_ckpt_file = ""
-        self.weight_decay = 1e-5
+        self.weight_decay = 1e-4
 
         self.model_type = "MegPoint"
 
