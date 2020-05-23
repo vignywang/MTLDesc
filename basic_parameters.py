@@ -34,7 +34,7 @@ class BasicParameters(object):
         self.log_freq = 100
         self.num_workers = 8
         self.prefix = 'exp1'
-        self.do_augmentation = True
+        self.do_augmentation = "True"
 
         # testing relating params
         self.save_threshold_curve = True
