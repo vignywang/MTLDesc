@@ -292,6 +292,39 @@ class SuperPointExtractor(nn.Module):
         return desp
 
 
+class SuperPointNet(BasicSuperPointNet):
+
+    def __init__(self):
+        super(SuperPointNet, self).__init__()
+
+    def forward(self, x):
+        x = self.relu(self.conv1a(x))
+        x = self.relu(self.conv1b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv2a(x))
+        x = self.relu(self.conv2b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv3a(x))
+        x = self.relu(self.conv3b(x))
+        x = self.pool(x)
+        x = self.relu(self.conv4a(x))
+        x = self.relu(self.conv4b(x))
+
+        # detect head
+        cPa = self.relu(self.convPa(x))
+        logit = self.convPb(cPa)
+        prob = self.softmax(logit)[:, :-1, :, :]
+
+        # descriptor head
+        cDa = self.relu(self.convDa(x))
+        feature = self.convDb(cDa)
+
+        dn = torch.norm(feature, p=2, dim=1, keepdim=True)
+        desc = feature.div(dn)
+
+        return logit, desc, prob
+
+
 if __name__ == "__main__":
     random_input = torch.randn((1, 1, 240, 320))
     model = SuperPointNetFloat()

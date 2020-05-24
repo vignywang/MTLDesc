@@ -17,8 +17,10 @@ from nets.megpoint_net import Extractor
 
 from nets.superpoint_net import SuperPointNetBackbone
 from nets.superpoint_net import SuperPointExtractor
+from nets.superpoint_net import SuperPointNet
 
 from data_utils.coco_dataset import COCOMegPointHeatmapAllTrainDataset
+from data_utils.coco_dataset import COCOSuperPointTrainDataset
 from data_utils.hpatch_dataset import HPatchDataset
 
 from utils.evaluation_tools import RepeatabilityCalculator
@@ -28,6 +30,7 @@ from utils.evaluation_tools import HomoAccuracyCalculator
 from utils.evaluation_tools import MeanMatchingAccuracy
 from utils.utils import spatial_nms
 from utils.utils import DescriptorGeneralTripletLoss
+from utils.utils import DescriptorTripletLoss
 from utils.utils import Matcher
 from utils.utils import PointHeatmapWeightedBCELoss
 
@@ -139,14 +142,23 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         self._initialize_optimizer()
         self._initialize_scheduler()
         self._initialize_train_func()
+        self._initialize_inference_func()
+        self._initialize_detection_threshold()
         self._initialize_loss()
         self._initialize_matcher()
         self._initialize_test_calculator(params)
 
     def _initialize_dataset(self):
         # 初始化数据集
-        self.logger.info("Initialize COCOMegPointHeatmapAllTrainDataset")
-        self.train_dataset = COCOMegPointHeatmapAllTrainDataset(self.params)
+        if self.params.model_type == "MegPoint":
+            self.logger.info("Initialize COCOMegPointHeatmapAllTrainDataset")
+            self.train_dataset = COCOMegPointHeatmapAllTrainDataset(self.params)
+        elif self.params.model_type == "SuperPoint":
+            self.logger.info("Initialzie COCOSuperPointTrainDataset")
+            self.train_dataset = COCOSuperPointTrainDataset(self.params)
+        else:
+            self.logger.error("Unrecognized model_type : %s" % self.params.model_type)
+            assert False
 
         if self.run_mode == "test":
             pass
@@ -175,6 +187,9 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         if self.params.model_type == "MegPoint":
             self.logger.info("Initialize network arch for MegPoint : resnet18_fast")
             model = resnet18_fast()
+        elif self.params.model_type == "SuperPoint":
+            self.logger.info("Initialize network arch for SuperPoint: SuperPoint")
+            model = SuperPointNet()
         elif self.params.model_type == "SuperPointBackbone":
             self.logger.info("Initialize network arch for SuperPointBackbone : superpoint_backbone")
             model = SuperPointNetBackbone()
@@ -192,25 +207,43 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         elif self.params.model_type == "SuperPointBackbone":
             self.logger.info("Initialize SuperPointBackbone extractor")
             extractor = SuperPointExtractor()
+        elif self.params.model_type == "SuperPoint":
+            self.logger.info("Initialize SuperPoint extractor to None(means not using)")
+            extractor = None
         else:
             self.logger.error("Unrecognized model_type: %s" % self.params.model_type)
             assert False
 
         self.cat = self._cat_c1c2c3c4
 
-        if self.multi_gpus:
-            extractor = torch.nn.DataParallel(extractor)
-        self.extractor = extractor.to(self.device)
+        if extractor is not None:
+            if self.multi_gpus:
+                extractor = torch.nn.DataParallel(extractor)
+            self.extractor = extractor.to(self.device)
+        else:
+            self.extractor = None
 
     def _initialize_loss(self):
         # 初始化loss算子
-        # 初始化heatmap loss
-        self.logger.info("Initialize the PointHeatmapWeightedBCELoss.")
-        self.point_loss = PointHeatmapWeightedBCELoss()
+        if self.params.model_type in ["MegPoint", "SuperPointBackbone"]:
+            # 初始化heatmap loss
+            self.logger.info("Initialize the PointHeatmapWeightedBCELoss.")
+            self.point_loss = PointHeatmapWeightedBCELoss()
 
-        # 初始化描述子loss
-        self.logger.info("Initialize the DescriptorGeneralTripletLoss.")
-        self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
+            # 初始化描述子loss
+            self.logger.info("Initialize the DescriptorGeneralTripletLoss.")
+            self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
+        elif self.params.model_type == "SuperPoint":
+            # 初始化point loss
+            self.logger.info("Initialize the CrossEntropyLoss for SuperPoint.")
+            self.point_loss = torch.nn.CrossEntropyLoss(reduction="none")
+
+            # 初始化描述子loss
+            self.logger.info("Initialize the DescriptorTripletLoss for SuperPoint.")
+            self.descriptor_loss = DescriptorTripletLoss(self.device)
+        else:
+            self.logger.info("Unrecognized model_type : %s" % self.params.model_type)
+            assert False
 
     def _initialize_matcher(self):
         # 初始化匹配算子
@@ -221,14 +254,46 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         # 根据不同结构选择不同的训练函数
         # self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
         # self._train_func = self._train_with_gt
-        self.logger.info("Initialize training func mode of _train_with_gt_fast")
-        self._train_func = self._train_with_gt_fast
+        if self.params.model_type in ["MegPoint", "SuperPointBackbone"]:
+            self.logger.info("Initialize training func mode of _train_with_gt_fast")
+            self._train_func = self._train_with_gt_fast
+        elif self.params.model_type == "SuperPoint":
+            self.logger.info("Initialize training func mode of _train_for_superpoint")
+            self._train_func = self._train_for_superpoint
+        else:
+            self.logger.info("Unrecognized model_type : %s" % self.params.model_type)
+            assert False
+
+    def _initialize_inference_func(self):
+        if self.params.model_type in ["MegPoint", "SuperPointBackbone"]:
+            self.logger.info("Initialize inference func mode of _inference_func_fast")
+            self._inference_func = self._inference_func_fast
+        elif self.params.model_type == "SuperPoint":
+            self.logger.info("Initialize inference func mode of _inference_func_for_superpoint")
+            self._inference_func = self._inference_func_for_superpoint
+        else:
+            self.logger.info("Unrecognized model_type : %s" % self.params.model_type)
+            assert False
+
+    def _initialize_detection_threshold(self):
+        if self.params.model_type in ["MegPoint", "SuperPointBackbone"]:
+            self.logger.info("Initialize detection_threshold: %.3f" % 0.9)
+            self.detection_threshold = 0.9
+        elif self.params.model_type == "SuperPoint":
+            self.logger.info("Initialize detection_threshold: %.3f" % 0.005)
+            self.detection_threshold = 0.005
+        else:
+            self.logger.info("Unrecognized model_type : %s" % self.params.model_type)
+            assert False
 
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
         self.logger.info("Initialize Adam optimizer with weight_decay: %.5f." % self.params.weight_decay)
         self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
+        if self.extractor is not None:
+            self.extractor_optimizer = torch.optim.Adam(params=self.extractor.parameters(), lr=self.lr)
+        else:
+            self.extractor_optimizer = None
 
     def _initialize_scheduler(self):
         # 初始化学习率调整算子
@@ -334,6 +399,69 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
             torch.save(self.extractor.state_dict(), os.path.join(self.ckpt_dir, 'extractor_%02d.pt' % epoch_idx))
 
+    def _train_for_superpoint(self, epoch_idx):
+        self.model.train()
+
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data['image'].to(self.device)
+            label = data['label'].to(self.device)
+            mask = data['mask'].to(self.device)
+
+            warped_image = data['warped_image'].to(self.device)
+            warped_label = data['warped_label'].to(self.device)
+            warped_mask = data['warped_mask'].to(self.device)
+
+            matched_idx = data['matched_idx'].to(self.device)
+            matched_valid = data['matched_valid'].to(self.device)
+            not_search_mask = data['not_search_mask'].to(self.device)
+
+            shape = image.shape
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            label_pair = torch.cat((label, warped_label), dim=0)
+            mask_pair = torch.cat((mask, warped_mask), dim=0)
+            logit_pair, desp_pair, _ = self.model(image_pair)
+
+            unmasked_point_loss = self.point_loss(logit_pair, label_pair)
+            point_loss = self._compute_masked_loss(unmasked_point_loss, mask_pair)
+
+            desp_0, desp_1 = torch.split(desp_pair, shape[0], dim=0)
+
+            desp_loss = self.descriptor_loss(desp_0, desp_1, matched_idx, matched_valid, not_search_mask)
+
+            loss = point_loss + desp_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.log_freq == 0:
+
+                point_loss_val = point_loss.item()
+                desp_loss_val = desp_loss.item()
+                loss_val = loss.item()
+
+                self.summary_writer.add_histogram('descriptor', desp_pair)
+                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
+                                 " one step cost %.4fs. "
+                                 % (epoch_idx, i, self.epoch_length, loss_val,
+                                    point_loss_val, desp_loss_val,
+                                    (time.time() - stime) / self.params.log_freq,
+                                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.ckpt_dir, 'model_%02d.pt' % epoch_idx))
+
     def _validate_one_epoch(self, epoch_idx):
         self.logger.info("*****************************************************")
         self.logger.info("Validating epoch %2d begin:" % epoch_idx)
@@ -395,7 +523,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
             image_pair = image_pair * 2. / 255. - 1.
 
-            results = self._inference_func_fast(image_pair)
+            results = self._inference_func(image_pair)
 
             if results is None:
                 skip += 1
@@ -560,7 +688,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             image_pair = image_pair*2./255. - 1.
 
 
-            results = self._inference_func_fast(image_pair)
+            results = self._inference_func(image_pair)
 
             if results is None:
                 skip += 1
@@ -723,6 +851,36 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         return first_point, first_point_num, second_point, second_point_num, select_first_desp, select_second_desp
 
+    def _inference_func_for_superpoint(self, image_pair):
+        """
+        image_pair: [2,1,h,w]
+        """
+        self.model.eval()
+        _, _, height, width = image_pair.shape
+        _, desp_pair, prob_pair = self.model(image_pair)
+        prob_pair = f.pixel_shuffle(prob_pair, 8)
+        prob_pair = spatial_nms(prob_pair, kernel_size=int(self.nms_threshold * 2 + 1))
+
+        # 得到对应的预测点
+        prob_pair = prob_pair.detach().cpu().numpy()
+        first_prob = prob_pair[0, 0]
+        second_prob = prob_pair[1, 0]
+
+        first_point, first_point_num = self._generate_predict_point(first_prob, top_k=self.top_k)  # [n,2]
+        second_point, second_point_num = self._generate_predict_point(second_prob, top_k=self.top_k)  # [m,2]
+
+        if first_point_num <= 4 or second_point_num <= 4:
+            print("skip this pair because there's little point!")
+            return None
+
+        # 得到点对应的描述子
+        first_desp, second_desp = torch.chunk(desp_pair, 2, dim=0)
+
+        select_first_desp = self._generate_descriptor_for_superpoint_desp_head(first_point, first_desp, height, width)
+        select_second_desp = self._generate_descriptor_for_superpoint_desp_head(second_point, second_desp, height, width)
+
+        return first_point, first_point_num, second_point, second_point_num, select_first_desp, select_second_desp
+
     def _generate_predict_point(self, prob, scale=None, top_k=0):
         point_idx = np.where(prob > self.detection_threshold)
 
@@ -777,6 +935,21 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
         feature = self.cat(c1_feature, c2_feature, c3_feature, c4_feature, dim=2)
         desp = self.extractor(feature)[0]  # [n,128]
+
+        desp = desp.detach().cpu().numpy()
+
+        return desp
+
+    def _generate_descriptor_for_superpoint_desp_head(self, point, desp, height, width):
+        """
+        构建superpoint描述子端的描述子
+        """
+        point = torch.from_numpy(point[:, ::-1].copy()).to(torch.float).to(self.device)
+        # 归一化采样坐标到[-1,1]
+        point = point * 2. / torch.tensor((width-1, height-1), dtype=torch.float, device=self.device) - 1
+        point = point.unsqueeze(dim=0).unsqueeze(dim=2)  # [1,n,1,2]
+
+        desp = f.grid_sample(desp, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
 
         desp = desp.detach().cpu().numpy()
 
@@ -938,6 +1111,13 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             point_list.append(pt)
         point = np.stack(point_list, axis=0)
         return point
+
+    @staticmethod
+    def _compute_masked_loss(unmasked_loss, mask):
+        total_num = torch.sum(mask, dim=(1, 2))
+        loss = torch.sum(mask*unmasked_loss, dim=(1, 2)) / total_num
+        loss = torch.mean(loss)
+        return loss
 
 
 

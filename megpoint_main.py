@@ -82,7 +82,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--dataset_dir", type=str, default='')
         parser.add_argument("--hpatch_dataset_dir", type=str, required=True)
         parser.add_argument("--batch_size", type=int, default=8)
-        parser.add_argument("--num_workers", type=int, default=8)
+        parser.add_argument("--num_workers", type=int, default=24)
         parser.add_argument("--epoch_num", type=int, default=15)
         parser.add_argument("--log_freq", type=int, default=50)
         parser.add_argument("--lr", type=float, default=0.001)
