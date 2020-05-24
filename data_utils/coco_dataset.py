@@ -211,7 +211,21 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         self.homography = HomographyAugmentation()
         self.photometric = PhotometricAugmentation()
 
-        self.fix_grid = self._generate_fixed_grid()
+        fix_grid_options = {
+            "100": [10, 10],
+            "200": [10, 20],
+            "400": [20, 20],
+            "600": [20, 30],
+            "800": [20, 40],
+            "900": [30, 30],
+            "1200": [30, 40],
+            "1500": [30, 50],
+            "1600": [40, 40],
+        }
+        assert self.params.fix_grid_option in fix_grid_options.keys()
+        self.fix_sample = self.params.fix_sample
+
+        self.fix_grid = self._generate_fixed_grid(fix_grid_options[self.params.fix_grid_option])
 
     def __len__(self):
         assert len(self.image_list) == len(self.point_list)
@@ -253,7 +267,10 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         warped_heatmap = self._convert_points_to_heatmap(warped_point)
 
         # 3、采样训练描述子要用的点
-        desp_point = self._random_sample_point()
+        if not self.fix_sample:
+            desp_point = self._random_sample_point()
+        else:
+            desp_point = self._fix_sample_point()
         height, width = image.shape
 
         warped_desp_point, valid_mask, not_search_mask = self._generate_warped_point(
@@ -362,10 +379,34 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
 
         return point
 
-    def _generate_fixed_grid(self, x_num=20, y_num=20):
+    def _fix_sample_point(self):
+        """
+        根据预设的输入图像大小，固定采样中心坐标点
+        """
+        grid = self.fix_grid.copy()
+
+        # 取格子的中心当作采样点
+        point_list = []
+        for i in range(grid.shape[0]):
+            y_start, x_start, y_end, x_end = grid[i]
+            y = (y_end - y_start) / 2 + y_start
+            x = (x_end - x_start) / 2 + x_start
+            point_list.append(np.array((y, x), dtype=np.float32))
+        point = np.stack(point_list, axis=0)
+
+        return point
+
+    def _generate_fixed_grid(self, option=None):
         """
         预先采样固定间隔的225个图像格子
         """
+        if option == None:
+            y_num = 20
+            x_num = 20
+        else:
+            y_num = option[0]
+            x_num = option[1]
+
         grid_y = np.linspace(0, self.height-1, y_num+1, dtype=np.int)
         grid_x = np.linspace(0, self.width-1, x_num+1, dtype=np.int)
 

@@ -36,6 +36,8 @@ class MegPointHeatmapParameters(BasicParameters):
         self.weight_decay = 1e-4
 
         self.model_type = "MegPoint"
+        self.fix_grid_option = "400"
+        self.fix_sample = "False"
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -98,6 +100,8 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--extractor_ckpt_file", type=str, default="")
 
         parser.add_argument("--model_type", type=str, default="MegPoint")
+        parser.add_argument("--fix_grid_option", type=str, default="400")
+        parser.add_argument("--fix_sample", type=str, default="False")
 
         return parser.parse_args()
 
@@ -118,9 +122,16 @@ class MegPointHeatmapParameters(BasicParameters):
         else:
             self.do_augmentation = False
 
+        if self.fix_sample == "True":
+            self.fix_sample = True
+        else:
+            self.fix_sample = False
+
         self.logger.info("adjust_lr: %s" % self.adjust_lr)
         self.logger.info("do_augmentation: %s" % self.do_augmentation)
         self.logger.info("model_type: %s" % self.model_type)
+        self.logger.info("fix_grid_option: %s " % self.fix_grid_option)
+        self.logger.info("fix_sample: %s" % self.fix_sample)
 
         self.logger.info("------------------------------------------")
 
