@@ -325,6 +325,56 @@ class SuperPointNet(BasicSuperPointNet):
         return logit, desc, prob
 
 
+class SuperPointDetection(nn.Module):
+
+    def __init__(self):
+        super(SuperPointDetection, self).__init__()
+        self.relu = torch.nn.ReLU(inplace=True)
+        self.pool = torch.nn.MaxPool2d(kernel_size=2, stride=2)
+        # Shared Encoder.
+        self.conv1a = nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1)
+        self.conv1b = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+        self.conv2a = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+        self.conv2b = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+        self.conv3a = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.conv3b = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+        self.conv4a = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+        self.conv4b = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+
+        # Detector Head.
+        self.convPa = nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1)
+        self.convPb = nn.Conv2d(256, 65, kernel_size=1, stride=1, padding=0)
+
+        self.softmax = nn.Softmax(dim=1)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+    def forward(self, x):
+        x = self.relu(self.conv1a(x))
+        c1 = self.relu(self.conv1b(x))  # 64
+
+        c2 = self.pool(c1)
+        c2 = self.relu(self.conv2a(c2))
+        c2 = self.relu(self.conv2b(c2))  # 64
+
+        c3 = self.pool(c2)
+        c3 = self.relu(self.conv3a(c3))
+        c3 = self.relu(self.conv3b(c3))  # 128
+
+        c4 = self.pool(c3)
+        c4 = self.relu(self.conv4a(c4))
+        c4 = self.relu(self.conv4b(c4))  # 128
+
+        # detect head
+        cPa = self.relu(self.convPa(c4))
+        logit = self.convPb(cPa)
+        prob = self.softmax(logit)[:, :-1, :, :]
+
+        return logit, prob, c1, c2, c3, c4
+
+
 if __name__ == "__main__":
     random_input = torch.randn((1, 1, 240, 320))
     model = SuperPointNetFloat()
