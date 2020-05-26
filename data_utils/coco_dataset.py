@@ -208,7 +208,18 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         # self.params.logger.info("Initialize MegPoint Train Dataset: %s" % self.dataset_dir)
         self.image_list, self.point_list = self._format_file_list()
 
-        self.homography = HomographyAugmentation()
+        rotation_options = {
+            "0": [0, 0],
+            "1": [0, np.pi/4],
+            "2": [0, np.pi/3],
+            "3": [0, np.pi/2],
+            "4": [-np.pi/2, np.pi/2],
+            "none": None,
+        }
+        assert params.rotation_option in rotation_options.keys()
+        rotation = rotation_options[params.rotation_option]
+
+        self.homography = HomographyAugmentation(rotation=rotation)
         self.photometric = PhotometricAugmentation()
 
         fix_grid_options = {

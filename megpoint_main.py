@@ -38,6 +38,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.model_type = "MegPoint"
         self.fix_grid_option = "400"
         self.fix_sample = "False"
+        self.rotation_option = "none"
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -102,6 +103,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--model_type", type=str, default="MegPoint")
         parser.add_argument("--fix_grid_option", type=str, default="400")
         parser.add_argument("--fix_sample", type=str, default="False")
+        parser.add_argument("--rotation_option", type=str, default="none")
 
         return parser.parse_args()
 
@@ -132,6 +134,7 @@ class MegPointHeatmapParameters(BasicParameters):
         self.logger.info("model_type: %s" % self.model_type)
         self.logger.info("fix_grid_option: %s " % self.fix_grid_option)
         self.logger.info("fix_sample: %s" % self.fix_sample)
+        self.logger.info("rotation_option: %s" % self.rotation_option)
 
         self.logger.info("------------------------------------------")
 

@@ -43,7 +43,8 @@ class HomographyAugmentation(object):
                  do_scaling=True,
                  do_rotation=True,
                  do_translation=True,
-                 allow_artifacts=True
+                 allow_artifacts=True,
+                 rotation=None
                  ):
         self.patch_ratio = patch_ratio
         self.perspective_amplitude_x = perspective_amplitude_x
@@ -53,10 +54,17 @@ class HomographyAugmentation(object):
         self.scaling_up = scaling_up
         self.translation_overflow = translation_overflow
         self.rotation_sample_num = rotation_sample_num
-        self.rotation_max_angle = rotation_max_angle
+        if rotation is None:
+            self.rotation_min_angle = -rotation_max_angle
+            self.rotation_max_angle = rotation_max_angle
+        else:
+            self.rotation_min_angle = rotation[0]
+            self.rotation_max_angle = rotation[1]
         self.do_perspective = do_perspective
         self.do_scaling = do_scaling
         self.do_rotation = do_rotation
+        if self.rotation_max_angle == self.rotation_min_angle == 0:
+            self.do_rotation = False
         self.do_translation = do_translation
         self.allow_artifacts = allow_artifacts
 
@@ -220,9 +228,9 @@ class HomographyAugmentation(object):
             #                                   np.random.uniform(-t_min[1], t_max[1]))), axis=0)
 
         if self.do_rotation:
-            # angles = torch.ones((self.rotation_sample_num,), dtype=torch.float).uniform_(
-            #     -self.rotation_max_angle, self.rotation_max_angle).numpy()
-            angles = np.linspace(-self.rotation_max_angle, self.rotation_max_angle, self.rotation_sample_num)
+            angles = torch.ones((self.rotation_sample_num,), dtype=torch.float).uniform_(
+                self.rotation_min_angle, self.rotation_max_angle).numpy()
+            # angles = np.linspace(-self.rotation_max_angle, self.rotation_max_angle, self.rotation_sample_num)
             # angles = np.random.uniform(-self.rotation_max_angle, self.rotation_max_angle, self.rotation_sample_num)
             angles = np.concatenate((angles, np.zeros((1,))), axis=0)  # in case no rotation is valid
             center = np.mean(pts_2, axis=0, keepdims=True)
