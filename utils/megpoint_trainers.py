@@ -17,6 +17,7 @@ from nets.megpoint_net import Extractor
 
 from nets.superpoint_net import SuperPointNetBackbone
 from nets.superpoint_net import SuperPointExtractor
+from nets.superpoint_net import SuperPointExtractor256
 from nets.superpoint_net import SuperPointNet
 from nets.superpoint_net import SuperPointDetection
 from nets.superpoint_net import SuperPointNetDescriptorC4
@@ -157,7 +158,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_dataset(self):
         # 初始化数据集
-        if self.params.model_type in ["MegPoint", "SuperPointBackbone"]:
+        if self.params.model_type in ["MegPoint", "SuperPointBackbone", "SuperPointBackbone256"]:
             self.logger.info("Initialize COCOMegPointHeatmapAllTrainDataset")
             self.train_dataset = COCOMegPointHeatmapAllTrainDataset(self.params)
         elif self.params.model_type == "SuperPoint":
@@ -205,7 +206,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         elif self.params.model_type == "SuperPoint":
             self.logger.info("Initialize network arch for SuperPoint: SuperPoint")
             model = SuperPointNet()
-        elif self.params.model_type == "SuperPointBackbone":
+        elif self.params.model_type in ["SuperPointBackbone", "SuperPointBackbone256"]:
             self.logger.info("Initialize network arch for SuperPointBackbone : superpoint_backbone")
             model = SuperPointNetBackbone()
 
@@ -241,6 +242,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         elif self.params.model_type == "SuperPointBackbone":
             self.logger.info("Initialize SuperPointBackbone extractor")
             extractor = SuperPointExtractor()
+        elif self.params.model_type == "SuperPointBackbone256":
+            self.logger.info("Initialize SuperPointBackbone extractor256")
+            extractor = SuperPointExtractor256()
+
         elif self.params.model_type == "SuperPointDetectionC4":
             self.logger.info("Initialize SuperPointDetection extractorC4")
             extractor = SuperPointExtractor([0, 0, 0, 1])
@@ -284,7 +289,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def _initialize_loss(self):
         # 初始化loss算子
-        if self.params.model_type in ["MegPoint", "SuperPointBackbone"]:
+        if self.params.model_type in ["MegPoint", "SuperPointBackbone", "SuperPointBackbone256"]:
             # 初始化heatmap loss
             self.logger.info("Initialize the PointHeatmapWeightedBCELoss.")
             self.point_loss = PointHeatmapWeightedBCELoss()
@@ -331,7 +336,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         # 根据不同结构选择不同的训练函数
         # self.logger.info("Initialize training func mode of [with_gt] with baseline network.")
         # self._train_func = self._train_with_gt
-        if self.params.model_type in ["MegPoint", "SuperPointBackbone"]:
+        if self.params.model_type in ["MegPoint", "SuperPointBackbone", "SuperPointBackbone256"]:
             self.logger.info("Initialize training func mode of _train_with_gt_fast")
             self._train_func = self._train_with_gt_fast
         elif self.params.model_type == "SuperPoint":
@@ -350,7 +355,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             assert False
 
     def _initialize_inference_func(self):
-        if self.params.model_type in ["MegPoint", "SuperPointBackbone"]:
+        if self.params.model_type in ["MegPoint", "SuperPointBackbone", "SuperPointBackbone256"]:
             self.logger.info("Initialize inference func mode of _inference_func_fast")
             self._inference_func = self._inference_func_fast
         elif self.params.model_type == "SuperPoint":
@@ -369,7 +374,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             assert False
 
     def _initialize_detection_threshold(self):
-        if self.params.model_type in ["MegPoint", "SuperPointBackbone",
+        if self.params.model_type in ["MegPoint", "SuperPointBackbone", "SuperPointBackbone256",
                                       "SuperPointDescriptorC3C4", "SuperPointDescriptorC2C3C4",
                                       "SuperPointDescriptorC1C2C3C4", "SuperPointDescriptorC4"]:
             self.logger.info("Initialize detection_threshold: %.3f" % 0.9)
