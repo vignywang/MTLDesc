@@ -3,6 +3,7 @@
 #
 import cv2 as cv
 import numpy as np
+from imgaug import augmenters as iaa
 
 import torch
 from torch.utils.data import DataLoader
@@ -409,6 +410,118 @@ class PhotometricAugmentation(object):
         kernel /= np.sum(kernel)
         image = cv.filter2D(image, -1, kernel)
         return image
+
+
+class ImgAugTransform:
+
+    def __init__(
+            self,
+            do_photometric=True,
+            random_brightness=True,
+            random_contrast=True,
+            additive_gaussian_noise=True,
+            additive_speckle_noise=True,
+            additive_shade=True,
+            motion_blur=True,
+            Gaussian_blur=True,
+            max_abs_change=50,
+            strength_range=(0.5, 1.5),
+            stddev_range=(0, 10),
+            prob_range=(0, 0.0035),
+            max_kernel_size=3,
+            transparency_range=(-0.5, 0.5),
+            kernel_size_range=(100, 150),
+    ):
+        from numpy.random import randint
+
+        ## old photometric
+        self.aug = iaa.Sequential([
+            iaa.Sometimes(0.25, iaa.GaussianBlur(sigma=(0, 3.0))),
+            iaa.Sometimes(0.25,
+                          iaa.OneOf([iaa.Dropout(p=(0, 0.1)),
+                                     iaa.CoarseDropout(0.1, size_percent=0.5)])),
+            iaa.Sometimes(0.25,
+                          iaa.AdditiveGaussianNoise(loc=0, scale=(0.0, 0.05), per_channel=0.5),
+                          )
+        ])
+
+        if do_photometric:
+            aug_all = []
+            if random_brightness:
+                change = max_abs_change
+                aug = iaa.Add((-change, change))
+                aug_all.append(aug)
+            if random_contrast:
+                change = strength_range
+                aug = iaa.LinearContrast((change[0], change[1]))
+                aug_all.append(aug)
+            if additive_gaussian_noise:
+                change = stddev_range
+                aug = iaa.AdditiveGaussianNoise(scale=(change[0], change[1]))
+                aug_all.append(aug)
+            if additive_speckle_noise:
+                change = prob_range
+                aug = iaa.ImpulseNoise(p=(change[0], change[1]))
+                aug_all.append(aug)
+            if motion_blur:
+                change = max_kernel_size
+                if change > 3:
+                    change = randint(3, change)
+                elif change == 3:
+                    aug = iaa.Sometimes(0.5, iaa.MotionBlur(change))
+                aug_all.append(aug)
+            # if Gaussian_blur:
+            #     change = params['GaussianBlur']['sigma']
+            #     aug = iaa.GaussianBlur(sigma=(change))
+            #     aug_all.append(aug)
+
+            self.aug = iaa.Sequential(aug_all)
+
+        else:
+            self.aug = iaa.Sequential([
+                iaa.Noop(),
+            ])
+
+        self.additive_shape = additive_shade
+        self.transparency_range = transparency_range
+        self.kernel_size_range = kernel_size_range
+
+    def _additive_shade(self, image, nb_ellipses=20, transparency_range=(-0.5, 0.5),
+                       kernel_size_range=(100, 150)):
+        def _py_additive_shade(img):
+            min_dim = min(img.shape[:2]) / 4
+            mask = np.zeros(img.shape[:2], np.uint8)
+            for i in range(nb_ellipses):
+                ax = int(max(np.random.rand() * min_dim, min_dim / 5))
+                ay = int(max(np.random.rand() * min_dim, min_dim / 5))
+                max_rad = max(ax, ay)
+                x = np.random.randint(max_rad, img.shape[1] - max_rad)  # center
+                y = np.random.randint(max_rad, img.shape[0] - max_rad)
+                angle = np.random.rand() * 90
+                cv.ellipse(mask, (x, y), (ax, ay), angle, 0, 360, 255, -1)
+
+            transparency = np.random.uniform(*transparency_range)
+            kernel_size = np.random.randint(*kernel_size_range)
+            if (kernel_size % 2) == 0:  # kernel_size has to be odd
+                kernel_size += 1
+            mask = cv.GaussianBlur(mask.astype(np.float32), (kernel_size, kernel_size), 0)
+            shaded = img * (1 - transparency * mask / 255.)
+            shaded = shaded.astype(np.uint8)
+            return np.clip(shaded, 0, 255)
+
+        shaded = _py_additive_shade(image)
+        return shaded
+
+    def __call__(self, img):
+        """
+        require input img is uint8
+        """
+        img = self.aug.augment_image(img)
+
+        if self.additive_shape:
+            img = self._additive_shade(img, transparency_range=self.transparency_range,
+                                       kernel_size_range=self.kernel_size_range)
+        return img
 
 
 def space_to_depth(org_tensor, patch_height=8, patch_width=8):
