@@ -734,7 +734,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
 
     def test(self, ckpt_file, extrator_ckpt_file=None):
         self.model = self._load_model_params(ckpt_file, self.model)
-        self.extractor = self._load_model_params(extrator_ckpt_file, self.extractor)
+        if extrator_ckpt_file is not None and self.extractor is not None:
+            self.extractor = self._load_model_params(extrator_ckpt_file, self.extractor)
 
         self.model.eval()
         # 重置测评算子参数
