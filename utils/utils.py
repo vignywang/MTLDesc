@@ -125,6 +125,30 @@ def prob_2_entropy(prob):
     return -torch.mul(prob, torch.log2(prob + 1e-30)) / np.log2(c)
 
 
+class DescriptorPairwiseLoss(object):
+
+    def __init__(self, device):
+        self.device = device
+
+    def __call__(self, desp_0, desp_1, positive_mask, positive_valid_mask, negative_mask, negative_valid_mask):
+        cos_similarity = torch.matmul(desp_0, desp_1.transpose(1, 2))
+
+        # compute positive pair loss
+        positive_loss_total = positive_mask * (1. - cos_similarity) * positive_valid_mask
+        positive_loss_num = torch.sum(positive_valid_mask, dim=(1, 2))
+        positive_loss = torch.sum(positive_loss_total, dim=(1, 2)) / positive_loss_num
+
+        # compute negative pair loss
+        negative_loss_total = negative_mask * torch.relu(cos_similarity - 0.2) * negative_valid_mask
+        negative_loss_num = torch.sum(negative_valid_mask, dim=(1, 2))
+        negative_loss = torch.sum(negative_loss_total, dim=(1, 2)) / negative_loss_num
+
+        loss = positive_loss + negative_loss
+        loss = torch.mean(loss)
+
+        return loss
+
+
 class DescriptorTripletLoss(object):
 
     def __init__(self, device):
