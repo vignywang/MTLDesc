@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 
 from data_utils.dataset_tools import HomographyAugmentation
 from data_utils.dataset_tools import PhotometricAugmentation
+from data_utils.dataset_tools import ImgAugTransform
 from data_utils.dataset_tools import draw_image_keypoints
 from data_utils.dataset_tools import space_to_depth
 
@@ -195,7 +196,7 @@ class COCOAdaptionValDataset(Dataset):
 
 class COCOMegPointHeatmapAllTrainDataset(Dataset):
     """
-    根据新的网络模型ResNetAll及HalfResNetAll设计的coco数据集类
+    same dataset as original SuperPoint
     """
 
     def __init__(self, params):
@@ -220,7 +221,8 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         rotation = rotation_options[params.rotation_option]
 
         self.homography = HomographyAugmentation(rotation=rotation)
-        self.photometric = PhotometricAugmentation()
+        # self.photometric = PhotometricAugmentation()
+        self.photometric = ImgAugTransform()
 
         fix_grid_options = {
             "100": [10, 10],
@@ -267,9 +269,8 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         else:
             warped_image, warped_point_mask, warped_point, homography = self.homography(image, point, return_homo=True)
 
-        if torch.rand([]).item() < 0.5:
-            image = self.photometric(image)
-            warped_image = self.photometric(warped_image)
+        image = self.photometric(image)
+        warped_image = self.photometric(warped_image)
 
         # 2.1 得到第一副图点构成的热图
         heatmap = self._convert_points_to_heatmap(point)
@@ -290,7 +291,9 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         # debug use
         # image_point = draw_image_keypoints(image, desp_point, show=False)
         # warped_image_point = draw_image_keypoints(warped_image, warped_desp_point, show=False)
+        # cat_all = np.concatenate((image, warped_image), axis=1)
         # cat_all = np.concatenate((image_point, warped_image_point), axis=1)
+        # cv.imwrite("/home/yuyang/tmp/coco_tmp/%d.jpg" % idx, cat_all)
         # cv.imshow("cat_all", cat_all)
         # cv.waitKey()
 
