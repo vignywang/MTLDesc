@@ -85,7 +85,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--dataset_dir", type=str, default='')
         parser.add_argument("--hpatch_dataset_dir", type=str, required=True)
         parser.add_argument("--batch_size", type=int, default=8)
-        parser.add_argument("--num_workers", type=int, default=16)
+        parser.add_argument("--num_workers", type=int, default=8)
         parser.add_argument("--epoch_num", type=int, default=15)
         parser.add_argument("--log_freq", type=int, default=50)
         parser.add_argument("--lr", type=float, default=0.001)
@@ -100,7 +100,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--tmp_ckpt_file", type=str, default="")
         parser.add_argument("--extractor_ckpt_file", type=str, default="")
 
-        parser.add_argument("--model_type", type=str, default="MegPoint")
+        parser.add_argument("--model_type", type=str, default="SuperPointBackbone")
         parser.add_argument("--fix_grid_option", type=str, default="400")
         parser.add_argument("--fix_sample", type=str, default="False")
         parser.add_argument("--rotation_option", type=str, default="none")
