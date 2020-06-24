@@ -221,8 +221,8 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         rotation = rotation_options[params.rotation_option]
 
         self.homography = HomographyAugmentation(rotation=rotation)
-        # self.photometric = PhotometricAugmentation()
-        self.photometric = ImgAugTransform()
+        self.photometric = PhotometricAugmentation()
+        # self.photometric = ImgAugTransform()
 
         fix_grid_options = {
             "100": [10, 10],
@@ -239,6 +239,7 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         self.fix_sample = self.params.fix_sample
 
         self.fix_grid = self._generate_fixed_grid(fix_grid_options[self.params.fix_grid_option])
+        self.desp_point_number = 400
 
     def __len__(self):
         assert len(self.image_list) == len(self.point_list)
@@ -269,8 +270,11 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         else:
             warped_image, warped_point_mask, warped_point, homography = self.homography(image, point, return_homo=True)
 
-        image = self.photometric(image)
-        warped_image = self.photometric(warped_image)
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+            warped_image = self.photometric(warped_image)
+        # image = self.photometric(image)
+        # warped_image = self.photometric(warped_image)
 
         # 2.1 得到第一副图点构成的热图
         heatmap = self._convert_points_to_heatmap(point)
@@ -283,6 +287,7 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
             desp_point = self._random_sample_point()
         else:
             desp_point = self._fix_sample_point()
+        # desp_point = self._sample_feature_point(point)
         height, width = image.shape
 
         warped_desp_point, valid_mask, not_search_mask = self._generate_warped_point(
@@ -351,7 +356,7 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
 
         # 根据无效点及投影点之间的距离关系确定不搜索的负样本矩阵
 
-        dist = np.linalg.norm(project_point[:, np.newaxis] - project_point[np.newaxis, :], axis=2)
+        dist = np.linalg.norm(project_point[:, np.newaxis, :] - project_point[np.newaxis, :, :], axis=2)
         not_search_mask = ((dist <= threshold) | invalid_mask[np.newaxis, :]).astype(np.float32)
         return project_point.astype(np.float32), valid_mask.astype(np.float32), not_search_mask
 
@@ -409,6 +414,21 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         point = np.stack(point_list, axis=0)
 
         return point
+
+    def _sample_feature_point(self, point):
+        cur_num = point.shape[0]
+        if cur_num == self.desp_point_number:
+            pass
+        elif cur_num < self.desp_point_number:
+            add_num = self.desp_point_number - cur_num
+            random_choice = np.random.choice(np.arange(0, cur_num, dtype=np.int), add_num)
+            add_point = point[random_choice]
+            point = np.concatenate((point, add_point), axis=0)
+        else:
+            random_choice = np.random.choice(np.arange(0, cur_num, dtype=np.int), self.desp_point_number, replace=False)
+            point = point[random_choice]
+
+        return point.astype(np.float32)
 
     def _generate_fixed_grid(self, option=None):
         """
