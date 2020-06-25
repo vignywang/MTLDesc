@@ -61,7 +61,7 @@ def spatial_nms(prob, kernel_size=9):
     return prob
 
 
-def draw_image_keypoints(image, points, color=(0, 255, 0)):
+def draw_image_keypoints(image, points, color=(0, 255, 0), show=False):
     """
     将输入的关键点画到图像上并显示出来
     Args:
@@ -78,8 +78,9 @@ def draw_image_keypoints(image, points, color=(0, 255, 0)):
         keypt.pt = (points[i, 1], points[i, 0])
         cv_keypoints.append(keypt)
     image = cv.drawKeypoints(image.astype(np.uint8), cv_keypoints, None, color=color)
-    cv.imshow("image&keypoints", image)
-    cv.waitKey()
+    if show:
+        cv.imshow("image&keypoints", image)
+        cv.waitKey()
     return image
 
 
