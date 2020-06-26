@@ -19,6 +19,7 @@ import torch.nn.functional as f
 from torch.utils.data import Dataset
 
 # from lib.utils import preprocess_image
+from data_utils.dataset_tools import ImgAugTransform
 from data_utils.dataset_tools import draw_image_keypoints
 
 
@@ -1072,6 +1073,157 @@ class MegaDepthDatasetFromPreprocessed(Dataset):
         return iaa.Sometimes(0.5, aug)
 
 
+class MegaDepthDatasetFromPreprocessed2(Dataset):
+    """
+    配合MegaDepthDatasetCreator使用，直接读取预处理好的数据集
+    """
+    def __init__(self, dataset_dir, label_dir):
+        self.height = 240
+        self.width = 320
+        self.image_list, self.info_list, self.label_list = self._format_file_list(dataset_dir, label_dir)
+        self.photometric = ImgAugTransform()
+
+    def __len__(self):
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+        image_dir = self.image_list[idx]
+        info_dir = self.info_list[idx]
+        label_dir = self.label_list[idx]
+
+        image12 = cv.imread(image_dir)[:, :, ::-1].copy()  # 交换BGR为RGB
+        image1, image2 = np.split(image12, 2, axis=1)
+        h, w, _ = image1.shape
+
+        if torch.rand([]).item() < 0.5:
+            image1 = self.photometric(image1)
+            image2 = self.photometric(image2)
+
+        info = np.load(info_dir)
+        desp_point1 = info["desp_point1"]
+        desp_point2 = info["desp_point2"]
+        valid_mask = info["valid_mask"]
+        not_search_mask = info["not_search_mask"]
+
+        label = np.load(label_dir)
+        points1 = label["points_0"]
+        points2 = label["points_1"]
+
+        # 2.1 得到第一副图点构成的热图
+        heatmap1 = self._convert_points_to_heatmap(points1)
+        point_mask1 = torch.ones_like(heatmap1)
+
+        # 2.2 得到第二副图点构成的热图
+        heatmap2 = self._convert_points_to_heatmap(points2)
+        point_mask2 = torch.ones_like(heatmap2)
+
+        # debug use
+        # desp_point1 = ((desp_point1 + 1) * np.array((self.width - 1, self.height - 1)) / 2.)[:, 0, :]
+        # desp_point2 = ((desp_point2 + 1) * np.array((self.width - 1, self.height - 1)) / 2.)[:, 0, :]
+        # image_point1 = draw_image_keypoints(image1[:, :, ::-1], desp_point1[valid_mask][:, ::-1], show=False)
+        # image_point2 = draw_image_keypoints(image2[:, :, ::-1], desp_point2[valid_mask][:, ::-1], show=False)
+        # image_point1 = draw_image_keypoints(image1[:, :, ::-1], points1, show=False)
+        # image_point2 = draw_image_keypoints(image2[:, :, ::-1], points2, show=False)
+        # cat_all = np.concatenate((image_point1, image_point2), axis=0)
+        # cv.imwrite("/home/yuyang/tmp/debug_%05d.jpg" % idx, cat_all)
+        # cv.imshow("cat_all", cat_all)
+        # cv.waitKey()
+
+        image1 = (torch.from_numpy(image1).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).contiguous()
+        image2 = (torch.from_numpy(image2).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).contiguous()
+
+        desp_point1 = torch.from_numpy(desp_point1)
+        desp_point2 = torch.from_numpy(desp_point2)
+
+        valid_mask = torch.from_numpy(valid_mask).to(torch.float)
+        not_search_mask = torch.from_numpy(not_search_mask).to(torch.float)
+
+        return {
+            "image": image1,
+            "point_mask": point_mask1,
+            "heatmap": heatmap1,
+            "warped_image": image2,
+            "warped_point_mask": point_mask2,
+            "warped_heatmap": heatmap2,
+            "desp_point": desp_point1,
+            "warped_desp_point": desp_point2,
+            "valid_mask": valid_mask,
+            "not_search_mask": not_search_mask,
+        }
+
+    def _scale_point_for_sample(self, point):
+        """
+        将点归一化到[-1,1]的区间范围内，并调换顺序为x,y，方便采样
+        Args:
+            point: [n,2] y,x的顺序，原始范围为[0,height-1], [0,width-1]
+        Returns:
+            point: [n,1,2] x,y的顺序，范围为[-1,1]
+        """
+        org_size = np.array((self.height-1, self.width-1), dtype=np.float32)
+        point = ((point * 2. / org_size - 1.)[:, ::-1])[:, np.newaxis, :].copy()
+        return point
+
+    def _convert_points_to_heatmap(self, points):
+        """
+        将原始点位置经下采样后得到heatmap与incmap，heatmap上对应下采样整型点位置处的值为1，其余为0；incmap与heatmap一一对应，
+        在关键点位置处存放整型点到亚像素角点的偏移量，以及训练时用来屏蔽非关键点inc量的incmap_valid
+        Args:
+            points: [n,2]
+
+        Returns:
+            heatmap: [h,w] 关键点位置为1，其余为0
+            incmap: [2,h,w] 关键点位置存放实际偏移，其余非关键点处的偏移量为0
+            incmap_valid: [h,w] 关键点位置为1，其余为0，用于训练时屏蔽对非关键点偏移量的训练，只关注关键点的偏移量
+
+        """
+        height = self.height
+        width = self.width
+
+        # localmap = self.localmap.clone()
+        # padded_heatmap = torch.zeros(
+        #     (height+self.g_paddings*2, width+self.g_paddings*2), dtype=torch.float)
+        heatmap = torch.zeros((height, width), dtype=torch.float)
+
+        num_pt = points.shape[0]
+        if num_pt > 0:
+            for i in range(num_pt):
+                pt = points[i]
+                pt_y_float, pt_x_float = pt
+
+                pt_y_int = round(pt_y_float)
+                pt_x_int = round(pt_x_float)
+
+                pt_y = int(pt_y_int)  # 对真值点位置进行下采样,这里有量化误差
+                pt_x = int(pt_x_int)
+
+                # 排除掉经下采样后在边界外的点
+                if pt_y < 0 or pt_y > height - 1:
+                    continue
+                if pt_x < 0 or pt_x > width - 1:
+                    continue
+
+                # 关键点位置在heatmap上置1，并在incmap上记录该点离亚像素点的偏移量
+                heatmap[pt_y, pt_x] = 1.0
+
+        return heatmap
+
+    def _format_file_list(self, dataset_dir, label_dir):
+        image_list = glob(os.path.join(dataset_dir, "*.jpg"))
+        image_list = sorted(image_list)
+
+        info_list = []
+        label_list = []
+        for img in image_list:
+            img_name = img.split('/')[-1].split('.')[0]
+            info = img[:-3] + "npz"
+            info_list.append(info)
+
+            label = os.path.join(label_dir, 'train', img_name + '.npz')
+            label_list.append(label)
+
+        return image_list, info_list, label_list
+
+
 class MegaDepthDatasetFromPreprocessedEnhanced(MegaDepthDatasetFromPreprocessed):
     """
     配合MegaDepthDatasetCreator使用，直接读取预处理好的数据集
@@ -1162,6 +1314,33 @@ class MegaDepthDatasetFromPreprocessedEnhanced(MegaDepthDatasetFromPreprocessed)
             "not_search_mask13": not_search_mask13,
             "not_search_mask42": not_search_mask42,
         }
+
+
+class MegaDepthAdaptionDataset(Dataset):
+
+    def __init__(self, dataset_dir):
+        self.dataset_dir = dataset_dir
+        self.image_list, self.image_name_list = self._format_file_list()
+
+    def __len__(self):
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        assert image.shape[0] == 240 and image.shape[1] == 640
+        name = self.image_name_list[idx]
+        sample = {'image': image, 'name': name}
+        return sample
+
+    def _format_file_list(self):
+        image_list = glob(os.path.join(self.dataset_dir, "*.jpg"))
+        image_list = sorted(image_list)
+        image_name_list = []
+        for image in image_list:
+            image_name = (image.split('/')[-1]).split('.')[0]
+            image_name_list.append(image_name)
+
+        return image_list, image_name_list
 
 
 if __name__ == "__main__":
