@@ -16,6 +16,7 @@ from nets.megpoint_net import resnet18_fast
 from nets.megpoint_net import Extractor
 
 from nets.superpoint_net import SuperPointNetBackbone
+from nets.superpoint_net import SuperPointNetBackbone3
 from nets.superpoint_net import SuperPointExtractor
 from nets.superpoint_net import SuperPointExtractor256
 from nets.superpoint_net import SuperPointNet
@@ -29,6 +30,7 @@ from data_utils.coco_dataset import COCOMegPointHeatmapAllTrainDataset
 from data_utils.coco_dataset import COCOSuperPointTrainDataset
 from data_utils.coco_dataset import COCOSuperPointDetectionDataset
 from data_utils.coco_dataset import COCOSuperPointDescriptorDataset
+from data_utils.megadepth_dataset import MegaDepthDatasetFromPreprocessed2
 from data_utils.hpatch_dataset import HPatchDataset
 
 from utils.evaluation_tools import RepeatabilityCalculator
@@ -159,8 +161,15 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
     def _initialize_dataset(self):
         # 初始化数据集
         if self.params.model_type in ["MegPoint", "SuperPointBackbone", "SuperPointBackbone256"]:
-            self.logger.info("Initialize COCOMegPointHeatmapAllTrainDataset")
-            self.train_dataset = COCOMegPointHeatmapAllTrainDataset(self.params)
+            if self.params.dataset_type == "coco":
+                self.logger.info("Initialize COCOMegPointHeatmapAllTrainDataset")
+                self.train_dataset = COCOMegPointHeatmapAllTrainDataset(self.params)
+            elif self.params.dataset_type == 'megadepth':
+                self.logger.info("Initialize MegaDepthDatasetFromPreprocessed2")
+                self.train_dataset = MegaDepthDatasetFromPreprocessed2(self.params.megadepth_dataset_dir,
+                                                                       self.params.megadepth_label_dir)
+            else:
+                assert False
         elif self.params.model_type == "SuperPoint":
             self.logger.info("Initialzie COCOSuperPointTrainDataset")
             self.train_dataset = COCOSuperPointTrainDataset(self.params)
@@ -207,8 +216,12 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             self.logger.info("Initialize network arch for SuperPoint: SuperPoint")
             model = SuperPointNet()
         elif self.params.model_type in ["SuperPointBackbone", "SuperPointBackbone256"]:
-            self.logger.info("Initialize network arch for SuperPointBackbone : superpoint_backbone")
-            model = SuperPointNetBackbone()
+            if self.params.dataset_type == 'coco':
+                self.logger.info("Initialize network arch for SuperPointBackbone")
+                model = SuperPointNetBackbone()
+            elif self.params.dataset_type == 'megadepth':
+                self.logger.info("Initialize network arch for SuperPointBackbone3")
+                model = SuperPointNetBackbone3()
 
         elif self.params.model_type in ["SuperPointDetectionC3C4", "SuperPointDetectionC2C3C4",
                                         "SuperPointDetectionC1C2C3C4", "SuperPointDetectionC4"]:
@@ -920,13 +933,20 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
         bad = 0
 
         for i, data in enumerate(self.test_dataset):
-            first_image = data['first_image']
-            second_image = data['second_image']
             gt_homography = data['gt_homography']
             image_type = data['image_type']
 
-            image_pair = np.stack((first_image, second_image), axis=0)
-            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            if self.params.dataset_type == 'coco':
+                first_image = data['first_image']
+                second_image = data['second_image']
+                image_pair = np.stack((first_image, second_image), axis=0)
+                image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
+            elif self.params.dataset_type == 'megadepth':
+                first_image = data['first_color_image']
+                second_image = data['second_color_image']
+                image_pair = np.stack((first_image, second_image), axis=0)
+                image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).permute((0, 3, 1, 2)).contiguous()
+
             image_pair = image_pair*2./255. - 1.
 
 

@@ -39,6 +39,9 @@ class MegPointHeatmapParameters(BasicParameters):
         self.fix_grid_option = "400"
         self.fix_sample = "False"
         self.rotation_option = "none"
+        self.dataset_type = 'coco'
+        self.megadepth_dataset_dir = ''
+        self.megadepth_label_dir = ''
 
         # homography & photometric relating params using in training
         self.homography_params = {
@@ -104,6 +107,9 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--fix_grid_option", type=str, default="400")
         parser.add_argument("--fix_sample", type=str, default="False")
         parser.add_argument("--rotation_option", type=str, default="none")
+        parser.add_argument("--dataset_type", type=str, default='coco')
+        parser.add_argument('--megadepth_dataset_dir', type=str, default='')
+        parser.add_argument('--megadepth_label_dir', type=str, default='')
 
         return parser.parse_args()
 
@@ -135,6 +141,9 @@ class MegPointHeatmapParameters(BasicParameters):
         self.logger.info("fix_grid_option: %s " % self.fix_grid_option)
         self.logger.info("fix_sample: %s" % self.fix_sample)
         self.logger.info("rotation_option: %s" % self.rotation_option)
+        self.logger.info("dataset_type: %s" % self.dataset_type)
+        self.logger.info("megadepth_dataset_dir: %s" % self.megadepth_dataset_dir)
+        self.logger.info("megadepth_label_dir: %s" % self.megadepth_label_dir)
 
         self.logger.info("------------------------------------------")
 
