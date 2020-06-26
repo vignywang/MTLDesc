@@ -76,7 +76,9 @@ class HPatchDataset(Dataset):
         image_type = self.data_list[idx]['type']
 
         first_image = cv.imread(first_image_dir, cv.IMREAD_GRAYSCALE)
+        first_color_image = cv.imread(first_image_dir)[:, :, ::-1]
         second_image = cv.imread(second_image_dir, cv.IMREAD_GRAYSCALE)
+        second_color_image = cv.imread(second_image_dir)[:, :, ::-1]
 
         org_first_shape = np.shape(first_image)
         org_second_shape = np.shape(second_image)
@@ -88,10 +90,13 @@ class HPatchDataset(Dataset):
         homo = self._generate_adjust_homography(first_scale, second_scale, homo)
 
         first_image = cv.resize(first_image, (self.hpatch_width, self.hpatch_height), interpolation=cv.INTER_LINEAR)
+        first_color_image = cv.resize(first_color_image, (self.hpatch_width, self.hpatch_height), interpolation=cv.INTER_LINEAR)
         second_image = cv.resize(second_image, (self.hpatch_width, self.hpatch_height), interpolation=cv.INTER_LINEAR)
+        second_color_image = cv.resize(second_color_image, (self.hpatch_width, self.hpatch_height), interpolation=cv.INTER_LINEAR)
         # image_pair = np.stack((first_image, second_image), axis=0)
 
         sample = {'first_image': first_image, 'second_image': second_image,
+                  'first_color_image': first_color_image, 'second_color_image': second_color_image,
                   'image_type': image_type, 'gt_homography': homo}
         return sample
 
