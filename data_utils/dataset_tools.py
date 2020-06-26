@@ -518,9 +518,10 @@ class ImgAugTransform:
         """
         img = self.aug.augment_image(img)
 
-        if self.additive_shape:
-            img = self._additive_shade(img, transparency_range=self.transparency_range,
-                                       kernel_size_range=self.kernel_size_range)
+        # todo: there is bug
+        # if self.additive_shape:
+        #     img = self._additive_shade(img, transparency_range=self.transparency_range,
+        #                                kernel_size_range=self.kernel_size_range)
         return img
 
 
