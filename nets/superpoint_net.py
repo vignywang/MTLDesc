@@ -349,15 +349,33 @@ class SuperPointExtractor256(nn.Module):
             combines = [1, 1, 1, 1]
         self.relu = nn.ReLU()
         self.fc1 = nn.Linear((64*combines[0]+64*combines[1]+128*combines[2]+128*combines[3]), 256)
-        self.fc2 = nn.Linear(256, 256)
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
 
     def __call__(self, feature):
-        feature = self.relu(self.fc1(self.relu(feature)))
-        feature = self.fc2(feature)
+        feature = self.fc1(self.relu(feature))
+        desp = feature / torch.norm(feature, dim=2, keepdim=True)
+
+        return desp
+
+
+class SuperPointExtractor128(nn.Module):
+
+    def __init__(self, combines=None):
+        super(SuperPointExtractor128, self).__init__()
+        if combines is None:
+            combines = [1, 1, 1, 1]
+        self.relu = nn.ReLU()
+        self.fc1 = nn.Linear((64*combines[0]+64*combines[1]+128*combines[2]+128*combines[3]), 128)
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+
+    def __call__(self, feature):
+        feature = self.fc1(self.relu(feature))
         desp = feature / torch.norm(feature, dim=2, keepdim=True)
 
         return desp

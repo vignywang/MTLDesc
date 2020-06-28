@@ -110,6 +110,7 @@ class MegPointHeatmapParameters(BasicParameters):
         parser.add_argument("--dataset_type", type=str, default='coco')
         parser.add_argument('--megadepth_dataset_dir', type=str, default='')
         parser.add_argument('--megadepth_label_dir', type=str, default='')
+        parser.add_argument('--adjust_lr', type=str, default='False')
 
         return parser.parse_args()
 
