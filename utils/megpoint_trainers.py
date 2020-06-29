@@ -219,8 +219,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             model = SuperPointNet()
         elif self.params.model_type in ["SuperPointBackbone", "SuperPointBackbone256", "SuperPointBackbone128"]:
             if self.params.dataset_type == 'coco':
-                self.logger.info("Initialize network arch for SuperPointBackbone")
-                model = SuperPointNetBackbone()
+                self.logger.info("Initialize network arch for SuperPointBackbone3")
+                model = SuperPointNetBackbone3()
             elif self.params.dataset_type == 'megadepth':
                 self.logger.info("Initialize network arch for SuperPointBackbone3")
                 model = SuperPointNetBackbone3()
@@ -943,16 +943,10 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             gt_homography = data['gt_homography']
             image_type = data['image_type']
 
-            if self.params.dataset_type == 'coco':
-                first_image = data['first_image']
-                second_image = data['second_image']
-                image_pair = np.stack((first_image, second_image), axis=0)
-                image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).unsqueeze(dim=1)
-            elif self.params.dataset_type == 'megadepth':
-                first_image = data['first_color_image']
-                second_image = data['second_color_image']
-                image_pair = np.stack((first_image, second_image), axis=0)
-                image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).permute((0, 3, 1, 2)).contiguous()
+            first_image = data['first_color_image']
+            second_image = data['second_color_image']
+            image_pair = np.stack((first_image, second_image), axis=0)
+            image_pair = torch.from_numpy(image_pair).to(torch.float).to(self.device).permute((0, 3, 1, 2)).contiguous()
 
             image_pair = image_pair*2./255. - 1.
 

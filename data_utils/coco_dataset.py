@@ -221,8 +221,8 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         rotation = rotation_options[params.rotation_option]
 
         self.homography = HomographyAugmentation(rotation=rotation)
-        self.photometric = PhotometricAugmentation()
-        # self.photometric = ImgAugTransform()
+        # self.photometric = PhotometricAugmentation()
+        self.photometric = ImgAugTransform()
 
         fix_grid_options = {
             "100": [10, 10],
@@ -259,9 +259,11 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
             valid_mask: [n] 表示这些坐标点的有效性
             not_search_mask: [n,n] 用于构造loss时负样本不搜索的区域
         """
-        image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
+        image = cv.imread(self.image_list[idx])[:, :, ::-1].copy()
+        image = cv.resize(image, dsize=(self.width, self.height), interpolation=cv.INTER_LINEAR)
+
         point = np.load(self.point_list[idx])
-        point_mask = np.ones_like(image).astype(np.float32)
+        point_mask = np.ones_like(image).astype(np.float32)[:, :, 0].copy()
 
         # 1、由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
         if torch.rand([]).item() < 0.5:
@@ -269,6 +271,7 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
                 image.copy(), point_mask.copy(), point.copy(), np.eye(3)
         else:
             warped_image, warped_point_mask, warped_point, homography = self.homography(image, point, return_homo=True)
+            warped_point_mask = warped_point_mask[:, :, 0].copy()
 
         if torch.rand([]).item() < 0.5:
             image = self.photometric(image)
@@ -288,7 +291,7 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         else:
             desp_point = self._fix_sample_point()
         # desp_point = self._sample_feature_point(point)
-        height, width = image.shape
+        height, width, _ = image.shape
 
         warped_desp_point, valid_mask, not_search_mask = self._generate_warped_point(
             desp_point, homography, height, width)
@@ -305,8 +308,8 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
         image = image.astype(np.float32) * 2. / 255. - 1.
         warped_image = warped_image.astype(np.float32) * 2. / 255. - 1.
 
-        image = torch.from_numpy(image).unsqueeze(dim=0)
-        warped_image = torch.from_numpy(warped_image).unsqueeze(dim=0)
+        image = torch.from_numpy(image).permute((2, 0, 1))
+        warped_image = torch.from_numpy(warped_image).permute((2, 0, 1))
 
         point_mask = torch.from_numpy(point_mask)
         warped_point_mask = torch.from_numpy(warped_point_mask)
@@ -503,14 +506,24 @@ class COCOMegPointHeatmapAllTrainDataset(Dataset):
 
     def _format_file_list(self):
         dataset_dir = self.dataset_dir
-        org_image_list = glob.glob(os.path.join(dataset_dir, "*.jpg"))
-        org_image_list = sorted(org_image_list)
-        image_list = []
+        image_root = os.path.join(dataset_dir, "images")
+        point_root = os.path.join(dataset_dir, 'pseudo_image_points_1')
+        org_image_list = glob.glob(os.path.join(image_root, "*.jpg"))
+        org_image_list = sorted(org_image_list, key=lambda x: int(x.split('/')[-1].split('.')[0].split('_')[-1]))
+
+        choosed_idx = np.random.choice(np.arange(0, len(org_image_list)), size=int(len(org_image_list) / 8.), replace=False)
+        org_image_list = [org_image_list[idx] for idx in choosed_idx]
+
         point_list = []
-        for org_image_dir in org_image_list:
-            name = (org_image_dir.split('/')[-1]).split('.')[0]
-            point_dir = os.path.join(dataset_dir, name + '.npy')
-            image_list.append(org_image_dir)
+        image_list = []
+        for image_dir in org_image_list:
+            name = (image_dir.split('/')[-1]).split('.')[0]
+            point_dir = os.path.join(point_root, name + '.npy')
+            try:
+                assert os.path.isfile(point_dir)
+            except:
+                continue
+            image_list.append(image_dir)
             point_list.append(point_dir)
 
         return image_list, point_list
