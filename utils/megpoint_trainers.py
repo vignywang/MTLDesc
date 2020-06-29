@@ -32,6 +32,7 @@ from data_utils.coco_dataset import COCOSuperPointTrainDataset
 from data_utils.coco_dataset import COCOSuperPointDetectionDataset
 from data_utils.coco_dataset import COCOSuperPointDescriptorDataset
 from data_utils.megadepth_dataset import MegaDepthDatasetFromPreprocessed2
+from data_utils.megadepth_coco_dataset import MegaDepthCOCODataset
 from data_utils.hpatch_dataset import HPatchDataset
 
 from utils.evaluation_tools import RepeatabilityCalculator
@@ -170,6 +171,11 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
                 self.logger.info("Initialize MegaDepthDatasetFromPreprocessed2")
                 self.train_dataset = MegaDepthDatasetFromPreprocessed2(self.params.megadepth_dataset_dir,
                                                                        self.params.megadepth_label_dir)
+            elif self.params.dataset_type == 'megacoco':
+                self.logger.info("Initialize MegaDepthCOCODataset")
+                self.train_dataset = MegaDepthCOCODataset(self.params.dataset_dir,
+                                                          self.params.megadepth_dataset_dir,
+                                                          self.params.megadepth_label_dir)
             else:
                 assert False
         elif self.params.model_type == "SuperPoint":
@@ -218,12 +224,8 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             self.logger.info("Initialize network arch for SuperPoint: SuperPoint")
             model = SuperPointNet()
         elif self.params.model_type in ["SuperPointBackbone", "SuperPointBackbone256", "SuperPointBackbone128"]:
-            if self.params.dataset_type == 'coco':
-                self.logger.info("Initialize network arch for SuperPointBackbone3")
-                model = SuperPointNetBackbone3()
-            elif self.params.dataset_type == 'megadepth':
-                self.logger.info("Initialize network arch for SuperPointBackbone3")
-                model = SuperPointNetBackbone3()
+            self.logger.info("Initialize network arch for SuperPointBackbone3")
+            model = SuperPointNetBackbone3()
 
         elif self.params.model_type in ["SuperPointDetectionC3C4", "SuperPointDetectionC2C3C4",
                                         "SuperPointDetectionC1C2C3C4", "SuperPointDetectionC4"]:
