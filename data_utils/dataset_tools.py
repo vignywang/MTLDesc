@@ -70,7 +70,8 @@ class HomographyAugmentation(object):
         self.allow_artifacts = allow_artifacts
 
     def __call__(self, image, points, mask=None, return_homo=False, required_point_num=False, required_num=100):
-        h, w = image.shape
+        shape = image.shape
+        h, w = shape[0], shape[1]
         homography = self.sample(height=h, width=w)
         if required_point_num:
             warped_points, warped_idx = self._warp_keypoints(points, homography, height=h, width=w, filter_org=True)
@@ -110,8 +111,8 @@ class HomographyAugmentation(object):
         return image, mask, homography
 
     def _compute_warped_image_and_mask(self, image, homography, mask=None):
-        h, w = image.shape
-        dsize = (w, h)
+        shape = image.shape
+        dsize = (shape[1], shape[0])
         warped_image = cv.warpPerspective(image, homography, dsize=dsize, flags=cv.INTER_LINEAR)
         if mask is None:
             org_mask = np.ones_like(image, dtype=np.float32)
