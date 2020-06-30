@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 
 from data_utils.dataset_tools import HomographyAugmentation
 from data_utils.dataset_tools import ImgAugTransform
+from data_utils.dataset_tools import space_to_depth
 from data_utils.dataset_tools import draw_image_keypoints
 
 
@@ -353,6 +354,180 @@ class MegaDepthCOCODataset(Dataset):
             )
 
         return data_list
+
+
+class MegaDepthCOCOSuperPointDataset(MegaDepthCOCODataset):
+    """
+    use to train superpoint detection head like network, i.e. 65-classes label
+    """
+    def __init__(self, coco_dataset_dir, mega_dataset_dir, mega_label_dir):
+        super(MegaDepthCOCOSuperPointDataset, self).__init__(coco_dataset_dir, mega_dataset_dir, mega_label_dir)
+
+    def _get_mega_data(self, data_info):
+        image_dir = data_info['image']
+        info_dir = data_info['info']
+        label_dir = data_info['label']
+
+        image12 = cv.imread(image_dir)[:, :, ::-1].copy()  # 交换BGR为RGB
+        image1, image2 = np.split(image12, 2, axis=1)
+        h, w, _ = image1.shape
+
+        if torch.rand([]).item() < 0.5:
+            image1 = self.photometric(image1)
+            image2 = self.photometric(image2)
+
+        # 2、对点和标签的相关处理
+        label = np.load(label_dir)
+        points1 = label["points_0"]
+        points2 = label["points_1"]
+
+        # 2.1 输入的点标签和掩膜的预处理
+        points1 = np.abs(np.floor(points1)).astype(np.int)
+        points2 = np.abs(np.floor(points2)).astype(np.int)
+
+        points1 = torch.from_numpy(points1)
+        points2 = torch.from_numpy(points2)
+
+        points1_mask = torch.from_numpy(np.ones_like(image1)[:, :, 0])
+        points2_mask = torch.from_numpy(np.ones_like(image2)[:, :, 0])
+
+        # 2.2 得到第一副图点和标签的最终输出
+        label1 = self._convert_points_to_label(points1).to(torch.long)
+        mask1 = space_to_depth(points1_mask).to(torch.uint8)
+        mask1 = torch.all(mask1, dim=0).to(torch.float)
+
+        # 2.3 得到第二副图点和标签的最终输出
+        label2 = self._convert_points_to_label(points2).to(torch.long)
+        mask2 = space_to_depth(points2_mask).to(torch.uint8)
+        mask2 = torch.all(mask2, dim=0).to(torch.float)
+
+        image1 = (torch.from_numpy(image1).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).contiguous()
+        image2 = (torch.from_numpy(image2).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).contiguous()
+
+        info = np.load(info_dir)
+        desp_point1 = info["desp_point1"]
+        desp_point2 = info["desp_point2"]
+        valid_mask = info["valid_mask"]
+        not_search_mask = info["not_search_mask"]
+
+        desp_point1 = torch.from_numpy(desp_point1)
+        desp_point2 = torch.from_numpy(desp_point2)
+
+        valid_mask = torch.from_numpy(valid_mask).to(torch.float)
+        not_search_mask = torch.from_numpy(not_search_mask).to(torch.float)
+
+        return {
+            'image': image1,
+            'mask': mask1,
+            'label': label1,
+            'warped_image': image2,
+            'warped_mask': mask2,
+            'warped_label': label2,
+
+            "desp_point": desp_point1,  # [n,1,2]
+            "warped_desp_point": desp_point2,  # [n,1,2]
+            "valid_mask": valid_mask,  # [n]
+            "not_search_mask": not_search_mask,  # [n,n]
+        }
+
+    def _get_coco_data(self, data_info):
+        image = cv.imread(data_info['image'])[:, :, ::-1].copy()
+        image = cv.resize(image, dsize=(self.width, self.height), interpolation=cv.INTER_LINEAR)
+
+        point = np.load(data_info['point'])
+        point_mask = np.ones_like(image).astype(np.float32)[:, :, 0].copy()
+
+        shape = image.shape
+        height, width = shape[0], shape[1]
+
+        # 1、由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        if torch.rand([]).item() < 0.5:
+            warped_image, warped_point_mask, warped_point, homography = \
+                image.copy(), point_mask.copy(), point.copy(), np.eye(3)
+        else:
+            warped_image, warped_point_mask, warped_point, homography = self.homography(image, point, return_homo=True)
+            warped_point_mask = warped_point_mask[:, :, 0].copy()
+
+        # 1、对图像的相关处理
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+            warped_image = self.photometric(warped_image)
+
+        image = torch.from_numpy(image).to(torch.float).permute((2, 0, 1))
+        warped_image = torch.from_numpy(warped_image).to(torch.float).permute((2, 0, 1))
+        image = image*2./255. - 1.
+        warped_image = warped_image*2./255. - 1.
+
+        # 2、对点和标签的相关处理
+        # 2.1 输入的点标签和掩膜的预处理
+        point = np.abs(np.floor(point)).astype(np.int)
+        warped_point = np.abs(np.floor(warped_point)).astype(np.int)
+
+        point = torch.from_numpy(point)
+        warped_point = torch.from_numpy(warped_point)
+
+        point_mask = torch.from_numpy(point_mask)
+        warped_point_mask = torch.from_numpy(warped_point_mask)
+
+        # 2.2 得到第一副图点和标签的最终输出
+        label = self._convert_points_to_label(point).to(torch.long)
+        mask = space_to_depth(point_mask).to(torch.uint8)
+        mask = torch.all(mask, dim=0).to(torch.float)
+
+        # 2.3 得到第二副图点和标签的最终输出
+        warped_label = self._convert_points_to_label(warped_point).to(torch.long)
+        warped_mask = space_to_depth(warped_point_mask).to(torch.uint8)
+        warped_mask = torch.all(warped_mask, dim=0).to(torch.float)
+
+        # 3、采样训练描述子要用的点
+        desp_point = self._random_sample_point()
+
+        warped_desp_point, valid_mask, not_search_mask = self._generate_warped_point(
+            desp_point, homography, height, width)
+
+        desp_point = torch.from_numpy(self._scale_point_for_sample(desp_point))
+        warped_desp_point = torch.from_numpy(self._scale_point_for_sample(warped_desp_point))
+
+        valid_mask = torch.from_numpy(valid_mask)
+        not_search_mask = torch.from_numpy(not_search_mask)
+
+        # 4、返回样本
+        return {
+            'image': image,
+            'mask': mask,
+            'label': label,
+            'warped_image': warped_image,
+            'warped_mask': warped_mask,
+            'warped_label': warped_label,
+
+            "desp_point": desp_point,  # [n,1,2]
+            "warped_desp_point": warped_desp_point,  # [n,1,2]
+            "valid_mask": valid_mask,  # [n]
+            "not_search_mask": not_search_mask,  # [n,n]
+        }
+
+    def _convert_points_to_label(self, points):
+        height = self.height
+        width = self.width
+        n_height = int(height / 8)
+        n_width = int(width / 8)
+        assert n_height * 8 == height and n_width * 8 == width
+
+        num_pt = points.shape[0]
+        label = torch.zeros((height * width))
+        if num_pt > 0:
+            points_h, points_w = torch.split(points, 1, dim=1)
+            points_idx = points_w + points_h * width
+            label = label.scatter_(dim=0, index=points_idx[:, 0], value=1.0).reshape((height, width))
+        else:
+            label = label.reshape((height, width))
+
+        dense_label = space_to_depth(label)
+        dense_label = torch.cat((dense_label, 0.5 * torch.ones((1, n_height, n_width))), dim=0)  # [65, 30, 40]
+        sparse_label = torch.argmax(dense_label, dim=0)  # [30,40]
+
+        return sparse_label
+
 
 
 
