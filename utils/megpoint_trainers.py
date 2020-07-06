@@ -103,7 +103,8 @@ class MegPointTrainerTester(object):
             # break  # todo
 
             # validation
-            self._validate_one_epoch(i)
+            if i >= int(self.epoch_num * 2/ 3):
+                self._validate_one_epoch(i)
 
             if self.adjust_lr:
                 # adjust learning rate
@@ -430,7 +431,7 @@ class MegPointHeatmapTrainer(MegPointTrainerTester):
             point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
             point_loss = self.point_loss(heatmap_pred_pair[:, 0, :, :], heatmap_gt_pair, point_mask_pair)
 
-            loss = desp_loss + point_loss
+            loss = desp_loss + 0.1 * point_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
