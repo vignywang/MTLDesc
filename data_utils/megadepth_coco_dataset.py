@@ -19,8 +19,12 @@ class MegaDepthCOCODataset(Dataset):
     """
     Combination of MegaDetph and COCO
     """
-    def __init__(self, coco_dataset_dir, mega_dataset_dir, mega_label_dir):
-        self.data_list = self._format_file_list(coco_dataset_dir, mega_dataset_dir, mega_label_dir)
+    def __init__(self, **config):
+        self.data_list = self._format_file_list(
+            config['coco_dataset_dir'],
+            config['megadepth_dataset_dir'],
+            config['megadepth_label_dir'],
+        )
 
         self.height = 240
         self.width = 320
@@ -360,8 +364,8 @@ class MegaDepthCOCOSuperPointDataset(MegaDepthCOCODataset):
     """
     use to train superpoint detection head like network, i.e. 65-classes label
     """
-    def __init__(self, coco_dataset_dir, mega_dataset_dir, mega_label_dir):
-        super(MegaDepthCOCOSuperPointDataset, self).__init__(coco_dataset_dir, mega_dataset_dir, mega_label_dir)
+    def __init__(self, **config):
+        super(MegaDepthCOCOSuperPointDataset, self).__init__(**config)
 
     def _get_mega_data(self, data_info):
         image_dir = data_info['image']

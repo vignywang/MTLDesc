@@ -486,10 +486,10 @@ class SuperPointDetector(nn.Module):
         return logit, prob, c1, c2, c3, c4
 
 
-class SuperPointNetDescriptor(nn.Module):
+class SuperPointDescriptor(nn.Module):
 
     def __init__(self):
-        super(SuperPointNetDescriptor, self).__init__()
+        super(SuperPointDescriptor, self).__init__()
         self.relu = torch.nn.ReLU(inplace=True)
         self.pool = torch.nn.MaxPool2d(kernel_size=2, stride=2)
         # Shared Encoder.

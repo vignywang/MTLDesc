@@ -59,11 +59,10 @@ def generate_hpatch_data_list(hpatch_dir):
 
 class HPatchDataset(Dataset):
 
-    def __init__(self, params):
-        self.params = params
-        self.hpatch_height = params.hpatch_height
-        self.hpatch_width = params.hpatch_width
-        self.dataset_dir = params.hpatch_dataset_dir
+    def __init__(self, **config):
+        self.hpatch_height = config['height']
+        self.hpatch_width = config['width']
+        self.dataset_dir = config['hpatch_dataset_dir']
         self.data_list = self._format_file_list()
 
     def __len__(self):
