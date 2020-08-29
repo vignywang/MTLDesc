@@ -98,8 +98,8 @@ class BaseTrainer(object):
             # break  # todo
 
             # validation
-            # if i >= int(self.config['train']['epoch_num'] * 2/ 3):
-            self._validate_one_epoch(i)
+            if i >= int(self.config['train']['epoch_num'] * 2/ 3):
+                self._validate_one_epoch(i)
 
             if self.config['train']['adjust_lr']:
                 # adjust learning rate
