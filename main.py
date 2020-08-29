@@ -22,6 +22,15 @@ def setup_seed():
     np.random.seed(2933)
 
 
+def write_config(logger, prefix, config):
+    for k, v in config.items():
+        if isinstance(v, dict):
+            logger.info('{}: '.format(k))
+            write_config(logger, prefix+' '*4, v)
+        else:
+            logger.info('{}{}: {}'.format(prefix, k, v))
+
+
 def main():
     setup_seed()
     parser = argparse.ArgumentParser()
@@ -43,6 +52,9 @@ def main():
     log_path = Path('log', config['name']+'_'+args.indicator)
     log_path.mkdir(parents=True, exist_ok=True)
     config['logger'] = get_logger(str(log_path))
+
+    # write config
+    write_config(config['logger'], '', config)
 
     # set gpu devices
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpus
