@@ -236,14 +236,14 @@ class FeatureFusionModule(nn.Module):
 
 
 class BiSeNetV1(nn.Module):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, **config):
         super(BiSeNetV1, self).__init__()
         self.cp = ContextPath()
         self.sp = SpatialPath()
         self.ffm = FeatureFusionModule(256, 256)
-        # self.conv_out = BiSeNetOutput(256, 256, n_classes)
-        # self.conv_out16 = BiSeNetOutput(128, 64, n_classes)
-        # self.conv_out32 = BiSeNetOutput(128, 64, n_classes)
+        self.conv_out = BiSeNetOutput(256, 256, config['n_classes'])
+        self.conv_out16 = BiSeNetOutput(128, 64, config['n_classes'])
+        self.conv_out32 = BiSeNetOutput(128, 64, config['n_classes'])
         self.init_weight()
 
     def forward(self, x):
@@ -252,16 +252,19 @@ class BiSeNetV1(nn.Module):
         feat_sp = self.sp(x)
         feat_fuse = self.ffm(feat_sp, feat_cp8)
 
-        # feat_out = self.conv_out(feat_fuse)
-        # feat_out16 = self.conv_out16(feat_cp8)
-        # feat_out32 = self.conv_out32(feat_cp16)
+        feat_out = self.conv_out(feat_fuse)
+        feat_out16 = self.conv_out16(feat_cp8)
+        feat_out32 = self.conv_out32(feat_cp16)
 
         # feat_out = F.interpolate(feat_out, (H, W), mode='bilinear', align_corners=True)
         # feat_out16 = F.interpolate(feat_out16, (H, W), mode='bilinear', align_corners=True)
         # feat_out32 = F.interpolate(feat_out32, (H, W), mode='bilinear', align_corners=True)
-        # return feat_out, feat_out16, feat_out32
+        if self.training:
+            return feat_out, feat_out16, feat_out32
+        else:
+            return feat_out
         # return feat_out
-        return feat_fuse
+        # return feat_fuse
 
     def init_weight(self):
         for ly in self.children():
