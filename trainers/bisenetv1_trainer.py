@@ -14,6 +14,7 @@ from trainers.base_trainer import BaseTrainer
 from utils.utils import spatial_nms
 from utils.utils import DescriptorGeneralTripletLoss
 from utils.utils import PointHeatmapWeightedBCELoss
+from .utils import resize_labels
 
 
 class BiSeNetV1Trainer(BaseTrainer):
@@ -37,18 +38,7 @@ class BiSeNetV1Trainer(BaseTrainer):
 
     def _initialize_model(self):
         self.logger.info("Initialize network arch {}".format(self.config['model']['backbone']))
-        model = get_model(self.config['model']['backbone'])()
-
-        # load pre-trained parameters
-        self.logger.info('Load pretrained parameters from {}'.format(self.config['model']['pretrained_ckpt']))
-        model_dict = model.state_dict()
-        pretrain_dict = torch.load(self.config['model']['pretrained_ckpt'], map_location=self.device)
-        pretrain_dict = {k: v for k, v in pretrain_dict.items() if k in model_dict}
-        model_dict.update(pretrain_dict)
-        model.load_state_dict(model_dict)
-
-        # freeze
-        model.freeze()
+        model = get_model(self.config['model']['backbone'])(**self.config['model'])
 
         if self.multi_gpus:
             model = torch.nn.DataParallel(model)
@@ -59,6 +49,10 @@ class BiSeNetV1Trainer(BaseTrainer):
         # 初始化heatmap loss
         self.logger.info("Initialize the PointHeatmapWeightedBCELoss.")
         self.point_loss = PointHeatmapWeightedBCELoss()
+
+        # initialize segmentation loss
+        self.logger.info('Initialize the CrossEntropyLoss for Segmentation')
+        self.seg_loss = torch.nn.CrossEntropyLoss(ignore_index=255).to(self.device)
 
         # 初始化描述子loss
         self.logger.info("Initialize the DescriptorGeneralTripletLoss.")
@@ -112,16 +106,17 @@ class BiSeNetV1Trainer(BaseTrainer):
 
     def _train_func(self, epoch_idx):
         self.model.train()
-        self.model.part_eval()
 
         stime = time.time()
         for i, data in enumerate(self.train_dataloader):
 
             image = data["image"].to(self.device)
+            label = data['label']
             heatmap_gt = data['heatmap'].to(self.device)
             point_mask = data['point_mask'].to(self.device)
 
             warped_image = data["warped_image"].to(self.device)
+            warped_label = data['warped_label']
             warped_heatmap_gt = data['warped_heatmap'].to(self.device)
             warped_point_mask = data['warped_point_mask'].to(self.device)
 
@@ -133,12 +128,21 @@ class BiSeNetV1Trainer(BaseTrainer):
             shape = image.shape
 
             image_pair = torch.cat((image, warped_image), dim=0)
-            heatmap_pred_pair, desp_pair = self.model(image_pair)
+            heatmap_pred_pair, desp_pair, logits_pair = self.model(image_pair)
 
             # 计算关键点loss
             heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
             point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
             point_loss = self.point_loss(heatmap_pred_pair[:, 0, :, :], heatmap_gt_pair, point_mask_pair)
+
+            # 计算分割loss
+            seg_loss = []
+            label_pair = torch.cat((label, warped_label), dim=0)
+            for logit_pair in logits_pair:
+                _, _, H, W = logit_pair.shape
+                label_ = resize_labels(label_pair, size=(W, H))
+                seg_loss.append(self.seg_loss(logit_pair, label_.to(self.device)))
+            seg_loss = torch.mean(torch.stack(seg_loss))
 
             # compute descriptor loss
             desp_point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
@@ -149,7 +153,7 @@ class BiSeNetV1Trainer(BaseTrainer):
 
             desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
 
-            loss = 0.1 * point_loss + desp_loss
+            loss = point_loss + desp_loss + seg_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -163,22 +167,23 @@ class BiSeNetV1Trainer(BaseTrainer):
 
                 point_loss_val = point_loss.item()
                 desp_loss_val = desp_loss.item()
+                seg_loss_val = seg_loss.item()
                 loss_val = loss.item()
 
-                self.summary_writer.add_histogram('descriptor', desp_pair)
-                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
-                                 " one step cost %.4fs. "
+                # self.summary_writer.add_histogram('descriptor', desp_pair)
+                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f,"
+                                 " seg_loss: %.4f, one step cost %.4fs. "
                                  % (epoch_idx, i, self.epoch_length, loss_val,
-                                    point_loss_val, desp_loss_val,
+                                    point_loss_val, desp_loss_val, seg_loss_val,
                                     (time.time() - stime) / self.config['train']['log_freq'],
                                     ))
                 stime = time.time()
 
         # save the model
         if self.multi_gpus:
-            torch.save(self.model.module.state_dict(), os.path.join(self.config['ckpt_path'], 'model_%02d.pt' % epoch_idx))
+            torch.save(self.model.module.state_dict(), os.path.join(self.config['ckpt_path'], 'model_final.pt'))
         else:
-            torch.save(self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'model_%02d.pt' % epoch_idx))
+            torch.save(self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'model_final.pt'))
 
     def _inference_func(self, image_pair):
         """
@@ -186,7 +191,7 @@ class BiSeNetV1Trainer(BaseTrainer):
         """
         self.model.eval()
         _, _, height, width = image_pair.shape
-        heatmap_pair, desp_pair = self.model(image_pair)
+        heatmap_pair, desp_pair, _ = self.model(image_pair)
 
         # 得到对应的关键点
         heatmap_pair = torch.sigmoid(heatmap_pair)

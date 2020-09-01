@@ -291,11 +291,14 @@ class BiSeNetV1(nn.Module):
 
 
 class BiSeNetV1Point(nn.Module):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, **config):
         super(BiSeNetV1Point, self).__init__()
         self.cp = ContextPath()
         self.sp = SpatialPath()
         self.ffm = FeatureFusionModule(256, 256)
+        self.conv_out = BiSeNetOutput(256, 256, config['n_classes'])
+        self.conv_out16 = BiSeNetOutput(128, 64, config['n_classes'])
+        self.conv_out32 = BiSeNetOutput(128, 64, config['n_classes'])
 
         # heatmap
         self.heatmap = nn.Conv2d(4, 1, kernel_size=3, stride=1, padding=1)
@@ -311,16 +314,22 @@ class BiSeNetV1Point(nn.Module):
         feat_sp = self.sp(x)
         feat_fuse = self.ffm(feat_sp, feat_cp8)
 
+        feat_out = self.conv_out(feat_fuse)
+        feat_out16 = self.conv_out16(feat_cp8)
+        feat_out32 = self.conv_out32(feat_cp16)
+
         # heatmap
         feat_fuse_up = F.pixel_shuffle(feat_fuse, 8)
         heatmap = self.heatmap(feat_fuse_up)
 
         # descriptor
         dense_descriptor = self.descriptor(feat_fuse)
-        # todo: 归一化很耗时
         dense_descriptor = dense_descriptor / torch.norm(dense_descriptor, dim=1, keepdim=True)
 
-        return heatmap, dense_descriptor
+        if self.training:
+            return heatmap, dense_descriptor, [feat_out, feat_out16, feat_out32]
+        else:
+            return heatmap, dense_descriptor, feat_out
 
     def init_weight(self):
         for ly in self.children():
