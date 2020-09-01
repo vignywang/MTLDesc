@@ -3,7 +3,8 @@ trainer: bisenetv1_trainer.BiSeNetV1Trainer
 
 model:
     backbone: bisenet_models.bisenetv1.BiSeNetV1Point
-    pretrained_ckpt: /home/yuyang/data/aachen/Aachen-Day-Night/weights/mlifeat128megacoco/segmentation.pt
+    n_classes: 182
+    # pretrained_ckpt: /home/yuyang/data/aachen/Aachen-Day-Night/weights/mlifeat128megacoco/segmentation.pt
 
 test:
     detection_threshold: 0.9
@@ -17,26 +18,21 @@ test:
     width: 640
 
 train:
-    adjust_lr: true
+    adjust_lr: false
     lr: 0.001
     weight_decay: 0.0001
-    batch_size: 24
-    epoch_num: 30
-    log_freq: 100
+    batch_size: 64
+    epoch_num: 150
+    log_freq: 10
     num_workers: 8
-    validate_after: 0.7
+    validate_after: 0 # 0.7
 
-    dataset: megadepth_coco_dataset.MegaDepthCOCODataset
-    coco_dataset_dir: /data/yuyang/data1/MegPoint/dataset/coco/train2014
-    megadepth_dataset_dir: /data/yuyang/MegaDepthOrder/preprocessed_train_dataset
-    megadepth_label_dir: /data/yuyang/MegaDepthOrder/preprocessed_train_label
+    dataset: cocostuff_dataset.CocoStuff10kTrainPoint
+    root: /home/yuyang/data/coco-stuff-10k
+    flip: true
+    scales: [0.5, 0.75, 1.0, 1.25, 1.5]
 
-    height: 240
-    width: 320
-
-    fix_grid_option: 400
-    fix_sample: false
-    rotation_option: none
-    do_augmentation: true
+    height: 224
+    width: 224
 
 
