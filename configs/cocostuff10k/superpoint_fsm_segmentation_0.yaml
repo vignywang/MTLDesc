@@ -1,4 +1,4 @@
-name: bisenetv1
+name: superpoint_fsm_seg
 trainer: bisenetv1_trainer.BiSeNetV1Trainer
 
 model:
@@ -23,11 +23,11 @@ train:
     lr: 0.001
     weight_decay: 0.0001
     batch_size: 32
-    epoch_num: 150
+    epoch_num: 50
     log_freq: 10
     num_workers: 8
-    validate_after: 0 # 0.7
-    seg_weight: 0.1
+    validate_after: 0.7
+    seg_weight: 0
 
     dataset: cocostuff_dataset.CocoStuff10kTrainPoint
     root: /home/yuyang/data/coco-stuff-10k

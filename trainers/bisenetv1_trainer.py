@@ -138,10 +138,10 @@ class BiSeNetV1Trainer(BaseTrainer):
             # 计算分割loss
             seg_loss = []
             label_pair = torch.cat((label, warped_label), dim=0)
-            for logit_pair in logits_pair:
-                _, _, H, W = logit_pair.shape
-                label_ = resize_labels(label_pair, size=(W, H))
-                seg_loss.append(self.seg_loss(logit_pair, label_.to(self.device)))
+            # for logit_pair in logits_pair:
+            _, _, H, W = logits_pair.shape
+            label_ = resize_labels(label_pair, size=(W, H))
+            seg_loss.append(self.seg_loss(logits_pair, label_.to(self.device)))
             seg_loss = torch.mean(torch.stack(seg_loss))
 
             # compute descriptor loss
@@ -153,7 +153,7 @@ class BiSeNetV1Trainer(BaseTrainer):
 
             desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
 
-            loss = point_loss + desp_loss + seg_loss
+            loss = point_loss + desp_loss + self.config['train']['seg_weight'] * seg_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
