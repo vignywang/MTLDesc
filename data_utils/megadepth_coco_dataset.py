@@ -360,6 +360,93 @@ class MegaDepthCOCODataset(Dataset):
         return data_list
 
 
+class MegaDepthCOCOSegmentationDataset(MegaDepthCOCODataset):
+
+    def __init__(self, **config):
+        super(MegaDepthCOCOSegmentationDataset, self).__init__(**config)
+        self.mean_rgb = np.array([122.675, 116.669, 104.008])
+
+    def _get_mega_data(self, data_info):
+        res = super(MegaDepthCOCOSegmentationDataset, self)._get_mega_data(data_info)
+        image_dir = data_info['image']
+
+        image12 = cv.imread(image_dir)[:, :, ::-1].copy()  # 交换BGR为RGB
+        image12 = image12 - self.mean_rgb
+        image1, image2 = np.split(image12, 2, axis=1)
+        res['image_seg'] = (torch.from_numpy(image1).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).to(torch.float32).contiguous()
+        res['warped_image_seg'] = (torch.from_numpy(image2).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).to(torch.float32).contiguous()
+        return res
+
+    def _get_coco_data(self, data_info):
+        image = cv.imread(data_info['image'])[:, :, ::-1].copy()
+        image = cv.resize(image, dsize=(self.width, self.height), interpolation=cv.INTER_LINEAR)
+
+        image_seg = image - self.mean_rgb
+
+        point = np.load(data_info['point'])
+        point_mask = np.ones_like(image).astype(np.float32)[:, :, 0].copy()
+
+        # 1、由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
+        if torch.rand([]).item() < 0.5:
+            warped_image, warped_point_mask, warped_point, homography = \
+                image.copy(), point_mask.copy(), point.copy(), np.eye(3)
+        else:
+            warped_image, warped_point_mask, warped_point, homography = self.homography(image, point, return_homo=True)
+            warped_point_mask = warped_point_mask[:, :, 0].copy()
+
+        warped_image_seg = warped_image - self.mean_rgb
+
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+            warped_image = self.photometric(warped_image)
+
+        # 2.1 得到第一副图点构成的热图
+        heatmap = self._convert_points_to_heatmap(point)
+
+        # 2.2 得到第二副图点构成的热图
+        warped_heatmap = self._convert_points_to_heatmap(warped_point)
+
+        # 3、采样训练描述子要用的点
+        desp_point = self._random_sample_point()
+        # desp_point = self._sample_feature_point(point)
+        shape = image.shape
+
+        warped_desp_point, valid_mask, not_search_mask = self._generate_warped_point(
+            desp_point, homography, shape[0], shape[1])
+
+        image = image.astype(np.float32) * 2. / 255. - 1.
+        warped_image = warped_image.astype(np.float32) * 2. / 255. - 1.
+
+        image = torch.from_numpy(image).permute((2, 0, 1))
+        warped_image = torch.from_numpy(warped_image).permute((2, 0, 1))
+        image_seg = torch.from_numpy(image_seg).permute((2, 0, 1)).to(torch.float32)
+        warped_image_seg = torch.from_numpy(warped_image_seg).permute((2, 0, 1)).to(torch.float32)
+
+        point_mask = torch.from_numpy(point_mask)
+        warped_point_mask = torch.from_numpy(warped_point_mask)
+
+        desp_point = torch.from_numpy(self._scale_point_for_sample(desp_point))
+        warped_desp_point = torch.from_numpy(self._scale_point_for_sample(warped_desp_point))
+
+        valid_mask = torch.from_numpy(valid_mask)
+        not_search_mask = torch.from_numpy(not_search_mask)
+
+        return {
+            "image": image,  # [1,h,w]
+            "point_mask": point_mask,  # [h,w]
+            "heatmap": heatmap,  # [h,w]
+            "warped_image": warped_image,  # [1,h,w]
+            "warped_point_mask": warped_point_mask,  # [h,w]
+            "warped_heatmap": warped_heatmap,  # [h,w]
+            "desp_point": desp_point,  # [n,1,2]
+            "warped_desp_point": warped_desp_point,  # [n,1,2]
+            "valid_mask": valid_mask,  # [n]
+            "not_search_mask": not_search_mask,  # [n,n]
+            'image_seg': image_seg,
+            'warped_image_seg': warped_image_seg,
+        }
+
+
 class MegaDepthCOCOSuperPointDataset(MegaDepthCOCODataset):
     """
     use to train superpoint detection head like network, i.e. 65-classes label

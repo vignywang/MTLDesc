@@ -98,7 +98,7 @@ class BaseTrainer(object):
             # break  # todo
 
             # validation
-            if i >= int(self.config['train']['epoch_num'] * 2/ 3):
+            if i >= int(self.config['train']['epoch_num'] * self.config['train']['validate_after']):
                 self._validate_one_epoch(i)
 
             if self.config['train']['adjust_lr']:
@@ -122,11 +122,13 @@ class BaseTrainer(object):
         if not self.multi_gpus:
             model_dict = previous_model.state_dict()
             pretrain_dict = torch.load(ckpt_file, map_location=self.device)
+            pretrain_dict = {k: v for k, v in pretrain_dict.items() if k in model_dict}
             model_dict.update(pretrain_dict)
             previous_model.load_state_dict(model_dict)
         else:
             model_dict = previous_model.module.state_dict()
             pretrain_dict = torch.load(ckpt_file, map_location=self.device)
+            pretrain_dict = {k: v for k, v in pretrain_dict.items() if k in model_dict}
             model_dict.update(pretrain_dict)
             previous_model.module.load_state_dict(model_dict)
         return previous_model
