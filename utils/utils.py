@@ -84,6 +84,22 @@ def draw_image_keypoints(image, points, color=(0, 255, 0), show=False):
     return image
 
 
+class DistillVectorL1Loss(object):
+    """
+    L1 loss with mask
+    """
+    def __init__(self):
+        pass
+
+    def __call__(self, teacher_logit, pred_logit, valid_mask):
+        n_classes = teacher_logit.shape[2]
+        loss = torch.abs(teacher_logit - pred_logit) * valid_mask.unsqueeze(dim=2)
+        total_valid = torch.sum(valid_mask) * n_classes
+        loss = torch.sum(loss) / total_valid
+
+        return loss
+
+
 class DescriptorHingeLoss(object):
     """
     According the Paper of SuperPoint

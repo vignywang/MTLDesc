@@ -241,9 +241,9 @@ class BiSeNetV1(nn.Module):
         self.cp = ContextPath()
         self.sp = SpatialPath()
         self.ffm = FeatureFusionModule(256, 256)
-        self.conv_out = BiSeNetOutput(256, 256, config['n_classes'])
-        self.conv_out16 = BiSeNetOutput(128, 64, config['n_classes'])
-        self.conv_out32 = BiSeNetOutput(128, 64, config['n_classes'])
+        self.conv_out = BiSeNetOutput(256, 256, 182)
+        # self.conv_out16 = BiSeNetOutput(128, 64, 182)
+        # self.conv_out32 = BiSeNetOutput(128, 64, 182)
         self.init_weight()
 
     def forward(self, x):
@@ -253,17 +253,13 @@ class BiSeNetV1(nn.Module):
         feat_fuse = self.ffm(feat_sp, feat_cp8)
 
         feat_out = self.conv_out(feat_fuse)
-        feat_out16 = self.conv_out16(feat_cp8)
-        feat_out32 = self.conv_out32(feat_cp16)
+        # feat_out16 = self.conv_out16(feat_cp8)
+        # feat_out32 = self.conv_out32(feat_cp16)
 
         # feat_out = F.interpolate(feat_out, (H, W), mode='bilinear', align_corners=True)
         # feat_out16 = F.interpolate(feat_out16, (H, W), mode='bilinear', align_corners=True)
         # feat_out32 = F.interpolate(feat_out32, (H, W), mode='bilinear', align_corners=True)
-        if self.training:
-            return feat_out, feat_out16, feat_out32
-        else:
-            return feat_out
-        # return feat_out
+        return feat_out
         # return feat_fuse
 
     def init_weight(self):
@@ -284,10 +280,37 @@ class BiSeNetV1(nn.Module):
                 nowd_params += child_nowd_params
         return wd_params, nowd_params, lr_mul_wd_params, lr_mul_nowd_params
 
-    def freeze_bn(self):
-        for m in self.modules():
-            if isinstance(m, nn.BatchNorm2d):
-                m.eval()
+    def freeze(self):
+        for p in self.parameters():
+            p.requires_grad = False
+
+
+class BiSeNetV1Feature(nn.Module):
+
+    def __init__(self, **config):
+        super(BiSeNetV1Feature, self).__init__()
+        self.cp = ContextPath()
+        self.sp = SpatialPath()
+        self.ffm = FeatureFusionModule(256, 256)
+        self.init_weight()
+
+    def forward(self, x):
+        feat_cp8, feat_cp16 = self.cp(x)
+        feat_sp = self.sp(x)
+        feat_fuse = self.ffm(feat_sp, feat_cp8)
+        feat_fuse = feat_fuse / torch.norm(feat_fuse, 2, dim=1, keepdim=True)
+
+        return feat_fuse
+
+    def init_weight(self):
+        for ly in self.children():
+            if isinstance(ly, nn.Conv2d):
+                nn.init.kaiming_normal_(ly.weight, a=1)
+                if not ly.bias is None: nn.init.constant_(ly.bias, 0)
+
+    def freeze(self):
+        for p in self.parameters():
+            p.requires_grad = False
 
 
 class BiSeNetV1Point(nn.Module):
