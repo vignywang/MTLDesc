@@ -8,6 +8,7 @@ import time
 import torch
 import torch.nn.functional as f
 from torch.utils.data import DataLoader
+from numpy import sqrt
 
 from nets import get_model
 from data_utils import get_dataset
@@ -425,12 +426,13 @@ class MegpointDistill1(MegPointTrainer):
         self.extractor.eval()
         _, _, height, width = image_pair.shape
 
-        heatmap_pair, c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+        heatmap_pair, c1_pair, c2_pair, c3_pair, c4_pair, seg_pair = self.model(image_pair)
 
         c1_0, c1_1 = torch.chunk(c1_pair, 2, dim=0)
         c2_0, c2_1 = torch.chunk(c2_pair, 2, dim=0)
         c3_0, c3_1 = torch.chunk(c3_pair, 2, dim=0)
         c4_0, c4_1 = torch.chunk(c4_pair, 2, dim=0)
+        seg_0, seg_1 = torch.chunk(seg_pair, 2, dim=0)
 
         heatmap_pair = torch.sigmoid(heatmap_pair)
         prob_pair = spatial_nms(heatmap_pair)
@@ -455,12 +457,12 @@ class MegpointDistill1(MegPointTrainer):
             return None
 
         # 得到点对应的描述子
-        select_first_desp = self._generate_combined_descriptor_fast(first_point, c1_0, c2_0, c3_0, c4_0, height, width)
-        select_second_desp = self._generate_combined_descriptor_fast(second_point, c1_1, c2_1, c3_1, c4_1, height, width)
+        select_first_desp = self._generate_combined_descriptor_fast(first_point, c1_0, c2_0, c3_0, c4_0, seg_0,height, width)
+        select_second_desp = self._generate_combined_descriptor_fast(second_point, c1_1, c2_1, c3_1, c4_1, seg_1,height, width)
 
         return first_point, first_point_num, second_point, second_point_num, select_first_desp, select_second_desp
 
-    def _generate_combined_descriptor_fast(self, point, c1, c2, c3, c4, height, width):
+    def _generate_combined_descriptor_fast(self, point, c1, c2, c3, c4, seg, height, width):
         """
         用多层级的组合特征构造描述子
         Args:
@@ -478,9 +480,12 @@ class MegpointDistill1(MegPointTrainer):
         c2_feature = f.grid_sample(c2, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
         c3_feature = f.grid_sample(c3, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
         c4_feature = f.grid_sample(c4, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
+        seg_feature = f.grid_sample(seg, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
+        seg_feature = seg_feature / torch.norm(seg_feature, 2, dim=1, keepdim=True)
 
         feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
         desp = self.extractor(feature)[0]  # [n,128]
+        desp = torch.cat((desp, seg_feature), dim=1) / sqrt(2)
 
         desp = desp.detach().cpu().numpy()
 

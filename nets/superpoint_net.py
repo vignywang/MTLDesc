@@ -336,7 +336,9 @@ class SuperPointNetBackboneSeg(nn.Module):
 
         self.heatmap = nn.Conv2d((64 + 16 + 8 + 2), 1, kernel_size=3, stride=1, padding=1)
 
-        self.seg = nn.Conv2d(128, 182, kernel_size=3, stride=1, padding=1)
+        self.seg1 = nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1)
+        self.seg2 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+        self.seg3 = nn.Conv2d(256, 182, kernel_size=3, stride=1, padding=1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -358,7 +360,9 @@ class SuperPointNetBackboneSeg(nn.Module):
         c4 = self.relu(self.conv4a(c4))
         c4 = self.relu(self.conv4b(c4))  # 128
 
-        seg_logit = self.seg(c4)
+        seg1 = self.relu(self.seg1(c4))
+        seg2 = self.seg2(seg1)
+        seg_logit = self.seg3(self.relu(seg2))
 
         heatmap1 = c1 # [h,w,64]
         heatmap2 = f.pixel_shuffle(c2, 2)  # [h,w,16]
@@ -369,7 +373,8 @@ class SuperPointNetBackboneSeg(nn.Module):
         if self.training:
             return heatmap, c1, c2, c3, c4, seg_logit
         else:
-            return heatmap, c1, c2, c3, c4
+            seg_feature = seg2 / torch.norm(seg2, 2, dim=1, keepdim=True)
+            return heatmap, c1, c2, c3, c4, seg_feature
 
 
 class SuperPointExtractor(nn.Module):
