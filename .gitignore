@@ -8,7 +8,7 @@ superpoint_log/
 ckpt/
 log/
 
-configs/
+# configs/
 
 __pycache__/
 data_utils/__pycache__/
