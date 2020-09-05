@@ -382,7 +382,7 @@ class BiSeNetV1Point(nn.Module):
         feat_out32 = self.conv_out32(feat_cp16)
 
         if self.training:
-            return heatmap, c1, c2, c3, c4, feat_fuse, [feat_out, feat_out16, feat_out32]
+            return heatmap, c1, c2, c3, c4, [feat_out, feat_out16, feat_out32]
         else:
             return heatmap, c1, c2, c3, c4, feat_fuse, feat_out
 
