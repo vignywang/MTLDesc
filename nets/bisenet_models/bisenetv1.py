@@ -185,6 +185,55 @@ class SpatialPath(nn.Module):
         return wd_params, nowd_params
 
 
+class SpatialPathMultiFeat(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super(SpatialPathMultiFeat, self).__init__()
+        self.relu = torch.nn.ReLU(inplace=True)
+        self.pool = torch.nn.MaxPool2d(kernel_size=2, stride=2)
+        # Shared Encoder.
+        self.conv1a = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
+        self.conv1b = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+        self.conv2a = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+        self.conv2b = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+        self.conv3a = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.conv3b = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+        self.conv4a = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+        self.conv4b = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+        self.heatmap = nn.Conv2d((64 + 16 + 8 + 2), 1, kernel_size=3, stride=1, padding=1)
+
+        self.init_weight()
+
+    def forward(self, x):
+         x = self.relu(self.conv1a(x))
+         c1 = self.relu(self.conv1b(x))  # 64
+
+         c2 = self.pool(c1)
+         c2 = self.relu(self.conv2a(c2))
+         c2 = self.relu(self.conv2b(c2))  # 64
+
+         c3 = self.pool(c2)
+         c3 = self.relu(self.conv3a(c3))
+         c3 = self.relu(self.conv3b(c3))  # 128
+
+         c4 = self.pool(c3)
+         c4 = self.relu(self.conv4a(c4))
+         c4 = self.relu(self.conv4b(c4))  # 128
+
+         heatmap1 = c1  # [h,w,64]
+         heatmap2 = F.pixel_shuffle(c2, 2)  # [h,w,16]
+         heatmap3 = F.pixel_shuffle(c3, 4)  # [h,w,8]
+         heatmap4 = F.pixel_shuffle(c4, 8)  # [h,w,2]
+         heatmap = self.heatmap(torch.cat((heatmap1, heatmap2, heatmap3, heatmap4), dim=1))
+
+         return heatmap, c1, c2, c3, c4
+
+    def init_weight(self):
+        for ly in self.children():
+            if isinstance(ly, nn.Conv2d):
+                nn.init.kaiming_normal_(ly.weight, a=1)
+                if not ly.bias is None: nn.init.constant_(ly.bias, 0)
+
+
 class FeatureFusionModule(nn.Module):
     def __init__(self, in_chan, out_chan, *args, **kwargs):
         super(FeatureFusionModule, self).__init__()
@@ -242,8 +291,8 @@ class BiSeNetV1(nn.Module):
         self.sp = SpatialPath()
         self.ffm = FeatureFusionModule(256, 256)
         self.conv_out = BiSeNetOutput(256, 256, 182)
-        # self.conv_out16 = BiSeNetOutput(128, 64, 182)
-        # self.conv_out32 = BiSeNetOutput(128, 64, 182)
+        self.conv_out16 = BiSeNetOutput(128, 64, 182)
+        self.conv_out32 = BiSeNetOutput(128, 64, 182)
         self.init_weight()
 
     def forward(self, x):
@@ -253,13 +302,10 @@ class BiSeNetV1(nn.Module):
         feat_fuse = self.ffm(feat_sp, feat_cp8)
 
         feat_out = self.conv_out(feat_fuse)
-        # feat_out16 = self.conv_out16(feat_cp8)
-        # feat_out32 = self.conv_out32(feat_cp16)
+        feat_out16 = self.conv_out16(feat_cp8)
+        feat_out32 = self.conv_out32(feat_cp16)
 
-        # feat_out = F.interpolate(feat_out, (H, W), mode='bilinear', align_corners=True)
-        # feat_out16 = F.interpolate(feat_out16, (H, W), mode='bilinear', align_corners=True)
-        # feat_out32 = F.interpolate(feat_out32, (H, W), mode='bilinear', align_corners=True)
-        return feat_out
+        return feat_out, feat_out16, feat_out32
         # return feat_fuse
 
     def init_weight(self):
@@ -317,42 +363,28 @@ class BiSeNetV1Point(nn.Module):
     def __init__(self, **config):
         super(BiSeNetV1Point, self).__init__()
         self.cp = ContextPath()
-        self.sp = SpatialPath()
+        self.sp = SpatialPathMultiFeat()
         self.ffm = FeatureFusionModule(256, 256)
-        self.conv_out = BiSeNetOutput(256, 256, config['n_classes'])
-        self.conv_out16 = BiSeNetOutput(128, 64, config['n_classes'])
-        self.conv_out32 = BiSeNetOutput(128, 64, config['n_classes'])
-
-        # heatmap
-        self.heatmap = nn.Conv2d(4, 1, kernel_size=3, stride=1, padding=1)
-
-        # descriptor
-        self.descriptor = nn.Conv2d(256, 128, kernel_size=1, stride=1, padding=0)
+        self.conv_out = BiSeNetOutput(256, 256, 182)
+        self.conv_out16 = BiSeNetOutput(128, 64, 182)
+        self.conv_out32 = BiSeNetOutput(128, 64, 182)
 
         self.init_weight()
 
     def forward(self, x):
         H, W = x.size()[2:]
         feat_cp8, feat_cp16 = self.cp(x)
-        feat_sp = self.sp(x)
-        feat_fuse = self.ffm(feat_sp, feat_cp8)
+        heatmap, c1, c2, c3, c4 = self.sp(x)
+        feat_fuse = self.ffm(c4, feat_cp8)
 
         feat_out = self.conv_out(feat_fuse)
         feat_out16 = self.conv_out16(feat_cp8)
         feat_out32 = self.conv_out32(feat_cp16)
 
-        # heatmap
-        feat_fuse_up = F.pixel_shuffle(feat_fuse, 8)
-        heatmap = self.heatmap(feat_fuse_up)
-
-        # descriptor
-        dense_descriptor = self.descriptor(feat_fuse)
-        dense_descriptor = dense_descriptor / torch.norm(dense_descriptor, dim=1, keepdim=True)
-
         if self.training:
-            return heatmap, dense_descriptor, [feat_out, feat_out16, feat_out32]
+            return heatmap, c1, c2, c3, c4, feat_fuse, [feat_out, feat_out16, feat_out32]
         else:
-            return heatmap, dense_descriptor, feat_out
+            return heatmap, c1, c2, c3, c4, feat_fuse, feat_out
 
     def init_weight(self):
         for ly in self.children():
@@ -362,18 +394,8 @@ class BiSeNetV1Point(nn.Module):
 
     def freeze(self):
         # return
-        for n, m in self.named_children():
-            if n in ['cp']:
-            # if n in ['cp', 'sp']:
-                for p in m.parameters():
-                    p.requires_grad = False
-
-    def part_eval(self):
-        # return
-        for n, m in self.named_children():
-            if n in ['cp']:
-            # if n in ['cp', 'sp']:
-                m.eval()
+        for p in self.parameters():
+            p.requires_grad = False
 
 
 if __name__ == "__main__":
