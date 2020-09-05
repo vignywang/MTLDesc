@@ -84,18 +84,40 @@ def draw_image_keypoints(image, points, color=(0, 255, 0), show=False):
     return image
 
 
-class DistillVectorL1Loss(object):
+class SoftCrossEntropyVectorLoss(object):
     """
     L1 loss with mask
     """
     def __init__(self):
-        pass
+        self.softmax = torch.nn.Softmax(dim=2)
+        self.log_softmax = torch.nn.LogSoftmax(dim=2)
 
     def __call__(self, teacher_logit, pred_logit, valid_mask):
-        n_classes = teacher_logit.shape[2]
-        loss = torch.abs(teacher_logit - pred_logit) * valid_mask.unsqueeze(dim=2)
-        total_valid = torch.sum(valid_mask) * n_classes
+        teacher_prob = self.softmax(teacher_logit)
+        log_pred_prob = self.log_softmax(pred_logit)
+        loss = torch.sum(-teacher_prob*log_pred_prob, dim=2) * valid_mask
+
+        total_valid = torch.sum(valid_mask)
         loss = torch.sum(loss) / total_valid
+
+        return loss
+
+
+class MaskL2Loss(object):
+
+    def __init__(self):
+        self.log_softmax = torch.nn.LogSoftmax(dim=1)
+        self.softmax = torch.nn.Softmax(dim=1)
+
+    def __call__(self, teacher_logit, pred_logit, valid_mask):
+        '''
+        valid_mask: [bt,h,w]
+        '''
+        _, _, h, w = teacher_logit.shape
+        valid_mask = f.interpolate(valid_mask.unsqueeze(dim=1), size=(h, w), mode='bilinear', align_corners=True)[:, 0, :, :]
+        dense_loss = torch.mean((teacher_logit-pred_logit)**2, dim=1) * valid_mask  # [bt,h,w]
+        valid_sum = torch.sum(valid_mask)
+        loss = torch.sum(dense_loss) / valid_sum
 
         return loss
 
