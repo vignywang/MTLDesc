@@ -375,6 +375,8 @@ class MegaDepthCOCOSegmentationDataset(MegaDepthCOCODataset):
         image1, image2 = np.split(image12, 2, axis=1)
         res['image_seg'] = (torch.from_numpy(image1).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).to(torch.float32).contiguous()
         res['warped_image_seg'] = (torch.from_numpy(image2).to(torch.float) * 2. / 255. - 1.).permute((2, 0, 1)).to(torch.float32).contiguous()
+        res['seg_valid_mask'] = torch.ones((30, 40), dtype=torch.float)
+        res['warped_seg_valid_mask'] = torch.ones((30, 40), dtype=torch.float)
         return res
 
     def _get_coco_data(self, data_info):
@@ -385,6 +387,8 @@ class MegaDepthCOCOSegmentationDataset(MegaDepthCOCODataset):
 
         point = np.load(data_info['point'])
         point_mask = np.ones_like(image).astype(np.float32)[:, :, 0].copy()
+        seg_point_mask = cv.resize(point_mask, (40, 30), interpolation=cv.INTER_NEAREST).astype(np.float32)
+        seg_point_mask = torch.from_numpy(seg_point_mask)
 
         # 1、由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
         if torch.rand([]).item() < 0.5:
@@ -395,6 +399,8 @@ class MegaDepthCOCOSegmentationDataset(MegaDepthCOCODataset):
             warped_point_mask = warped_point_mask[:, :, 0].copy()
 
         warped_image_seg = warped_image - self.mean_rgb
+        warped_seg_point_mask = cv.resize(warped_point_mask, (40, 30), interpolation=cv.INTER_NEAREST).astype(np.float32)
+        warped_seg_point_mask = torch.from_numpy(warped_seg_point_mask)
 
         if torch.rand([]).item() < 0.5:
             image = self.photometric(image)
@@ -444,6 +450,8 @@ class MegaDepthCOCOSegmentationDataset(MegaDepthCOCODataset):
             "not_search_mask": not_search_mask,  # [n,n]
             'image_seg': image_seg,
             'warped_image_seg': warped_image_seg,
+            'seg_valid_mask': seg_point_mask,
+            'warped_seg_valid_mask': warped_seg_point_mask,
         }
 
 
