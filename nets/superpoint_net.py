@@ -462,6 +462,24 @@ class SegExtractor384(nn.Module):
             return desp
 
 
+class Extractor384(nn.Module):
+
+    def __init__(self):
+        super(Extractor384, self).__init__()
+        self.relu = nn.ReLU()
+        self.desp = nn.Linear(384, 128)
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+
+    def __call__(self, feature):
+        desp = self.desp(self.relu(feature))
+        desp = desp / torch.norm(desp, dim=2, keepdim=True)
+
+        return desp
+
+
 class Extractor640(nn.Module):
 
     def __init__(self):
