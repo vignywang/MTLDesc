@@ -103,7 +103,7 @@ class _BaseDataset(Dataset):
         return image, label
 
     def __getitem__(self, index):
-        image_id, image, label = self._load_data(index)
+        image_id, image, label, org_image = self._load_data(index)
         if self.config['augment']:
             image, label = self._augmentation(image, label)
         # Mean subtraction
@@ -114,6 +114,7 @@ class _BaseDataset(Dataset):
             'image_id': image_id,
             'image': image.astype(np.float32),
             'label': label.astype(np.int64),
+            'org_image': org_image
         }
 
     def __len__(self):
@@ -153,6 +154,7 @@ class CocoStuff10k(_BaseDataset):
         # Load an image and label
         # change bgt to rgb
         image = cv2.imread(image_path, cv2.IMREAD_COLOR)[:, :, ::-1].astype(np.float32)
+        org_image = image.copy()
         label = sio.loadmat(label_path)["S"]
         label -= 1  # unlabeled (0 -> -1)
         label[label == -1] = 255
@@ -163,7 +165,7 @@ class CocoStuff10k(_BaseDataset):
         #     label = Image.fromarray(label).resize((513, 513), resample=Image.NEAREST)
         #     label = np.asarray(label)
 
-        return image_id, image, label
+        return image_id, image, label, org_image
 
 
 class CocoStuff10kTrainPoint(Dataset):
