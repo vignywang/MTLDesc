@@ -337,6 +337,16 @@ class PointSegmentationTrainer(_BaseTrainer):
         self.extractor = extractor.to(self.device)
         self.detector = detector.to(self.device)
 
+        # load segmentor ckpt
+        # self.logger.info('Initialize network arch {}'.format(self.config['model']['segmentor']))
+        # segmentor = get_model(self.config['model']['segmentor'])()
+        # self.segmentor = segmentor.to(self.device)
+        # self.segmentor = self._load_model_params(self.config['model']['segmentor_ckpt'], self.segmentor)
+        # self.segmentor.eval()
+
+        # load pretrained model
+        # self.model = self._load_model_params(self.config['model']['model_ckpt'], self.model)
+
         # load pretrained ckpt
         self.detector = self._load_model_params(self.config['model']['detector_ckpt'], self.detector)
         for p in self.detector.parameters():
@@ -492,10 +502,12 @@ class PointSegmentationTrainer(_BaseTrainer):
         gts = []
         for i, data in enumerate(tqdm(self.seg_dataset)):
             image = torch.from_numpy(data['image']).unsqueeze(dim=0)
+            # image = torch.from_numpy(data['image2']).unsqueeze(dim=0)
             gt_label = data['label']
 
             # Forward propagation
             logit = self.model(image.to(self.device))[-1]
+            # logit = self.segmentor(image.to(self.device))[0]
 
             # Pixel-wise labeling
             H, W = gt_label.shape
