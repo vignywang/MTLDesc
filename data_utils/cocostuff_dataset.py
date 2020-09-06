@@ -216,9 +216,16 @@ class CocoStuff10kTest(Dataset):
         image = cv2.resize(image, dsize=(scale_w, scale_h), interpolation=cv2.INTER_LINEAR)
         label = cv2.resize(label, dsize=(scale_w, scale_h), interpolation=cv2.INTER_NEAREST)
 
+        image2 = image - np.array([122.675, 116.669, 104.008])  # - mean_rgb
+        image2 = image2.transpose(2, 0, 1)
+
         image = image * 2. / 255. - 1
         image = image.transpose(2, 0, 1)
+
+        label -= 1
+        label[label == -1] = 255
         return {
+            'image2': image2.astype(np.float32),
             'image': image.astype(np.float32),
             'label': label.astype(np.int64),
         }
