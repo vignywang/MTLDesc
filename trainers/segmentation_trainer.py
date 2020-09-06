@@ -421,7 +421,7 @@ class PointSegmentationTrainer(_BaseTrainer):
             heatmap_pred_pair, c1_pair, c2_pair, c3_pair, c4_pair, seg_logits_pair = self.model(image_pair)
             teacher_heatmap_pred_pair, _, _, _, _ = self.detector(image_pair)
             teacher_heatmap = spatial_nms(torch.sigmoid(teacher_heatmap_pred_pair))
-            heatmap_gt = torch.where(teacher_heatmap > 0.95, torch.ones_like(teacher_heatmap), torch.zeros_like(teacher_heatmap))
+            heatmap_gt = torch.where(teacher_heatmap > 0.9, torch.ones_like(teacher_heatmap), torch.zeros_like(teacher_heatmap))
 
             # 计算描述子loss
             desp_point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
