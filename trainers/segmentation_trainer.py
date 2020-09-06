@@ -297,6 +297,11 @@ class PointSegmentationTrainer(_BaseTrainer):
         self.logger.info("Initialize matcher of Nearest Neighbor.")
         self.general_matcher = Matcher('float')
 
+        if self.config['train']['train_seg']:
+            self.seg_weight = 1.0
+        else:
+            self.seg_weight = 0
+
     def _initialize_dataset(self):
         # 初始化训练集
         self.logger.info('Initialize {}'.format(self.config['train']['dataset']['name']))
@@ -449,7 +454,7 @@ class PointSegmentationTrainer(_BaseTrainer):
 
             seg_loss = torch.mean(torch.stack(seg_loss))
 
-            loss = desp_loss + detector_loss + seg_loss
+            loss = desp_loss + detector_loss + self.seg_weight * seg_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -492,7 +497,8 @@ class PointSegmentationTrainer(_BaseTrainer):
             torch.save(self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'extractor_final.pt'))
 
     def _validate_one_epoch(self, epoch_idx):
-        self._seg_validate_one_epoch(epoch_idx)
+        if self.config['train']['train_seg']:
+            self._seg_validate_one_epoch(epoch_idx)
         self._point_validate_one_epoch(epoch_idx)
 
     def _seg_validate_one_epoch(self, epoch_idx):
@@ -773,12 +779,13 @@ class PointSegmentationTrainer(_BaseTrainer):
         c2_feature = F.grid_sample(c2, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
         c3_feature = F.grid_sample(c3, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
         c4_feature = F.grid_sample(c4, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)
-        seg_feature = F.grid_sample(seg, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
-        seg_feature = seg_feature / torch.norm(seg_feature, 2, dim=1, keepdim=True)
 
         feature = torch.cat((c1_feature, c2_feature, c3_feature, c4_feature), dim=2)
         desp = self.extractor(feature)[0]  # [n,128]
-        desp = torch.cat((desp, seg_feature), dim=1) / np.sqrt(2)
+        if self.config['train']['train_seg']:
+            seg_feature = F.grid_sample(seg, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
+            seg_feature = seg_feature / torch.norm(seg_feature, 2, dim=1, keepdim=True)
+            desp = torch.cat((desp, seg_feature), dim=1) / np.sqrt(2)
 
         desp = desp.detach().cpu().numpy()
 
