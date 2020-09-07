@@ -29,11 +29,10 @@ class _BaseDataset(Dataset):
             'root': None,
             'split': 'train',
             'ignore_label': 255,
-            'mean_rgb': [122.675, 116.669, 104.008],
             'augment': True,
             'flip': True,
-            'height': 240,
-            'width': 320,
+            'height': 224,
+            'width': 224,
             'scales': [1.0],
 
         }
@@ -83,7 +82,7 @@ class _BaseDataset(Dataset):
             "borderType": cv2.BORDER_CONSTANT,
         }
         if pad_h > 0 or pad_w > 0:
-            image = cv2.copyMakeBorder(image, value=self.config['mean_rgb'], **pad_kwargs)
+            image = cv2.copyMakeBorder(image, value=0, **pad_kwargs)
             label = cv2.copyMakeBorder(label, value=self.config['ignore_label'], **pad_kwargs)
 
         # Cropping
@@ -107,14 +106,14 @@ class _BaseDataset(Dataset):
         if self.config['augment']:
             image, label = self._augmentation(image, label)
         # Mean subtraction
-        image -= self.config['mean_rgb']
+        image = image * 2. / 255. - 1.
         # HWC -> CHW
         image = image.transpose(2, 0, 1)
         return {
             'image_id': image_id,
             'image': image.astype(np.float32),
             'label': label.astype(np.int64),
-            'org_image': org_image
+            # 'org_image': org_image
         }
 
     def __len__(self):
