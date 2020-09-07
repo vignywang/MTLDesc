@@ -512,6 +512,7 @@ class MegaDetphDatasetCreator(object):
             self,
             base_path="/data/MegaDepthOrder",
             scene_info_path="/data/MegaDepthOrder/scene_info",
+            output_dir='',
             train=True,
             min_overlap_ratio=.5,
             max_overlap_ratio=1,
@@ -525,12 +526,12 @@ class MegaDetphDatasetCreator(object):
 
         if self.train:
             scene_list_path = os.path.join(base_path, "train_scenes.txt")
-            self.output_dir = os.path.join(base_path, "preprocessed_train_dataset")
+            self.output_dir = output_dir
             if not os.path.exists(self.output_dir):
                 os.mkdir(self.output_dir)
         else:
             scene_list_path = os.path.join(base_path, "valid_scenes.txt")
-            self.output_dir = os.path.join(base_path, "preprocessed_val_dataset")
+            self.output_dir = output_dir
             if not os.path.exists(self.output_dir):
                 os.mkdir(self.output_dir)
 
