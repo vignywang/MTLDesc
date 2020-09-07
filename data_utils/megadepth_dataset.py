@@ -1319,8 +1319,8 @@ class MegaDepthDatasetFromPreprocessedEnhanced(MegaDepthDatasetFromPreprocessed)
 
 class MegaDepthAdaptionDataset(Dataset):
 
-    def __init__(self, dataset_dir):
-        self.dataset_dir = dataset_dir
+    def __init__(self, **config):
+        self.config = config
         self.image_list, self.image_name_list = self._format_file_list()
 
     def __len__(self):
@@ -1328,13 +1328,13 @@ class MegaDepthAdaptionDataset(Dataset):
 
     def __getitem__(self, idx):
         image = cv.imread(self.image_list[idx], flags=cv.IMREAD_GRAYSCALE)
-        assert image.shape[0] == 240 and image.shape[1] == 640
+        # assert image.shape[0] == 240 and image.shape[1] == 640
         name = self.image_name_list[idx]
         sample = {'image': image, 'name': name}
         return sample
 
     def _format_file_list(self):
-        image_list = glob(os.path.join(self.dataset_dir, "*.jpg"))
+        image_list = glob(os.path.join(self.config['dataset_root'], "*.jpg"))
         image_list = sorted(image_list)
         image_name_list = []
         for image in image_list:

@@ -178,3 +178,33 @@ class Cocostuff10kLabeler(_BaseLabeler):
             np.save(os.path.join(self.out_root, image_id + '_point'), points)
             np.save(os.path.join(self.out_root, image_id + '_label'), label)
 
+
+class MegadepthLabeler(_BaseLabeler):
+
+    def __init__(self, **config):
+        super(MegadepthLabeler, self).__init__(**config)
+
+    def _generate_pseudo_ground_truth(self):
+        self.model.eval()
+
+        for i, data in tqdm(enumerate(self.dataset), total=len(self.dataset)):
+            image_pair = data['image']
+            name = data['name']
+            image_0, image_1 = np.split(image_pair, 2, axis=1)
+            image_pair = [image_0, image_1]
+            # image_point_pair = []
+            points_pair = []
+            for image in image_pair:
+                points = self._label(image)
+
+                # debug hyper parameters use
+                # image_point = draw_image_keypoints(image, points)
+                # cv.imwrite('/home/yuyang/tmp/adaption/%03d.jpg' % i, image_point)
+
+                points_pair.append(points)
+
+            np.savez(os.path.join(self.out_root, name), points_0=points_pair[0], points_1=points_pair[1])
+
+
+
+
