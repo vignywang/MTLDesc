@@ -491,10 +491,10 @@ class PointSegmentationTrainer(_BaseTrainer):
         # save the model
         if self.multi_gpus:
             torch.save(self.model.module.state_dict(), os.path.join(self.config['ckpt_path'], 'model_final.pt'))
-            torch.save(self.model.module.state_dict(), os.path.join(self.config['ckpt_path'], 'extractor_final.pt'))
+            torch.save(self.extractor.module.state_dict(), os.path.join(self.config['ckpt_path'], 'extractor_final.pt'))
         else:
             torch.save(self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'model_final.pt'))
-            torch.save(self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'extractor_final.pt'))
+            torch.save(self.extractor.state_dict(), os.path.join(self.config['ckpt_path'], 'extractor_final.pt'))
 
     def _validate_one_epoch(self, epoch_idx):
         if self.config['train']['train_seg']:
