@@ -445,6 +445,198 @@ class CocoStuff10kTrainDescriptor(Dataset):
         return point
 
 
+class CocoStuff10kTrain(CocoStuff10kTrainDescriptor):
+
+    def __init__(self, **config):
+        super(CocoStuff10kTrain, self).__init__(**config)
+
+    def _format_file_list(self):
+        file_list = osp.join(self.config['dataset_root'], 'imageLists', 'train.txt')
+        file_list = tuple(open(file_list, "r"))
+        file_list = [id_.rstrip() for id_ in file_list]
+        self.files = file_list
+
+    def _load_data(self, index):
+        # Set paths
+        image_id = self.files[index]
+        image_path = osp.join(self.config['dataset_root'], 'processed_dataset', image_id + ".jpg")
+        label_path = osp.join(self.config['dataset_root'], 'processed_dataset', image_id + "_label.npy")
+        point_path = osp.join(self.config['dataset_root'], 'processed_dataset', image_id + '_point.npy')
+
+        # Load an image and label
+        # change bgt to rgb
+        image = cv2.imread(image_path, cv2.IMREAD_COLOR)[:, :, ::-1].astype(np.float32)
+        label = np.load(label_path)
+        point = np.load(point_path)
+
+        return image, label, point
+
+    def _preprocess(self, image, label, point):
+        # Scaling
+        h, w = label.shape
+
+        scale_factor = random.choice(self.config['scales'])
+        h, w = (int(h * scale_factor), int(w * scale_factor))
+        image = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
+        label = Image.fromarray(label).resize((w, h), resample=Image.NEAREST)
+        label = np.asarray(label, dtype=np.int64)
+        point = point * scale_factor
+
+        # Padding to fit for crop_size
+        h, w = label.shape
+        pad_h = max(self.config['height'] - h, 0)
+        pad_w = max(self.config['width'] - w, 0)
+        pad_kwargs = {
+            "top": int(pad_h/2),
+            "bottom": pad_h - int(pad_h/2),
+            "left": pad_w,
+            "right": pad_w - int(pad_w/2),
+            "borderType": cv2.BORDER_CONSTANT,
+        }
+        if pad_h > 0 or pad_w > 0:
+            image = cv2.copyMakeBorder(image, value=0, **pad_kwargs)
+            label = cv2.copyMakeBorder(label, value=0, **pad_kwargs)
+            point -= np.array((int(pad_h/2), int(pad_w/2)))
+
+        # Cropping
+        h, w = label.shape
+        start_h = random.randint(0, h - self.config['height'])
+        start_w = random.randint(0, w - self.config['width'])
+        end_h = start_h + self.config['height']
+        end_w = start_w + self.config['width']
+        image = image[start_h:end_h, start_w:end_w]
+        label = label[start_h:end_h, start_w:end_w]
+        point = point - np.array((start_h, start_w))
+
+        if self.config['flip']:
+            # Random flipping
+            if random.random() < 0.5:
+                image = np.fliplr(image).copy()  # HWC
+                label = np.fliplr(label).copy()  # HW
+                point[:, 1] = self.config['width'] - 1 - point[:, 1]
+
+        return image, label, point
+
+    def __getitem__(self, idx):
+        image, label, point = self._load_data(idx)
+        image, label, point = self._preprocess(image, label, point)
+
+        # construct image pair
+        point_mask = np.ones_like(label, dtype=np.float32)
+        if torch.rand([]).item() < 0.5:
+            warped_image, warped_label, homography = image.copy(), label.copy(), np.eye(3)
+            warped_point = point.copy()
+            warped_point_mask = point_mask.copy()
+        else:
+            homography = self.homography.sample(self.config['height'], self.config['width'])
+            warped_image = cv2.warpPerspective(image, homography, None, None, cv2.INTER_AREA, borderValue=0)
+            warped_label = cv2.warpPerspective(label, homography, None, None, cv2.INTER_NEAREST, borderValue=0).astype(np.int64)
+            warped_point = self.homography.warp_keypoints(point, homography, self.config['height'], self.config['width'])
+            warped_point_mask = cv2.warpPerspective(point_mask, homography, None, None, cv2.INTER_AREA, borderValue=0).astype(np.float32)
+
+        if torch.rand([]).item() < 0.5:
+            image = self.photometric(image)
+            warped_image = self.photometric(warped_image)
+
+        # construct heatmap for point training
+        heatmap = self._convert_points_to_heatmap(point)
+        warped_heatmap = self._convert_points_to_heatmap(warped_point)
+
+        # sample descriptor points for descriptor learning
+        desp_point = self._random_sample_point()
+        shape = image.shape
+
+        warped_desp_point, valid_mask, not_search_mask = self._generate_warped_point(
+            desp_point, homography, shape[0], shape[1])
+
+        # debug use
+        # image_point = draw_image_keypoints(image, point, show=False)
+        # warped_image_point = draw_image_keypoints(warped_image, warped_point, show=False)
+        # cat_all = np.concatenate((image, warped_image), axis=1)
+        # cat_all = np.concatenate((image_point, warped_image_point), axis=1)
+        # cv2.imwrite("/home/yuyang/tmp/coco_tmp/%d.jpg" % idx, cat_all)
+        # cv.imshow("cat_all", cat_all)
+        # cv.waitKey()
+
+        image = image.astype(np.float32) * 2. / 255. - 1.
+        warped_image = warped_image.astype(np.float32) * 2. / 255. - 1.
+
+        label -= 1
+        label[label == -1] = 255
+        label = torch.from_numpy(label.astype(np.int64))
+        warped_label -= 1
+        warped_label[warped_label == - 1] = 255
+        warped_label = torch.from_numpy(warped_label.astype(np.int64))
+
+        image = torch.from_numpy(image).permute((2, 0, 1))
+        warped_image = torch.from_numpy(warped_image).permute((2, 0, 1))
+
+        desp_point = torch.from_numpy(self._scale_point_for_sample(desp_point))
+        warped_desp_point = torch.from_numpy(self._scale_point_for_sample(warped_desp_point))
+
+        valid_mask = torch.from_numpy(valid_mask)
+        not_search_mask = torch.from_numpy(not_search_mask)
+
+        return {
+            'image': image,  # [1,h,w]
+            'label': label,
+            'warped_image': warped_image,  # [1,h,w]
+            'warped_label': warped_label,
+            'desp_point': desp_point,  # [n,1,2]
+            'warped_desp_point': warped_desp_point,  # [n,1,2]
+            'valid_mask': valid_mask,  # [n]
+            'not_search_mask': not_search_mask,  # [n,n]
+            'heatmap': heatmap,
+            'point_mask': torch.from_numpy(point_mask),
+            'warped_heatmap': warped_heatmap,
+            'warped_point_mask': torch.from_numpy(warped_point_mask),
+        }
+
+    def _convert_points_to_heatmap(self, points):
+        """
+        将原始点位置经下采样后得到heatmap与incmap，heatmap上对应下采样整型点位置处的值为1，其余为0；incmap与heatmap一一对应，
+        在关键点位置处存放整型点到亚像素角点的偏移量，以及训练时用来屏蔽非关键点inc量的incmap_valid
+        Args:
+            points: [n,2]
+
+        Returns:
+            heatmap: [h,w] 关键点位置为1，其余为0
+            incmap: [2,h,w] 关键点位置存放实际偏移，其余非关键点处的偏移量为0
+            incmap_valid: [h,w] 关键点位置为1，其余为0，用于训练时屏蔽对非关键点偏移量的训练，只关注关键点的偏移量
+
+        """
+        height = self.config['height']
+        width = self.config['width']
+
+        # localmap = self.localmap.clone()
+        # padded_heatmap = torch.zeros(
+        #     (height+self.g_paddings*2, width+self.g_paddings*2), dtype=torch.float)
+        heatmap = torch.zeros((height, width), dtype=torch.float)
+
+        num_pt = points.shape[0]
+        if num_pt > 0:
+            for i in range(num_pt):
+                pt = points[i]
+                pt_y_float, pt_x_float = pt
+
+                pt_y_int = round(pt_y_float)
+                pt_x_int = round(pt_x_float)
+
+                pt_y = int(pt_y_int)  # 对真值点位置进行下采样,这里有量化误差
+                pt_x = int(pt_x_int)
+
+                # 排除掉经下采样后在边界外的点
+                if pt_y < 0 or pt_y > height - 1:
+                    continue
+                if pt_x < 0 or pt_x > width - 1:
+                    continue
+
+                # 关键点位置在heatmap上置1，并在incmap上记录该点离亚像素点的偏移量
+                heatmap[pt_y, pt_x] = 1.0
+
+        return heatmap
+
+
 class CocoStuff10kRaw(_BaseDataset):
     """COCO-Stuff 10k dataset"""
 

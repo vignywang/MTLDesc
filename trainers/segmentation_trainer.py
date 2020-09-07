@@ -376,11 +376,9 @@ class PointSegmentationTrainer(_BaseTrainer):
         # 初始化网络训练优化器
         self.logger.info("Initialize Adam optimizer with weight_decay: {:.5f}.".format(self.config['train']['weight_decay']))
         self.optimizer = torch.optim.Adam(
-            params=self.model.parameters(),
-            lr=self.config['train']['lr'],
-            weight_decay=self.config['train']['weight_decay'])
-        self.extractor_optimizer = torch.optim.Adam(
-            params=self.extractor.parameters(),
+            params=[
+                {'params': self.model.parameters()},
+                {'params': self.extractor.parameters()}],
             lr=self.config['train']['lr'],
             weight_decay=self.config['train']['weight_decay'])
 
@@ -879,6 +877,125 @@ class PointSegmentationTrainer(_BaseTrainer):
         if scale is not None:
             point = point*scale
         return point, point_num
+
+
+class SegmentationMixTrainer(PointSegmentationTrainer):
+
+    def __init__(self, **config):
+        super(SegmentationMixTrainer, self).__init__(**config)
+
+    def _initialize_model(self):
+        self.logger.info("Initialize network arch {}".format(self.config['model']['backbone']))
+        model = get_model(self.config['model']['backbone'])(**self.config['model'])
+
+        self.logger.info("Initialize network arch {}".format(self.config['model']['extractor']))
+        extractor = get_model(self.config['model']['extractor'])()
+
+        if self.multi_gpus:
+            model = torch.nn.DataParallel(model)
+            extractor = torch.nn.DataParallel(extractor)
+        self.model = model.to(self.device)
+        self.extractor = extractor.to(self.device)
+
+    def _train_func(self, epoch_idx):
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+            # read
+            image = data["image"].to(self.device)
+            label = data['label']
+            desp_point = data["desp_point"].to(self.device)
+            heatmap_gt = data['heatmap'].to(self.device)
+            point_mask = data['point_mask'].to(self.device)
+
+            warped_image = data["warped_image"].to(self.device)
+            warped_label = data['warped_label']
+            warped_desp_point = data["warped_desp_point"].to(self.device)
+            warped_heatmap_gt = data['warped_heatmap'].to(self.device)
+            warped_point_mask = data['warped_point_mask'].to(self.device)
+
+            valid_mask = data["valid_mask"].to(self.device)
+            not_search_mask = data["not_search_mask"].to(self.device)
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            label_pair = torch.cat((label, warped_label), dim=0)
+
+            # 模型预测
+            heatmap_pred_pair, c1_pair, c2_pair, c3_pair, c4_pair, seg_logits_pair = self.model(image_pair)
+
+            # 计算描述子loss
+            desp_point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
+            c1_feature_pair = F.grid_sample(c1_pair, desp_point_pair, mode="bilinear", padding_mode="border")
+            c2_feature_pair = F.grid_sample(c2_pair, desp_point_pair, mode="bilinear", padding_mode="border")
+            c3_feature_pair = F.grid_sample(c3_pair, desp_point_pair, mode="bilinear", padding_mode="border")
+            c4_feature_pair = F.grid_sample(c4_pair, desp_point_pair, mode="bilinear", padding_mode="border")
+
+            feature_pair = torch.cat((c1_feature_pair, c2_feature_pair, c3_feature_pair, c4_feature_pair), dim=1)
+            feature_pair = feature_pair[:, :, :, 0].transpose(1, 2)
+            desp_pair = self.extractor(feature_pair)
+            desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
+
+            desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
+
+            # 计算关键点loss
+            heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
+            point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
+            detector_loss = self.point_loss(heatmap_pred_pair[:, 0, :, :], heatmap_gt_pair, point_mask_pair)
+
+            # compute seg loss
+            seg_loss = []
+            for logit_pair in seg_logits_pair:
+                _, _, H, W = logit_pair.shape
+                label_ = resize_labels(label_pair, size=(W, H))
+                seg_loss.append(self.criterion(logit_pair, label_.to(self.device)))
+
+            seg_loss = torch.mean(torch.stack(seg_loss))
+
+            loss = desp_loss + detector_loss + self.seg_weight * seg_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+
+            loss.backward()
+
+            self.optimizer.step()
+
+            self.scheduler.step(epoch=i+epoch_idx*self.epoch_length)
+
+            if i % self.config['train']['log_freq'] == 0:
+                loss_val = loss.item()
+                desp_val = desp_loss.item()
+                detector_val = detector_loss.item()
+                seg_val = seg_loss.item()
+
+                self.summary_writer.add_scalar("loss/desp_loss", desp_val, i+epoch_idx*self.epoch_length)
+                self.summary_writer.add_scalar("loss/detector_loss", detector_val, i+epoch_idx*self.epoch_length)
+                self.summary_writer.add_scalar("loss/seg_loss", seg_val, i+epoch_idx*self.epoch_length)
+
+                for k, o in enumerate(self.optimizer.param_groups):
+                    self.summary_writer.add_scalar("lr/group_{}".format(k), o["lr"], i+epoch_idx*self.epoch_length)
+
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: point_loss=%.4f, desp_loss = %.4f, seg_loss=%.4f, one step cost %.4fs. " % (
+                        epoch_idx, i, self.epoch_length,
+                        detector_val, desp_val, seg_val,
+                        (time.time() - stime) / self.config['train']['log_freq'],
+                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.config['ckpt_path'], 'model_final.pt'))
+            torch.save(self.extractor.module.state_dict(), os.path.join(self.config['ckpt_path'], 'extractor_final.pt'))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'model_final.pt'))
+            torch.save(self.extractor.state_dict(), os.path.join(self.config['ckpt_path'], 'extractor_final.pt'))
+
+
+
+
+
 
 
 
