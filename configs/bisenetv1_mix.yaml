@@ -1,17 +1,10 @@
-name: bisenetv1_megpoint_distill
-trainer: segmentation_trainer.PointSegmentationTrainer
+name: bisenetv1_mix
+trainer: segmentation_trainer.SegmentationMixTrainer
 
 model:
-    detector: superpoint_net.SuperPointNetBackbone3
     backbone: bisenet_models.bisenetv1.BiSeNetV1Point
     extractor: superpoint_net.Extractor384
     n_classes: 182
-    detector_ckpt: /home/yuyang/data/aachen/Aachen-Day-Night/weights/mlifeat128megacoco/model.pt
-
-    # segmentor: bisenet_models.bisenetv1.BiSeNetV1
-    # segmentor_ckpt: /home/yuyang/data/aachen/Aachen-Day-Night/weights/mlifeat128megacoco/bisenetv1.pt
-
-    # model_ckpt: /home/yuyang/project/development/MegPoint/ckpt/bisenetv1_megpoint_distill_e1/model_final.pt
 
 test:
     detection_threshold: 0.9
@@ -29,13 +22,12 @@ test:
         name: cocostuff_dataset.CocoStuff10kTest
         dataset_root: /home/yuyang/data/coco-stuff-10k
 
-
 train:
     adjust_lr: false
     lr: 0.001
     weight_decay: 0.0001
     batch_size: 24
-    epoch_num: 150
+    epoch_num: 100
     log_freq: 50
     num_workers: 24
     validate_after: 0.9
@@ -43,7 +35,7 @@ train:
     train_seg: true
 
     dataset:
-        name: cocostuff_dataset.CocoStuff10kTrainDescriptor
+        name: cocostuff_dataset.CocoStuff10kTrain
         dataset_root: /home/yuyang/data/coco-stuff-10k
         flip: true
         scales: [0.5, 0.75, 1.0, 1.25, 1.5]

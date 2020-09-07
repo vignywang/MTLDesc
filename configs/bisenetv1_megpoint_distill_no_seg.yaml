@@ -1,4 +1,4 @@
-name: bisenetv1_megpoint_distill
+name: bisenetv1_megpoint_distill_no_seg
 trainer: segmentation_trainer.PointSegmentationTrainer
 
 model:
@@ -40,7 +40,7 @@ train:
     num_workers: 24
     validate_after: 0.9
 
-    train_seg: true
+    train_seg: false
 
     dataset:
         name: cocostuff_dataset.CocoStuff10kTrainDescriptor
