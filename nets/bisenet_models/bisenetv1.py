@@ -305,7 +305,10 @@ class BiSeNetV1(nn.Module):
         feat_out16 = self.conv_out16(feat_cp8)
         feat_out32 = self.conv_out32(feat_cp16)
 
-        return feat_out, feat_out16, feat_out32
+        if self.training:
+            return feat_out, feat_out16, feat_out32
+        else:
+            return feat_out
         # return feat_fuse
 
     def init_weight(self):
