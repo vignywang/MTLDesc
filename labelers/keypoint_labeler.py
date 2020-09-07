@@ -157,10 +157,10 @@ class Cocostuff10kLabeler(_BaseLabeler):
             pad_h = max(l - h, 0)
             pad_w = max(l - w, 0)
             pad_kwargs = {
-                "top": 0,
-                "bottom": pad_h,
-                "left": 0,
-                "right": pad_w,
+                "top": int(pad_h/2),
+                "bottom": pad_h - int(pad_h/2),
+                "left": int(pad_w/2),
+                "right": pad_w - int(pad_w/2),
                 "borderType": cv.BORDER_CONSTANT,
             }
             if pad_h > 0 or pad_w > 0:
