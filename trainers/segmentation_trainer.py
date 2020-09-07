@@ -281,7 +281,7 @@ class BiSeNetV1SegmentationTrainer(_BaseTrainer):
         # Pixel Accuracy, Mean Accuracy, Class IoU, Mean IoU, Freq Weighted IoU
         score = scores(gts, preds, n_class=self.config['model']['n_classes'])
         for k, v in score.items():
-            # self.logger.info('{}: {:.5f}'.format(k, v))
+            self.logger.info('{}: {:.5f}'.format(k, v))
             self.summary_writer.add_scalar("metric/{}".format('_'.join(k.split(' '))), v, epoch_idx)
 
         # self.logger.info("Validate epoch %2d done." % epoch_idx)
