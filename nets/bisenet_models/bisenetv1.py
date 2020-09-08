@@ -308,7 +308,7 @@ class BiSeNetV1(nn.Module):
         if self.training:
             return feat_out, feat_out16, feat_out32
         else:
-            return feat_out
+            return feat_out, feat_fuse
         # return feat_fuse
 
     def init_weight(self):
