@@ -40,7 +40,7 @@ train:
     num_workers: 24
     validate_after: 0.8
 
-    train_seg: true
+    train_seg: false
 
     dataset:
         name: cocostuff_dataset.CocoStuff10kTrain
