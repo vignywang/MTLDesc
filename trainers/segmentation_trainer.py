@@ -897,6 +897,10 @@ class SegmentationMixTrainer(PointSegmentationTrainer):
         self.model = model.to(self.device)
         self.extractor = extractor.to(self.device)
 
+        # debug use
+        # self.model = self._load_model_params(self.config['model']['backbone_ckpt'], self.model)
+        # self.extractor = self._load_model_params(self.config['model']['extractor_ckpt'], self.extractor)
+
     def _train_func(self, epoch_idx):
         stime = time.time()
         for i, data in enumerate(self.train_dataloader):
