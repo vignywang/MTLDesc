@@ -724,6 +724,9 @@ class PointSegmentationTrainer(_BaseTrainer):
         _, _, height, width = image_pair.shape
 
         heatmap_pair, c1_pair, c2_pair, c3_pair, c4_pair, seg_pair, _ = self.model(image_pair)
+        # heatmap_pair, c1_pair, c2_pair, c3_pair, c4_pair = self.model(image_pair)
+        # self.segmentor.eval()
+        # seg_pair = self.segmentor(image_pair)[-1]
 
         c1_0, c1_1 = torch.chunk(c1_pair, 2, dim=0)
         c2_0, c2_1 = torch.chunk(c2_pair, 2, dim=0)
@@ -903,6 +906,10 @@ class SegmentationMixTrainer(PointSegmentationTrainer):
         # debug use
         # self.model = self._load_model_params(self.config['model']['backbone_ckpt'], self.model)
         # self.extractor = self._load_model_params(self.config['model']['extractor_ckpt'], self.extractor)
+
+        # self.logger.info("Initialize network arch {}".format(self.config['model']['segmentor']))
+        # segmentor = get_model(self.config['model']['segmentor'])().to(self.device)
+        # self.segmentor = self._load_model_params(self.config['model']['segmentor_ckpt'], segmentor)
 
     def _train_func(self, epoch_idx):
         stime = time.time()

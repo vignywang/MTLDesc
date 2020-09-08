@@ -2,17 +2,32 @@ name: bisenetv1_mix
 trainer: segmentation_trainer.SegmentationMixTrainer
 
 model:
+    # bisenet
     backbone: bisenet_models.bisenetv1.BiSeNetV1Point
     extractor: superpoint_net.Extractor384
     n_classes: 182
 
+    # megpoint
+    # backbone: superpoint_net.SuperPointNetBackbone3
+    # extractor: superpoint_net.SuperPointExtractor128
+
     pretrained_seg_ckpt: /home/yuyang/data/aachen/Aachen-Day-Night/weights/seg_related/seg_bisenetv1/model_150.pt
 
     # debug use
-    # backbone_ckpt: /home/yuyang/project/development/MegPoint/ckpt/bisenetv1_mix_e1/model_final.pt
-    # extractor_ckpt: /home/yuyang/project/development/MegPoint/ckpt/bisenetv1_mix_e1/extractor_final.pt
+    # bisenetv1_mix
+    # backbone_ckpt: /home/yuyang/project/development/MegPoint/ckpt/bisenetv1_mix_e2/model_final.pt
+    # extractor_ckpt: /home/yuyang/project/development/MegPoint/ckpt/bisenetv1_mix_e2/extractor_final.pt
+
+    # bisenetv1_megastuff_mix
     # backbone_ckpt: /home/yuyang/project/development/MegPoint/ckpt/bisenetv1_megastuff_mix_e1/model_final.pt
     # extractor_ckpt: /home/yuyang/project/development/MegPoint/ckpt/bisenetv1_megastuff_mix_e1/extractor_final.pt
+
+    # megpoint
+    # backbone_ckpt: /home/yuyang/data/aachen/Aachen-Day-Night/weights/mlifeat128megacoco/model.pt
+    # extractor_ckpt: /home/yuyang/data/aachen/Aachen-Day-Night/weights/mlifeat128megacoco/extractor.pt
+
+    # segmentor: bisenet_models.bisenetv1.BiSeNetV1
+    # segmentor_ckpt: /home/yuyang/data/aachen/Aachen-Day-Night/weights/seg_related/seg_bisenetv1/model_150.pt
 
 test:
     detection_threshold: 0.95
