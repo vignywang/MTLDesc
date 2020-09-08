@@ -1007,7 +1007,24 @@ class SegmentationMixTrainer(PointSegmentationTrainer):
             torch.save(self.extractor.state_dict(), os.path.join(self.config['ckpt_path'], 'extractor_final.pt'))
 
 
+class SegmentationMegaStuffTrainer(SegmentationMixTrainer):
 
+    def __init__(self, **config):
+        super(SegmentationMegaStuffTrainer, self).__init__(**config)
+
+    def shuffle_dataset(self):
+        self.train_dataset.shuffle()
+        self.train_dataloader = DataLoader(
+            dataset=self.train_dataset,
+            batch_size=self.config['train']['batch_size'],
+            shuffle=False,
+            num_workers=self.config['train']['num_workers'],
+            drop_last=True,
+        )
+
+    def _train_func(self, epoch_idx):
+        self.shuffle_dataset()
+        super(SegmentationMegaStuffTrainer, self)._train_func(epoch_idx)
 
 
 
