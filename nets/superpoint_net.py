@@ -269,7 +269,7 @@ class SuperPointNetBackbone(nn.Module):
 
 class SuperPointNetBackbone3(nn.Module):
 
-    def __init__(self):
+    def __init__(self, **config):
         super(SuperPointNetBackbone3, self).__init__()
         self.relu = torch.nn.ReLU(inplace=True)
         self.pool = torch.nn.MaxPool2d(kernel_size=2, stride=2)
@@ -421,12 +421,10 @@ class SuperPointExtractor256(nn.Module):
 
 class SuperPointExtractor128(nn.Module):
 
-    def __init__(self, combines=None):
+    def __init__(self, **config):
         super(SuperPointExtractor128, self).__init__()
-        if combines is None:
-            combines = [1, 1, 1, 1]
         self.relu = nn.ReLU()
-        self.fc1 = nn.Linear((64*combines[0]+64*combines[1]+128*combines[2]+128*combines[3]), 128)
+        self.fc1 = nn.Linear(384, 128)
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
