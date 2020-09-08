@@ -897,6 +897,9 @@ class SegmentationMixTrainer(PointSegmentationTrainer):
         self.model = model.to(self.device)
         self.extractor = extractor.to(self.device)
 
+        # load part pretrained bisenetv1
+        self.model = self._load_model_params(self.config['model']['pretrained_seg_ckpt'], self.model)
+
         # debug use
         # self.model = self._load_model_params(self.config['model']['backbone_ckpt'], self.model)
         # self.extractor = self._load_model_params(self.config['model']['extractor_ckpt'], self.extractor)
