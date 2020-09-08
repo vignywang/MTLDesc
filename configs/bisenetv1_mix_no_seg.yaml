@@ -1,4 +1,4 @@
-name: bisenetv1_mix
+name: bisenetv1_mix_no_seg
 trainer: segmentation_trainer.SegmentationMixTrainer
 
 model:
