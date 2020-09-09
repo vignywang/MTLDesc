@@ -315,6 +315,10 @@ class SuperPointNetBackbone3(nn.Module):
 
         return heatmap, c1, c2, c3, c4
 
+    def freeze(self):
+        for p in self.parameters():
+            p.requires_grad = False
+
 
 class SuperPointNetBackboneSeg(nn.Module):
 
