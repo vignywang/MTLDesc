@@ -366,9 +366,9 @@ class MegadepthCocostuffDataset(Dataset):
 
         return heatmap
 
-    def _format_file_list(self, coco_dataset_root, mega_dataset_dir, mega_label_dir):
-        self.mega_list = []
-
+    @staticmethod
+    def _format_megadepth_list(mega_dataset_dir, mega_label_dir):
+        mega_list = []
         # format megadepth related list
         mega_image_list = glob(os.path.join(mega_dataset_dir, '*.jpg'))
         mega_image_list = sorted(mega_image_list)
@@ -377,7 +377,7 @@ class MegadepthCocostuffDataset(Dataset):
             img_name = img.split('/')[-1].split('.')[0]
             info = img[:-3] + 'npz'
             label = os.path.join(mega_label_dir, img_name + '.npz')
-            self.mega_list.append(
+            mega_list.append(
                 {
                     'type': mega_type,
                     'image': img,
@@ -386,8 +386,11 @@ class MegadepthCocostuffDataset(Dataset):
                 }
             )
 
-        self.coco_list = []
+        return mega_list
 
+    @staticmethod
+    def _format_coco_list(coco_dataset_root):
+        coco_list = []
         # format coco related list
         coco_type = 'coco-stuff'
         file_list = os.path.join(coco_dataset_root, 'imageLists', 'train.txt')
@@ -399,7 +402,7 @@ class MegadepthCocostuffDataset(Dataset):
             label_path = os.path.join(coco_dataset_root, 'processed_dataset', image_id + "_label.npy")
             point_path = os.path.join(coco_dataset_root, 'processed_dataset', image_id + '_point.npy')
 
-            self.coco_list.append(
+            coco_list.append(
                 {
                     'type': coco_type,
                     'image_path': image_path,
@@ -407,6 +410,11 @@ class MegadepthCocostuffDataset(Dataset):
                     'label_path': label_path,
                 }
             )
+        return coco_list
+
+    def _format_file_list(self, coco_dataset_root, mega_dataset_dir, mega_label_dir):
+        self.mega_list = self._format_megadepth_list(mega_dataset_dir, mega_label_dir)
+        self.coco_list = self._format_coco_list(coco_dataset_root)
 
         self.shuffle()
 
