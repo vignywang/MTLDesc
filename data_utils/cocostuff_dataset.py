@@ -6,6 +6,7 @@
 #
 import os.path as osp
 import random
+from glob import glob
 
 import cv2
 import scipy.io as sio
@@ -125,6 +126,35 @@ class _BaseDataset(Dataset):
         fmt_str += "    Split: {}\n".format(self.config['split'])
         fmt_str += "    Root: {}".format(self.config['root'])
         return fmt_str
+
+
+class CocoStuff164k(_BaseDataset):
+    """COCO-Stuff 164k dataset"""
+
+    def __init__(self, **kwargs):
+        super(CocoStuff164k, self).__init__(**kwargs)
+
+    def _set_files(self):
+        # Create data list by parsing the "images" folder
+        if self.config['split'] in ["train2017", "val2017"]:
+            file_list = sorted(glob(osp.join(self.config['root'], "images", self.config['split'], "*.jpg")))
+            assert len(file_list) > 0, "{} has no image".format(
+                osp.join(self.config['root'], "images", self.config['split'])
+            )
+            file_list = [f.split("/")[-1].replace(".jpg", "") for f in file_list]
+            self.files = file_list
+        else:
+            raise ValueError("Invalid split name: {}".format(self.config['split']))
+
+    def _load_data(self, index):
+        # Set paths
+        image_id = self.files[index]
+        image_path = osp.join(self.config['root'], "images", self.config['split'], image_id + ".jpg")
+        label_path = osp.join(self.config['root'], "annotations", self.config['split'], image_id + ".png")
+        # Load an image and label
+        image = cv2.imread(image_path, cv2.IMREAD_COLOR).astype(np.float32)
+        label = cv2.imread(label_path, cv2.IMREAD_GRAYSCALE)
+        return image_id, image, label, None
 
 
 class CocoStuff10k(_BaseDataset):
