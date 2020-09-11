@@ -22,9 +22,9 @@ train:
     lr_decay: 10
     poly_power: 0.9
     batch_size: 64
-    epoch_num: 300
+    epoch_num: 150
     log_freq: 50
-    num_workers: 16
+    num_workers: 8
     validate_after: 0.0
 
     split: train
