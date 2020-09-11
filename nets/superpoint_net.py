@@ -320,6 +320,60 @@ class SuperPointNetBackbone3(nn.Module):
             p.requires_grad = False
 
 
+class AttentionModule(nn.Module):
+
+    def __init__(self):
+        super(AttentionModule, self).__init__()
+        # attention module
+        self.attention1a = nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1)
+        self.attention1b = nn.Conv2d(32, 1, kernel_size=3, stride=1, padding=1)
+        self.attention2a = nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1)
+        self.attention2b = nn.Conv2d(32, 1, kernel_size=3, stride=1, padding=1)
+        self.attention3a = nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1)
+        self.attention3b = nn.Conv2d(64, 1, kernel_size=3, stride=1, padding=1)
+        self.attention4a = nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1)
+        self.attention4b = nn.Conv2d(64, 1, kernel_size=3, stride=1, padding=1)
+
+        self.relu = nn.ReLU()
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+    def forward(self, c1, c2, c3, c4):
+        attention1 = self.relu(self.attention1a(c1))
+        w1 = torch.sigmoid(self.attention1b(attention1))
+
+        attention2 = self.relu(self.attention2a(c1))
+        w2 = torch.sigmoid(self.attention2b(attention2))
+
+        attention3 = self.relu(self.attention3a(c3))
+        w3 = torch.sigmoid(self.attention3b(attention3))
+
+        attention4 = self.relu(self.attention4a(c4))
+        w4 = torch.sigmoid(self.attention4b(attention4))
+
+        return w1, w2, w3, w4
+
+
+class SuperPointNetBackboneAttention(nn.Module):
+
+    def __init__(self, **config):
+        super(SuperPointNetBackboneAttention, self).__init__()
+        self.superpoint = SuperPointNetBackbone3()
+        self.attention_model = AttentionModule()
+
+    def forward(self, x):
+        heatmap, c1, c2, c3, c4 = self.superpoint(x)
+        w1, w2, w3, w4 = self.attention_model(c1, c2, c3, c4)
+
+        return heatmap, [c1, c2, c3, c4], [w1, w2, w3, w4]
+
+    def freeze(self):
+        for p in self.parameters():
+            p.requires_grad = False
+
+
 class SuperPointNetBackboneSeg(nn.Module):
 
     def __init__(self):
@@ -439,6 +493,10 @@ class SuperPointExtractor128(nn.Module):
         desp = feature / torch.norm(feature, dim=2, keepdim=True)
 
         return desp
+
+    def freeze(self):
+        for p in self.parameters():
+            p.requires_grad = False
 
 
 class SegExtractor384(nn.Module):
