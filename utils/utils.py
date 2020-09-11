@@ -266,6 +266,54 @@ class DescriptorGeneralTripletLoss(object):
         return loss
 
 
+class WeightedDescriptorTripletLoss(object):
+
+    def __init__(self, device):
+        self.device = device
+
+    def _compute_dist(self, X, Y):
+        """
+        批量计算两类描述子之间的距离
+        :param X: [bt,n,dim]
+        :param Y: [bt,m,dim]
+        :return: [bt,n,m]
+        """
+        XTX = torch.pow(X, 2).sum(dim=2)  # [bt,n]
+        YTY = torch.pow(Y, 2).sum(dim=2)  # [bt,m]
+        XTY = torch.bmm(X, Y.transpose(1, 2))
+
+        dist2 = XTX.unsqueeze(dim=2) - 2 * XTY + YTY.unsqueeze(dim=1)  # [bt,n,m]
+        dist = torch.sqrt(torch.clamp(dist2, 1e-5))
+        return dist
+
+    def __call__(self, desp_0, desp_1, w0, w1, valid_mask, not_search_mask):
+        """
+        Args:
+            desp_0: [bt,n,dim]
+            desp_1: [bt,n,dim]
+            valid_mask: [bt,n] 1有效，0无效
+            not_search_mask: [bt,n,n]
+        Returns:
+            loss
+        """
+        dist = self._compute_dist(w0*desp_0, w1*desp_1)
+
+        positive_pair = torch.diagonal(dist, dim1=1, dim2=2)  # [bt,n]
+
+        dist = dist + 10*not_search_mask
+        hardest_negative_pair, hardest_negative_idx = torch.min(dist, dim=2)  # [bt,n]
+
+        # zeros = torch.zeros_like(positive_pair)
+        # loss_total, _ = torch.max(torch.stack((zeros, 1.+positive_pair-hardest_negative_pair), dim=1), dim=1)
+        loss_total = torch.relu(1+positive_pair-hardest_negative_pair) - torch.log(w0.squeeze(dim=2)) - torch.log(w1.squeeze(dim=2))
+        loss_total *= valid_mask
+
+        valid_num = torch.sum(valid_mask, dim=1)
+        loss = torch.mean(torch.sum(loss_total, dim=1)/(valid_num + 1.))
+
+        return loss
+
+
 class DescriptorTripletAugmentationLoss(object):
     """用于带有增强数据的网络训练"""
 
