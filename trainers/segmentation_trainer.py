@@ -267,7 +267,7 @@ class BiSeNetV1SegmentationTrainer(_BaseTrainer):
             gt_label = data['label']
 
             # Forward propagation
-            logit = self.model(image.to(self.device))
+            logit = self.model(image.to(self.device))[0]
 
             # Pixel-wise labeling
             H, W = gt_label.shape
@@ -286,6 +286,26 @@ class BiSeNetV1SegmentationTrainer(_BaseTrainer):
 
         # self.logger.info("Validate epoch %2d done." % epoch_idx)
         # self.logger.info("-----------------------------------------------------")
+
+
+class BiSeNetV1SegmentationMegastuffTrainer(BiSeNetV1SegmentationTrainer):
+
+    def __init__(self, **config):
+        super(BiSeNetV1SegmentationMegastuffTrainer, self).__init__(**config)
+
+    def shuffle_dataset(self):
+        self.train_dataset.shuffle()
+        self.train_dataloader = DataLoader(
+            dataset=self.train_dataset,
+            batch_size=self.config['train']['batch_size'],
+            shuffle=False,
+            num_workers=self.config['train']['num_workers'],
+            drop_last=True,
+        )
+
+    def _train_func(self, epoch_idx):
+        self.shuffle_dataset()
+        super(BiSeNetV1SegmentationMegastuffTrainer, self)._train_func(epoch_idx)
 
 
 class PointSegmentationTrainer(_BaseTrainer):
