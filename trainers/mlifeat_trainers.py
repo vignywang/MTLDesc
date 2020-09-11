@@ -13,7 +13,7 @@ from nets import get_model
 from data_utils import get_dataset
 from trainers.base_trainer import BaseTrainer
 from utils.utils import spatial_nms
-from utils.utils import DescriptorGeneralTripletLoss
+from utils.utils import DescriptorGeneralTripletLoss, WeightedDescriptorTripletLoss
 from utils.utils import PointHeatmapWeightedBCELoss
 
 
@@ -21,6 +21,7 @@ class MegPointTrainer(BaseTrainer):
 
     def __init__(self, **config):
         super(MegPointTrainer, self).__init__(**config)
+        self.point_weight = 0.1
 
     def _initialize_dataset(self):
         # 初始化数据集
@@ -132,7 +133,7 @@ class MegPointTrainer(BaseTrainer):
             point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
             point_loss = self.point_loss(heatmap_pred_pair[:, 0, :, :], heatmap_gt_pair, point_mask_pair)
 
-            loss = desp_loss + 0.1 * point_loss
+            loss = desp_loss + self.point_weight * point_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -256,6 +257,208 @@ class MegPointTrainer(BaseTrainer):
         point = point.unsqueeze(dim=0).unsqueeze(dim=2)  # [1,n,1,2]
 
         desp = f.grid_sample(desp, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
+
+        desp = desp.detach().cpu().numpy()
+
+        return desp
+
+
+class MegPointTrainerAttention(MegPointTrainer):
+
+    def __init__(self, **config):
+        super(MegPointTrainerAttention, self).__init__(**config)
+        self.point_weight = 0.1
+
+    def _initialize_model(self):
+        self.logger.info("Initialize network arch {}".format(self.config['model']['backbone']))
+        model = get_model(self.config['model']['backbone'])()
+
+        self.logger.info("Initialize network arch {}".format(self.config['model']['extractor']))
+        extractor = get_model(self.config['model']['extractor'])()
+
+        if self.multi_gpus:
+            model = torch.nn.DataParallel(model)
+            extractor = torch.nn.DataParallel(extractor)
+        self.model = model.to(self.device)
+        self.extractor = extractor.to(self.device)
+
+        # restore pretrained ckpt and freeze
+        self.model.superpoint = self._load_model_params(self.config['model']['superpoint_ckpt'], self.model.superpoint)
+        self.model.superpoint.freeze()
+        self.extractor = self._load_model_params(self.config['model']['extractor_ckpt'], self.extractor)
+        self.extractor.freeze()
+
+    def _initialize_loss(self):
+        # 初始化loss算子
+        # 初始化描述子loss
+        self.logger.info("Initialize the DescriptorTripletLossNoL2.")
+        self.descriptor_loss = WeightedDescriptorTripletLoss(self.device)
+
+    def _initialize_optimizer(self):
+        # 初始化网络训练优化器
+        self.logger.info("Initialize Adam optimizer with weight_decay: {:.5f}.".format(self.config['train']['weight_decay']))
+        self.optimizer = torch.optim.Adam(
+            params=filter(lambda p: p.requires_grad, self.model.parameters()),
+            lr=self.config['train']['lr'],
+            weight_decay=self.config['train']['weight_decay'])
+
+    def _train_func(self, epoch_idx):
+        self.model.train()
+        self.extractor.train()
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+            # 读取相关数据
+            image = data["image"].to(self.device)
+            desp_point = data["desp_point"].to(self.device)
+
+            warped_image = data["warped_image"].to(self.device)
+            warped_desp_point = data["warped_desp_point"].to(self.device)
+
+            valid_mask = data["valid_mask"].to(self.device)
+            not_search_mask = data["not_search_mask"].to(self.device)
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+
+            # 模型预测
+            heatmap_pred_pair, cs_pair, ws_pair = self.model(image_pair)
+
+            # 计算描述子loss
+            desp_point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
+            feature_pair = []
+            weight_pair = []
+            for c, w in zip(cs_pair, ws_pair):
+                feature_pair.append(
+                    f.grid_sample(c, desp_point_pair, mode='bilinear', padding_mode='border')
+                )
+                weight_pair.append(
+                    f.grid_sample(w, desp_point_pair, mode='bilinear', padding_mode='border')
+                )
+
+            feature_pair = torch.cat(feature_pair, dim=1)
+            feature_pair = feature_pair[:, :, :, 0].transpose(1, 2)
+            desp_pair = self.extractor(feature_pair)
+            desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
+
+            weight_pair = torch.cat(weight_pair, dim=1).prod(dim=1)
+            w0, w1 = torch.chunk(weight_pair, 2, dim=0)
+
+            desp_loss = self.descriptor_loss(desp_0, desp_1, w0, w1, valid_mask, not_search_mask)
+            loss = desp_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+
+            loss.backward()
+
+            self.optimizer.step()
+
+            # debug use
+            # if i == 200:
+            #     break
+
+            if i % self.config['train']['log_freq'] == 0:
+                desp_loss_val = desp_loss.item()
+                loss_val = loss.item()
+
+                self.logger.info(
+                    "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, desp_loss = %.4f"
+                    " one step cost %.4fs. " % (
+                        epoch_idx, i, self.epoch_length,
+                        loss_val,
+                        desp_loss_val,
+                        (time.time() - stime) / self.config['train']['log_freq'],
+                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(
+                self.model.module.state_dict(), os.path.join(self.config['ckpt_path'], 'model_%02d.pt' % epoch_idx))
+            torch.save(
+                self.extractor.module.state_dict(), os.path.join(self.config['ckpt_path'], 'extractor_%02d.pt' % epoch_idx))
+        else:
+            torch.save(
+                self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'model_%02d.pt' % epoch_idx))
+            torch.save(
+                self.extractor.state_dict(), os.path.join(self.config['ckpt_path'], 'extractor_%02d.pt' % epoch_idx))
+
+    def _inference_func(self, image_pair):
+        """
+        image_pair: [2,1,h,w]
+        """
+        self.model.eval()
+        self.extractor.eval()
+        _, _, height, width = image_pair.shape
+        heatmap_pair, cs_pair, ws_pair = self.model(image_pair)
+
+        cs0, cs1 = [], []
+        ws0, ws1 = [], []
+        for c_pair, w_pair in zip(cs_pair, ws_pair):
+            c0, c1 = torch.chunk(c_pair, 2, dim=0)
+            w0, w1 = torch.chunk(w_pair, 2, dim=0)
+            cs0.append(c0)
+            cs1.append(c1)
+            ws0.append(w0)
+            ws1.append(w1)
+
+        heatmap_pair = torch.sigmoid(heatmap_pair)
+        prob_pair = spatial_nms(heatmap_pair)
+
+        prob_pair = prob_pair.detach().cpu().numpy()
+        first_prob = prob_pair[0, 0]
+        second_prob = prob_pair[1, 0]
+
+        # 得到对应的预测点
+        first_point, first_point_num = self._generate_predict_point(
+            first_prob,
+            detection_threshold=self.config['test']['detection_threshold'],
+            top_k=self.config['test']['top_k'])  # [n,2]
+
+        second_point, second_point_num = self._generate_predict_point(
+            second_prob,
+            detection_threshold=self.config['test']['detection_threshold'],
+            top_k=self.config['test']['top_k'])  # [n,2]
+
+        if first_point_num <= 4 or second_point_num <= 4:
+            print("skip this pair because there's little point!")
+            return None
+
+        # 得到点对应的描述子
+        select_first_desp = self._generate_combined_descriptor(first_point, cs0, ws0, height, width)
+        select_second_desp = self._generate_combined_descriptor(second_point, cs1, ws1, height, width)
+
+        return first_point, first_point_num, second_point, second_point_num, select_first_desp, select_second_desp
+
+    def _generate_combined_descriptor(self, point, cs, ws, height, width):
+        """
+        用多层级的组合特征构造描述子
+        Args:
+            point: [n,2] 顺序是y,x
+            c1,c2,c3,c4: 分别对应resnet4个block输出的特征,batchsize都是1
+        Returns:
+            desp: [n,dim]
+        """
+        point = torch.from_numpy(point[:, ::-1].copy()).to(torch.float).to(self.device)
+        # 归一化采样坐标到[-1,1]
+        point = point * 2. / torch.tensor((width - 1, height - 1), dtype=torch.float, device=self.device) - 1
+        point = point.unsqueeze(dim=0).unsqueeze(dim=2)  # [1,n,1,2]
+
+        cs_feature = []
+        ws_feature = []
+        for c, w in zip(cs, ws):
+            cs_feature.append(
+                f.grid_sample(c, point, mode='bilinear')[:, :, :, 0].transpose(1, 2)
+            )
+            ws_feature.append(
+                f.grid_sample(w, point, mode='bilinear')
+            )
+
+        feature = torch.cat(cs_feature, dim=2)
+        desp = self.extractor(feature)[0]  # [n,128]
+        weight = torch.cat(ws_feature).prod(dim=1)[0]  # [n,1]
+        desp *= weight
 
         desp = desp.detach().cpu().numpy()
 
