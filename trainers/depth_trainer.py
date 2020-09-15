@@ -6,6 +6,7 @@ import time
 
 import torch
 import numpy as np
+from cv2 import imwrite
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -140,6 +141,9 @@ class DepthTrainer(_BaseTrainer):
             model = torch.nn.DataParallel(model)
         self.model = model.to(self.device)
 
+        # debug use
+        # self.model = self._load_model_params(self.config['model']['pretrained_ckpt'], self.model)
+
     def _initialize_dataset(self):
         self.logger.info('Initialize {}'.format(self.config['train']['dataset']))
         self.train_dataset = get_dataset(self.config['train']['dataset'])(**self.config['train'])
@@ -269,6 +273,18 @@ class DepthTrainer(_BaseTrainer):
 
             # Forward propagation
             depth_pred = self.model(image.to(self.device))
+
+            # debug use
+            # color_image = ((image + 1.) * 255. / 2.).numpy().astype(np.uint8)[0, ::-1, :, :].transpose((1, 2, 0))
+            # depth = depth_pred.detach().cpu().numpy()[0, 0, :, :]
+            # depth = depth / np.max(depth)
+            # inv_depth = 1. / np.clip(depth, 1e-5, np.inf)
+            # inv_depth_max = np.max(inv_depth)
+            # inv_depth /= inv_depth_max
+            # inv_depth = np.clip(inv_depth * 255., 0, 255)
+            # inv_depth = np.where(depth < 1e-4, np.zeros_like(depth), inv_depth).astype(np.uint8)
+            # image_depth = np.concatenate((color_image, np.tile(inv_depth[:, :, np.newaxis], [1, 1, 3])), axis=0)
+            # imwrite('/home/yuyang/tmp/make3d_tmp/make3d_imageDepth_{}.jpg'.format(i), image_depth)
 
             # Pixel-wise labeling
             H, W = depth_gt.shape
