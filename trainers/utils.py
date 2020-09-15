@@ -1,7 +1,11 @@
 #
 # Created by ZhangYuyang on 2020/8/31
 #
+from collections import defaultdict
+
+import cv2
 import torch
+import torch.nn.functional as f
 from torch.optim.lr_scheduler import _LRScheduler
 from PIL import Image
 import numpy as np
@@ -43,6 +47,16 @@ def resize_labels(labels, size):
     return new_labels
 
 
+def resize_labels_torch(label, size, mode='nearest'):
+    """
+    similar like resize_labels, but direct do it for torch tensors,
+    size: require shape of [h,w]
+    label: require shape of [bt,h,w]
+    """
+    label = f.interpolate(label.unsqueeze(dim=1), size, mode=mode).squeeze(dim=1)
+    return label
+
+
 def _fast_hist(label_true, label_pred, n_class):
     mask = (label_true >= 0) & (label_true < n_class)
     hist = np.bincount(
@@ -73,6 +87,69 @@ def scores(label_trues, label_preds, n_class):
         "Mean IoU": mean_iu,
         # "Class IoU": cls_iu,
     }
+
+
+class Make3DEvaluator(object):
+
+    def __init__(self):
+        self.errors = defaultdict(list)
+        self.min_depth = 1e-3
+        self.max_depth = 70
+
+    def reset(self):
+        self.errors = defaultdict(list)
+
+    def val(self):
+        error = {}
+        for k, v in self.errors.items():
+            error[k] = np.stack(v).mean()
+        return error
+
+    def eval(self, pred_depth, gt_depth):
+        gt_depth = np.clip(gt_depth, a_min=None, a_max=self.max_depth)
+
+        mask = np.logical_and(gt_depth > self.min_depth, gt_depth <= self.max_depth)
+
+        scalor = np.median(gt_depth[mask]) / np.median(pred_depth[mask])
+        pred_depth[mask] *= scalor
+
+        pred_depth[pred_depth < self.min_depth] = self.min_depth
+        pred_depth[pred_depth > self.max_depth] = self.max_depth
+
+        errors = self.compute_errors(gt_depth[mask], pred_depth[mask])
+        for k, v in errors.items():
+            self.errors[k].append(v)
+
+    @staticmethod
+    def compute_errors(gt, pred):
+        thresh = np.maximum((gt / pred), (pred / gt))
+        a1 = (thresh < 1.25).mean()
+        a2 = (thresh < 1.25 ** 2).mean()
+        a3 = (thresh < 1.25 ** 3).mean()
+
+        rmse = (gt - pred) ** 2
+        rmse = np.sqrt(rmse.mean())
+
+        rmse_log = (np.log(gt) - np.log(pred)) ** 2
+        rmse_log = np.sqrt(rmse_log.mean())
+
+        abs_rel = np.abs((gt - pred) / gt)
+        abs_rel = abs_rel.mean()
+
+        sq_rel = (gt - pred) ** 2 / gt
+        sq_rel = sq_rel.mean()
+
+        return {
+            'abs_rel': abs_rel,
+            'sq_rel': sq_rel,
+            'rmse': rmse,
+            'rmse_log': rmse_log,
+            'a1': a1,
+            'a2': a2,
+            'a3': a3,
+        }
+
+
 
 
 
