@@ -106,8 +106,15 @@ class MegaDepthNoOrd(Dataset):
 
     def _format_file_list(self):
         list_root = self.config['list_root']
-        self.image_list = list(np.load(os.path.join(list_root, 'image_list_no_ord.npy')))
-        self.depth_list = list(np.load(os.path.join(list_root, 'depth_list_no_ord.npy')))
+        image_list = np.load(os.path.join(list_root, 'image_list_no_ord.npy'))
+        depth_list = np.load(os.path.join(list_root, 'depth_list_no_ord.npy'))
+        if self.config['small'] > 0:
+            np.random.seed(self.config['seed'])
+            choices = np.random.choice(range(len(image_list)), size=int(len(image_list)*self.config['small']), replace=False)
+            image_list = image_list[choices]
+            depth_list = depth_list[choices]
+        self.image_list = list(image_list)
+        self.depth_list = list(depth_list)
 
 
 class MegaDepthRaw(object):
