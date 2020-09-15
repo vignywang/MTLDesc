@@ -401,6 +401,41 @@ class BiSeNetV1Point(nn.Module):
             p.requires_grad = False
 
 
+class BiSeNetV1Point2(nn.Module):
+    def __init__(self, **config):
+        super(BiSeNetV1Point2, self).__init__()
+        self.cp = ContextPath()
+        self.sp = SpatialPath()
+        self.heatmap = nn.Conv2d(4, 1, kernel_size=3, stride=1, padding=1)
+        self.descriptor = nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1)
+
+        self.init_weight()
+
+    def forward(self, x):
+        _, cp16 = self.cp(x)
+        sp8 = self.sp(x)
+        cp8 = F.interpolate(cp16, scale_factor=2, mode='bilinear', align_corners=True)
+
+        fuse_feat = torch.cat((sp8, cp8), dim=1)
+
+        heatmap = self.heatmap(F.pixel_shuffle(fuse_feat, 8))
+        dense_descriptor = self.descriptor(fuse_feat)
+        dense_descriptor = dense_descriptor / torch.norm(dense_descriptor, dim=1, keepdim=True).clamp(1e-5)
+
+        return heatmap, dense_descriptor
+
+    def init_weight(self):
+        for ly in self.children():
+            if isinstance(ly, nn.Conv2d):
+                nn.init.kaiming_normal_(ly.weight, a=1)
+                if not ly.bias is None: nn.init.constant_(ly.bias, 0)
+
+    def freeze(self):
+        # return
+        for p in self.parameters():
+            p.requires_grad = False
+
+
 if __name__ == "__main__":
     net = BiSeNetV1(19)
     net.cuda()
