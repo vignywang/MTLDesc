@@ -257,10 +257,140 @@ class MegPointTrainer(BaseTrainer):
         point = point.unsqueeze(dim=0).unsqueeze(dim=2)  # [1,n,1,2]
 
         desp = f.grid_sample(desp, point, mode="bilinear")[0, :, :, 0].transpose(0, 1)
+        desp = desp / torch.norm(desp, dim=1, keepdim=True).clamp(1e-5)
 
         desp = desp.detach().cpu().numpy()
 
         return desp
+
+
+class MegPointContext(MegPointTrainer):
+
+    def __init__(self, **config):
+        super(MegPointContext, self).__init__(**config)
+
+    def _initialize_model(self):
+        self.logger.info("Initialize network arch {}".format(self.config['model']['backbone']))
+        model = get_model(self.config['model']['backbone'])()
+
+        if self.multi_gpus:
+            model = torch.nn.DataParallel(model)
+        self.model = model.to(self.device)
+
+    def _initialize_optimizer(self):
+        # 初始化网络训练优化器
+        self.logger.info("Initialize Adam optimizer with weight_decay: {:.5f}.".format(self.config['train']['weight_decay']))
+        self.optimizer = torch.optim.Adam(
+            params=self.model.parameters(),
+            lr=self.config['train']['lr'],
+            weight_decay=self.config['train']['weight_decay'])
+
+    def _train_func(self, epoch_idx):
+        self.model.train()
+
+        stime = time.time()
+        for i, data in enumerate(self.train_dataloader):
+
+            image = data["image"].to(self.device)
+            heatmap_gt = data['heatmap'].to(self.device)
+            point_mask = data['point_mask'].to(self.device)
+
+            warped_image = data["warped_image"].to(self.device)
+            warped_heatmap_gt = data['warped_heatmap'].to(self.device)
+            warped_point_mask = data['warped_point_mask'].to(self.device)
+
+            desp_point = data["desp_point"].to(self.device)
+            warped_desp_point = data["warped_desp_point"].to(self.device)
+            valid_mask = data["valid_mask"].to(self.device)
+            not_search_mask = data["not_search_mask"].to(self.device)
+
+            shape = image.shape
+
+            image_pair = torch.cat((image, warped_image), dim=0)
+            heatmap_pred_pair, desp_pair = self.model(image_pair)
+
+            # 计算关键点loss
+            heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)
+            point_mask_pair = torch.cat((point_mask, warped_point_mask), dim=0)
+            point_loss = self.point_loss(heatmap_pred_pair[:, 0, :, :], heatmap_gt_pair, point_mask_pair)
+
+            # compute descriptor loss
+            desp_point_pair = torch.cat((desp_point, warped_desp_point), dim=0)
+            desp_pair = f.grid_sample(desp_pair, desp_point_pair, mode="bilinear", padding_mode="border")
+            desp_pair = desp_pair[:, :, :, 0].transpose(1, 2)
+            desp_pair = desp_pair / torch.norm(desp_pair, dim=2, keepdim=True)
+            desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
+
+            desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
+
+            loss = 0.1 * point_loss + desp_loss
+
+            if torch.isnan(loss):
+                self.logger.error('loss is nan!')
+
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            self.optimizer.step()
+
+            if i % self.config['train']['log_freq'] == 0:
+
+                point_loss_val = point_loss.item()
+                desp_loss_val = desp_loss.item()
+                loss_val = loss.item()
+
+                self.summary_writer.add_histogram('descriptor', desp_pair)
+                self.logger.info("[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, point_loss = %.4f, desp_loss = %.4f"
+                                 " one step cost %.4fs. "
+                                 % (epoch_idx, i, self.epoch_length, loss_val,
+                                    point_loss_val, desp_loss_val,
+                                    (time.time() - stime) / self.config['train']['log_freq'],
+                                    ))
+                stime = time.time()
+
+        # save the model
+        if self.multi_gpus:
+            torch.save(self.model.module.state_dict(), os.path.join(self.config['ckpt_path'], 'model_%02d.pt' % epoch_idx))
+        else:
+            torch.save(self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'model_%02d.pt' % epoch_idx))
+
+    def _inference_func(self, image_pair):
+        """
+        image_pair: [2,1,h,w]
+        """
+        self.model.eval()
+        _, _, height, width = image_pair.shape
+        heatmap_pair, desp_pair = self.model(image_pair)
+
+        # 得到对应的关键点
+        heatmap_pair = torch.sigmoid(heatmap_pair)
+        prob_pair = spatial_nms(heatmap_pair)
+
+        prob_pair = prob_pair.detach().cpu().numpy()
+        first_prob = prob_pair[0, 0]
+        second_prob = prob_pair[1, 0]
+
+        first_point, first_point_num = self._generate_predict_point(
+            first_prob,
+            detection_threshold=self.config['test']['detection_threshold'],
+            top_k=self.config['test']['top_k'])  # [n,2]
+
+        second_point, second_point_num = self._generate_predict_point(
+            second_prob,
+            detection_threshold=self.config['test']['detection_threshold'],
+            top_k=self.config['test']['top_k'])  # [n,2]
+
+        if first_point_num <= 4 or second_point_num <= 4:
+            print("skip this pair because there's little point!")
+            return None
+
+        # 得到点对应的描述子
+        first_desp, second_desp = torch.chunk(desp_pair, 2, dim=0)
+
+        select_first_desp = self._generate_descriptor_for_superpoint_desp_head(first_point, first_desp, height, width)
+        select_second_desp = self._generate_descriptor_for_superpoint_desp_head(second_point, second_desp, height, width)
+
+        return first_point, first_point_num, second_point, second_point_num, select_first_desp, select_second_desp
 
 
 class MegPointTrainerAttention(MegPointTrainer):
