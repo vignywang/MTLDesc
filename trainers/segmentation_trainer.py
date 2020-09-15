@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from tensorboardX import SummaryWriter
 
 from data_utils import get_dataset
-from .utils import resize_labels
+from .utils import resize_labels_torch
 from .utils import PolynomialLR
 from .utils import scores
 from utils.utils import DescriptorGeneralTripletLoss, PointHeatmapWeightedBCELoss
@@ -202,8 +202,8 @@ class BiSeNetV1SegmentationTrainer(_BaseTrainer):
         stime = time.time()
         for i, data in enumerate(self.train_dataloader):
             # read
-            images = data["image"]
-            labels = data['label']
+            images = data["image"].to(self.device)
+            labels = data['label'].to(self.device)
 
             # forward
             logits = self.model(images.to(self.device))
@@ -212,7 +212,7 @@ class BiSeNetV1SegmentationTrainer(_BaseTrainer):
             loss = []
             for logit in logits:
                 _, _, H, W = logit.shape
-                label_ = resize_labels(labels, size=(W, H))
+                label_ = resize_labels_torch(labels, size=(H, W))
                 loss.append(self.criterion(logit, label_.to(self.device)))
 
             loss = torch.mean(torch.stack(loss))
@@ -427,11 +427,11 @@ class PointSegmentationTrainer(_BaseTrainer):
         for i, data in enumerate(self.train_dataloader):
             # read
             image = data["image"].to(self.device)
-            label = data['label']
+            label = data['label'].to(self.device)
             desp_point = data["desp_point"].to(self.device)
 
             warped_image = data["warped_image"].to(self.device)
-            warped_label = data['warped_label']
+            warped_label = data['warped_label'].to(self.device)
             warped_desp_point = data["warped_desp_point"].to(self.device)
 
             valid_mask = data["valid_mask"].to(self.device)
@@ -467,7 +467,7 @@ class PointSegmentationTrainer(_BaseTrainer):
             seg_loss = []
             for logit_pair in seg_logits_pair:
                 _, _, H, W = logit_pair.shape
-                label_ = resize_labels(label_pair, size=(W, H))
+                label_ = resize_labels_torch(label_pair, size=(H, W))
                 seg_loss.append(self.criterion(logit_pair, label_.to(self.device)))
 
             seg_loss = torch.mean(torch.stack(seg_loss))
@@ -936,13 +936,13 @@ class SegmentationMixTrainer(PointSegmentationTrainer):
         for i, data in enumerate(self.train_dataloader):
             # read
             image = data["image"].to(self.device)
-            label = data['label']
+            label = data['label'].to(self.device)
             desp_point = data["desp_point"].to(self.device)
             heatmap_gt = data['heatmap'].to(self.device)
             point_mask = data['point_mask'].to(self.device)
 
             warped_image = data["warped_image"].to(self.device)
-            warped_label = data['warped_label']
+            warped_label = data['warped_label'].to(self.device)
             warped_desp_point = data["warped_desp_point"].to(self.device)
             warped_heatmap_gt = data['warped_heatmap'].to(self.device)
             warped_point_mask = data['warped_point_mask'].to(self.device)
@@ -979,7 +979,7 @@ class SegmentationMixTrainer(PointSegmentationTrainer):
             seg_loss = []
             for logit_pair in seg_logits_pair:
                 _, _, H, W = logit_pair.shape
-                label_ = resize_labels(label_pair, size=(W, H))
+                label_ = resize_labels_torch(label_pair, size=(H, W))
                 seg_loss.append(self.criterion(logit_pair, label_.to(self.device)))
 
             seg_loss = torch.mean(torch.stack(seg_loss))
