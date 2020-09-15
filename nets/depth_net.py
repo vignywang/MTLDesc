@@ -42,6 +42,10 @@ def crop_like(input, ref):
     return input[:, :, :ref.size(2), :ref.size(3)]
 
 
+def inv_depth(depth):
+    return 1. / torch.clamp(depth, 1e-5)
+
+
 class DispNetS(nn.Module):
 
     def __init__(self, alpha=10, beta=0.01, **config):
@@ -132,7 +136,7 @@ class DispNetS(nn.Module):
         depth1 = self.predict_depth1(out_iconv1)
 
         if self.training:
-            return depth1, depth2, depth3, depth4
+            return inv_depth(depth1), inv_depth(depth2), inv_depth(depth3), inv_depth(depth4)
         else:
-            return depth1
+            return inv_depth(depth1)
 
