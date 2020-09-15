@@ -84,6 +84,55 @@ def draw_image_keypoints(image, points, color=(0, 255, 0), show=False):
     return image
 
 
+class JointLoss(object):
+
+    def __init__(self):
+        self.w_data = 1.0
+        self.w_grad = 0.5
+
+    @staticmethod
+    def gradient_loss(log_prediction_d, log_gt, mask):
+        N = torch.sum(mask, dim=[1, 2]) + 1.
+        log_d_diff = log_prediction_d - log_gt
+        log_d_diff = torch.mul(log_d_diff, mask)
+
+        v_gradient = torch.abs(log_d_diff[:, 0:-2, :] - log_d_diff[:, 2:, :])
+        v_mask = torch.mul(mask[:, 0:-2, :], mask[:, 2:, :])
+        v_gradient = torch.mul(v_gradient, v_mask)
+
+        h_gradient = torch.abs(log_d_diff[:, :, 0:-2] - log_d_diff[:, :, 2:])
+        h_mask = torch.mul(mask[:, :, 0:-2], mask[:, :, 2:])
+        h_gradient = torch.mul(h_gradient, h_mask)
+
+        gradient_loss = torch.sum(h_gradient, dim=[1, 2]) + torch.sum(v_gradient, dim=[1, 2])
+        gradient_loss = gradient_loss / N
+        gradient_loss = torch.mean(gradient_loss)
+
+        return gradient_loss
+
+    @staticmethod
+    def data_loss(log_prediction_d, log_gt, mask):
+        N = torch.sum(mask, dim=[1, 2]) + 1.
+        log_d_diff = log_prediction_d - log_gt
+        log_d_diff = torch.mul(log_d_diff, mask)
+        s1 = torch.sum(torch.pow(log_d_diff, 2), dim=[1, 2]) / N
+        s2 = torch.pow(torch.sum(log_d_diff, dim=[1, 2]), 2) / (N * N)
+        data_loss = s1 - s2
+        data_loss = torch.mean(data_loss)
+
+        return data_loss
+
+    def __call__(self, depth_pred, depth_gt, mask):
+        log_pred = torch.log(torch.clamp(depth_pred, 1e-5))
+        log_gt = torch.log(torch.clamp(depth_gt, 1e-5))
+
+        data_loss = self.w_data * self.data_loss(log_pred, log_gt, mask)
+        gradient_loss = self.w_grad * self.gradient_loss(log_pred, log_gt, mask)
+        total_loss = data_loss + gradient_loss
+
+        return total_loss, data_loss, gradient_loss
+
+
 class SoftCrossEntropyVectorLoss(object):
     """
     L1 loss with mask
