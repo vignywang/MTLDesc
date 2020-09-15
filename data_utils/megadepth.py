@@ -3,6 +3,7 @@
 #
 import os
 import random
+from glob import glob
 
 import torch
 import h5py
@@ -20,6 +21,7 @@ class MegaDepthNoOrd(Dataset):
             'height': 224,
             'width': 224,
             'scales': [0.5, 0.75, 1.0],
+            'small': 0,
         }
         self.config.update(config)
         self._format_file_list()
@@ -32,9 +34,7 @@ class MegaDepthNoOrd(Dataset):
         depth_dir = os.path.join(self.config['dataset_root'], self.depth_list[idx])
 
         image = cv2.imread(image_dir)[:, :, ::-1]
-        depth_file = h5py.File(depth_dir, 'r')
-        depth = np.array(depth_file['depth'])
-        depth_file.close()
+        depth = np.load(depth_dir)
 
         # preprocess
         image, depth = self.preprocess(image, depth)
@@ -59,14 +59,6 @@ class MegaDepthNoOrd(Dataset):
 
     def preprocess(self, image, depth):
         # Scaling
-        h, w = depth.shape
-        min_size = min(h, w)
-        if min_size > 320:
-            scale_factor = 320. / float(min_size)
-            h, w = (int(h * scale_factor), int(w * scale_factor))
-            image = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
-            depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
-
         h, w = depth.shape
         scale_factor = random.choice(self.config['scales'])
         h, w = (int(h * scale_factor), int(w * scale_factor))
@@ -105,14 +97,46 @@ class MegaDepthNoOrd(Dataset):
         return image, depth
 
     def _format_file_list(self):
-        list_root = self.config['list_root']
-        image_list = np.load(os.path.join(list_root, 'image_list_no_ord.npy'))
-        depth_list = np.load(os.path.join(list_root, 'depth_list_no_ord.npy'))
+        root = self.config['dataset_root']
+        image_list = sorted(glob(os.path.join(root, '*.jpg')), key=lambda x: int(x.split('/')[-1].split('.')[0]))
+        depth_list = sorted(glob(os.path.join(root, '*.npy')), key=lambda x: int(x.split('/')[-1].split('.')[0]))
+
         if self.config['small'] > 0:
             np.random.seed(self.config['seed'])
             choices = np.random.choice(range(len(image_list)), size=int(len(image_list)*self.config['small']), replace=False)
             image_list = image_list[choices]
             depth_list = depth_list[choices]
+        self.image_list = list(image_list)
+        self.depth_list = list(depth_list)
+
+
+class MegaDepthRawNoOrd(object):
+
+    def __init__(self, **config):
+        self.config = config
+        self._format_file_list()
+
+    def __len__(self):
+        return len(self.image_list)
+
+    def __getitem__(self, idx):
+        image_dir = os.path.join(self.config['dataset_root'], self.image_list[idx])
+        depth_dir = os.path.join(self.config['dataset_root'], self.depth_list[idx])
+
+        image = cv2.imread(image_dir)
+        depth_file = h5py.File(depth_dir, 'r')
+        depth = np.array(depth_file['depth'])
+        depth_file.close()
+
+        return {
+            'image': image,
+            'depth': depth,
+        }
+
+    def _format_file_list(self):
+        list_root = self.config['list_root']
+        image_list = np.load(os.path.join(list_root, 'image_list_no_ord.npy'))
+        depth_list = np.load(os.path.join(list_root, 'depth_list_no_ord.npy'))
         self.image_list = list(image_list)
         self.depth_list = list(depth_list)
 
@@ -178,10 +202,43 @@ def select_no_ord_dataset():
     dataset.select()
 
 
-if __name__ == '__main__':
+def scale_megadepth_no_ord():
     config = {
         'list_root': '/data/localization/MegaDepthOrder/list/train_list',
         'dataset_root': '/data/localization/MegaDepthOrder/phoenix/S6/zl548/MegaDepth_v1',
+    }
+    output_root = os.path.join('/data/localization/MegaDepthOrder', 'preprocessed_no_ord')
+    if not os.path.exists(output_root):
+        os.mkdir(output_root)
+
+    dataset = MegaDepthRawNoOrd(**config)
+    for i, data in tqdm(enumerate(dataset), total=len(dataset)):
+        image = data['image']
+        depth = data['depth']
+
+        h, w = depth.shape
+        min_size = min(h, w)
+        if min_size > 320:
+            scale_factor = 320. / float(min_size)
+            h, w = (int(h * scale_factor), int(w * scale_factor))
+            image = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
+            depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
+
+        cv2.imwrite(os.path.join(output_root, '%06d.jpg' % i), image)
+        np.save(os.path.join(output_root, '%06d' % i), depth)
+
+
+if __name__ == '__main__':
+    pass
+    # first
+    # select_no_ord_dataset()
+
+    # second
+    # scale_megadepth_no_ord()
+
+    config = {
+        'list_root': '/data/localization/MegaDepthOrder/list/train_list',
+        'dataset_root': '/data/localization/MegaDepthOrder/preprocessed_no_ord',
     }
 
     dataset = MegaDepthNoOrd(**config)
@@ -189,7 +246,6 @@ if __name__ == '__main__':
         a = data
         if i == 20:
             break
-
 
 
 
