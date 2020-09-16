@@ -86,9 +86,9 @@ def draw_image_keypoints(image, points, color=(0, 255, 0), show=False):
 
 class JointLoss(object):
 
-    def __init__(self):
-        self.w_data = 1.0
-        self.w_grad = 0.5
+    def __init__(self, w_data=1.0, w_grad=0.5):
+        self.w_data = w_data
+        self.w_grad = w_grad
 
     @staticmethod
     def gradient_loss(log_prediction_d, log_gt, mask):
@@ -122,8 +122,7 @@ class JointLoss(object):
 
         return data_loss
 
-    def __call__(self, depth_pred, depth_gt, mask):
-        log_pred = torch.log(torch.clamp(depth_pred, 1e-5))
+    def __call__(self, log_pred, depth_gt, mask):
         log_gt = torch.log(torch.clamp(depth_gt, 1e-5))
 
         data_loss = self.w_data * self.data_loss(log_pred, log_gt, mask)
