@@ -91,7 +91,12 @@ class JointLoss(object):
         self.w_grad = w_grad
 
     @staticmethod
-    def gradient_loss(log_prediction_d, log_gt, mask):
+    def gradient_loss(log_prediction_d, log_gt, mask, scale):
+        assert scale in [1, 2, 4, 8]
+        log_prediction_d = log_prediction_d[:, ::scale, ::scale]
+        log_gt = log_gt[:, ::scale, ::scale]
+        mask = mask[:, ::scale, ::scale]
+
         N = torch.sum(mask, dim=[1, 2]) + 1.
         log_d_diff = log_prediction_d - log_gt
         log_d_diff = torch.mul(log_d_diff, mask)
@@ -126,7 +131,12 @@ class JointLoss(object):
         log_gt = torch.log(torch.clamp(depth_gt, 1e-5))
 
         data_loss = self.w_data * self.data_loss(log_pred, log_gt, mask)
-        gradient_loss = self.w_grad * self.gradient_loss(log_pred, log_gt, mask)
+        gradient_loss1 = self.w_grad * self.gradient_loss(log_pred, log_gt, mask, 1)
+        gradient_loss2 = self.w_grad * self.gradient_loss(log_pred, log_gt, mask, 2)
+        gradient_loss4 = self.w_grad * self.gradient_loss(log_pred, log_gt, mask, 4)
+        gradient_loss8 = self.w_grad * self.gradient_loss(log_pred, log_gt, mask, 8)
+
+        gradient_loss = gradient_loss1 + gradient_loss2 + gradient_loss4 + gradient_loss8
         total_loss = data_loss + gradient_loss
 
         return total_loss, data_loss, gradient_loss
