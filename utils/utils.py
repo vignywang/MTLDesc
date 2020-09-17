@@ -142,6 +142,36 @@ class JointLoss(object):
         return total_loss, data_loss, gradient_loss
 
 
+class JointLossSmooth(JointLoss):
+
+    def __init__(self, w_data=1.0, w_grad=1.0):
+        super(JointLossSmooth, self).__init__(w_data, w_grad)
+
+    @staticmethod
+    def gradient_loss(log_prediction_d, img):
+        depth_pred = torch.exp(log_prediction_d)
+        grad_depth_x = torch.abs(depth_pred[:, :, :-1] - depth_pred[:, :, 1:])
+        grad_depth_y = torch.abs(depth_pred[:, :-1, :] - depth_pred[:, 1:, :])
+
+        grad_img_x = torch.mean(torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]), 1)
+        grad_img_y = torch.mean(torch.abs(img[:, :, :-1, :] - img[:, :, 1:, :]), 1)
+
+        grad_depth_x *= torch.exp(-grad_img_x)
+        grad_depth_y *= torch.exp(-grad_img_y)
+
+        return grad_depth_x.mean() + grad_depth_y.mean()
+
+    def __call__(self, log_pred, depth_gt, mask, image):
+        log_gt = torch.log(torch.clamp(depth_gt, 1e-5))
+
+        data_loss = self.w_data * self.data_loss(log_pred, log_gt, mask)
+        gradient_loss = self.w_grad * self.gradient_loss(log_pred, image)
+
+        total_loss = data_loss + gradient_loss
+
+        return total_loss, data_loss, gradient_loss
+
+
 class SoftCrossEntropyVectorLoss(object):
     """
     L1 loss with mask
