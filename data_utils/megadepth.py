@@ -59,11 +59,12 @@ class MegaDepthNoOrd(Dataset):
 
     def preprocess(self, image, depth):
         # Scaling
-        h, w = depth.shape
-        scale_factor = random.choice(self.config['scales'])
-        h, w = (int(h * scale_factor), int(w * scale_factor))
-        image = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
-        depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
+        if self.config['do_scale']:
+            h, w = depth.shape
+            scale_factor = random.choice(self.config['scales'])
+            h, w = (int(h * scale_factor), int(w * scale_factor))
+            image = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
+            depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
 
         # Padding to fit for crop_size
         h, w = depth.shape
@@ -98,12 +99,12 @@ class MegaDepthNoOrd(Dataset):
 
     def _format_file_list(self):
         root = self.config['dataset_root']
-        image_list = sorted(glob(os.path.join(root, '*.jpg')), key=lambda x: int(x.split('/')[-1].split('.')[0]))
-        depth_list = sorted(glob(os.path.join(root, '*.npy')), key=lambda x: int(x.split('/')[-1].split('.')[0]))
+        image_list = np.array(sorted(glob(os.path.join(root, '*.jpg')), key=lambda x: int(x.split('/')[-1].split('.')[0])))
+        depth_list = np.array(sorted(glob(os.path.join(root, '*.npy')), key=lambda x: int(x.split('/')[-1].split('.')[0])))
 
         if self.config['small'] > 0:
             np.random.seed(self.config['seed'])
-            choices = np.random.choice(range(len(image_list)), size=int(len(image_list)*self.config['small']), replace=False)
+            choices = np.random.choice(range(image_list.shape[0]), size=int(image_list.shape[0]*self.config['small']), replace=False)
             image_list = image_list[choices]
             depth_list = depth_list[choices]
         self.image_list = list(image_list)
