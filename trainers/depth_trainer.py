@@ -3,6 +3,7 @@
 #
 import os
 import time
+from pathlib import Path
 
 import torch
 import numpy as np
@@ -14,7 +15,7 @@ from tensorboardX import SummaryWriter
 
 from data_utils import get_dataset
 from nets import get_model
-from .utils import PolynomialLR, resize_labels_torch, Make3DEvaluator
+from .utils import PolynomialLR, Make3DEvaluator
 from utils.utils import JointLoss
 
 
@@ -126,6 +127,79 @@ class _BaseTrainer(object):
 
         end_time = time.time()
         self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
+
+
+class ValidateTrainer(_BaseTrainer):
+    '''
+    Used for debug
+    '''
+    def __init__(self, **config):
+        super(ValidateTrainer, self).__init__(**config)
+
+    def _initialize_model(self):
+        self.logger.info("Initialize network arch {}".format(self.config['model']['backbone']))
+        self.model_name = self.config['model']['backbone'].split('.')[-1]
+        model = get_model(self.config['model']['backbone'])()
+
+        self.model = model.to(self.device)
+        self.model = self._load_model_params(self.config['model']['pretrained_ckpt'], self.model)
+
+    def _initialize_dataset(self, *args, **kwargs):
+        pass
+
+    def _initialize_loss(self, *args, **kwargs):
+        pass
+
+    def _initialize_optimizer(self, *args, **kwargs):
+        pass
+
+    def _initialize_scheduler(self, *args, **kwargs):
+        pass
+
+    def _initialize_test_dataset(self):
+        self.logger.info('Initialize test {}'.format(self.config['test']['dataset']))
+        self.test_dataset = get_dataset(self.config['test']['dataset'])(**self.config['test'])
+
+    def train(self):
+        self._validate_one_epoch(0)
+
+    def _validate_one_epoch(self, epoch_idx):
+        self.model.eval()
+
+        self.logger.info("-----------------------------------------------------")
+        self.logger.info("Validate epoch %2d begin:" % epoch_idx)
+
+        output_root = Path(self.config['test']['output_root'], self.model_name)
+        output_root.mkdir(exist_ok=True, parents=True)
+
+        evaluator = Make3DEvaluator()
+        for i, data in enumerate(tqdm(self.test_dataset)):
+            image = torch.from_numpy(data['image']).unsqueeze(dim=0).permute((0, 3, 1, 2))
+            depth_gt = data['depth']
+
+            # Forward propagation
+            log_depth_pred = self.model(image.to(self.device))
+            depth_pred = torch.exp(log_depth_pred)
+
+            # debug use
+            color_image = data['color_image']
+            pred_inv_depth = 1 / depth_pred[0, 0, :, :]
+            pred_inv_depth = pred_inv_depth.detach().cpu().numpy()
+            pred_inv_depth = pred_inv_depth / np.amax(pred_inv_depth)
+            pred_inv_depth = np.tile((pred_inv_depth * 255).astype(np.uint8)[:, :, np.newaxis], (1, 1, 3))
+            image_depth = np.concatenate((color_image, pred_inv_depth), axis=0)
+            cv2.imwrite(os.path.join(str(output_root), '%s_%03d.jpg' % (self.model_name, i)), image_depth)
+
+            # Pixel-wise labeling
+            H, W = depth_gt.shape
+            depth_pred = F.interpolate(depth_pred, size=(H, W), mode="bilinear", align_corners=True)
+            depth_pred = depth_pred.detach().cpu().numpy()
+            evaluator.eval(depth_pred[0, 0, :, :], depth_gt)
+
+        errors = evaluator.val()
+        for k, v in errors.items():
+            self.logger.info('{}: {:.5f}'.format(k, v))
+            self.summary_writer.add_scalar("metric/{}".format('_'.join(k.split(' '))), v, epoch_idx)
 
 
 class DepthDistillTrainer(_BaseTrainer):
@@ -277,15 +351,6 @@ class DepthDistillTrainer(_BaseTrainer):
             log_depth_pred = self.model(image.to(self.device))
             depth_pred = torch.exp(log_depth_pred)
 
-            # debug use
-            # color_image = ((image+1) * 255/2).numpy().astype(np.uint8)[0, ::-1, :, :].transpose((1, 2, 0))
-            # pred_inv_depth = 1 / depth_pred[0, 0, :, :]
-            # pred_inv_depth = pred_inv_depth.detach().cpu().numpy()
-            # pred_inv_depth = pred_inv_depth / np.amax(pred_inv_depth)
-            # pred_inv_depth = np.tile((pred_inv_depth * 255).astype(np.uint8)[:, :, np.newaxis], (1, 1, 3))
-            # image_depth = np.concatenate((color_image, pred_inv_depth), axis=0)
-            # cv2.imwrite('/home/yuyang/tmp/make3d_tmp/make3d_imageDepth_{}.jpg'.format(i), image_depth)
-
             # Pixel-wise labeling
             H, W = depth_gt.shape
             depth_pred = F.interpolate(depth_pred, size=(H, W), mode="bilinear", align_corners=True)
@@ -381,43 +446,5 @@ class DepthTrainer(DepthDistillTrainer):
             torch.save(self.model.module.state_dict(), os.path.join(self.config['ckpt_path'], 'model.pt'))
         else:
             torch.save(self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'model.pt'))
-
-    def _validate_one_epoch(self, epoch_idx):
-        self.model.eval()
-
-        self.logger.info("-----------------------------------------------------")
-        self.logger.info("Validate epoch %2d begin:" % epoch_idx)
-
-        evaluator = Make3DEvaluator()
-        for i, data in enumerate(tqdm(self.test_dataset)):
-            image = torch.from_numpy(data['image']).unsqueeze(dim=0).permute((0, 3, 1, 2))
-            depth_gt = data['depth']
-
-            # Forward propagation
-            log_depth_pred = self.model(image.to(self.device))
-            depth_pred = torch.exp(log_depth_pred)
-
-            # debug use
-            # color_image = ((image+1) * 255/2).numpy().astype(np.uint8)[0, ::-1, :, :].transpose((1, 2, 0))
-            # pred_inv_depth = 1 / depth_pred[0, 0, :, :]
-            # pred_inv_depth = pred_inv_depth.detach().cpu().numpy()
-            # pred_inv_depth = pred_inv_depth / np.amax(pred_inv_depth)
-            # pred_inv_depth = np.tile((pred_inv_depth * 255).astype(np.uint8)[:, :, np.newaxis], (1, 1, 3))
-            # image_depth = np.concatenate((color_image, pred_inv_depth), axis=0)
-            # cv2.imwrite('/home/yuyang/tmp/make3d_tmp/make3d_imageDepth_{}.jpg'.format(i), image_depth)
-
-            # Pixel-wise labeling
-            H, W = depth_gt.shape
-            depth_pred = F.interpolate(depth_pred, size=(H, W), mode="bilinear", align_corners=True)
-            depth_pred = depth_pred.detach().cpu().numpy()
-            evaluator.eval(depth_pred[0, 0, :, :], depth_gt)
-
-        errors = evaluator.val()
-        for k, v in errors.items():
-            self.logger.info('{}: {:.5f}'.format(k, v))
-            self.summary_writer.add_scalar("metric/{}".format('_'.join(k.split(' '))), v, epoch_idx)
-
-
-
 
 
