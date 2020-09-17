@@ -31,13 +31,13 @@ def read_and_convert(file_dir):
         depth_file = depth_file_list[i]
 
         img = cv.imread(img_file)
-        img_final = cv.resize(img, (345, 460), interpolation=cv.INTER_LINEAR)
+        img_final = cv.resize(img, (480, 640), interpolation=cv.INTER_LINEAR)
         img_name = img_file.split('/')[-1][4:]
         cv.imwrite(os.path.join(out_dir, img_name), img_final)
 
         depth_mat = io.loadmat(depth_file)
         depth_org = depth_mat['Position3DGrid'][:, :, 3]
-        depth = cv.resize(depth_org, (345, 460), interpolation=cv.INTER_LINEAR)
+        depth = cv.resize(depth_org, (480, 640), interpolation=cv.INTER_LINEAR)
         depth_name = depth_file.split('/')[-1][15:-4]
         np.save(os.path.join(out_dir, depth_name), depth)
 
