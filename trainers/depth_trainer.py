@@ -6,7 +6,7 @@ import time
 
 import torch
 import numpy as np
-from cv2 import imwrite
+import cv2
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -128,18 +128,26 @@ class _BaseTrainer(object):
         self.logger.info("The whole training process takes %.3f h" % ((end_time - start_time)/3600))
 
 
-class DepthTrainer(_BaseTrainer):
+class DepthDistillTrainer(_BaseTrainer):
 
     def __init__(self, **config):
-        super(DepthTrainer, self).__init__(**config)
+        super(DepthDistillTrainer, self).__init__(**config)
 
     def _initialize_model(self):
         self.logger.info("Initialize network arch {}".format(self.config['model']['backbone']))
         model = get_model(self.config['model']['backbone'])()
 
+        teacher = get_model(self.config['model']['teacher'])()
+        self.logger.info("Initialize network arch {}".format(self.config['model']['teacher']))
+
         if self.multi_gpus:
             model = torch.nn.DataParallel(model)
         self.model = model.to(self.device)
+
+        self.teacher = teacher.to(self.device)
+        self.teacher = self._load_model_params(self.config['model']['teacher_ckpt'], self.teacher)
+        for p in self.teacher.parameters():
+            p.requires_grad = False
 
         # debug use
         # self.model = self._load_model_params(self.config['model']['pretrained_ckpt'], self.model)
@@ -165,6 +173,8 @@ class DepthTrainer(_BaseTrainer):
         # 初始化loss算子
         self.logger.info("Initialize JointLoss.")
         self.loss = JointLoss()
+        self.logger.info('Initialize L1Loss')
+        self.l1loss = torch.nn.L1Loss()
 
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
@@ -196,6 +206,7 @@ class DepthTrainer(_BaseTrainer):
 
     def _train_func(self, epoch_idx):
         stime = time.time()
+        self.teacher.eval()
         for i, data in enumerate(self.train_dataloader):
             # read
             image = data["image"].to(self.device)
@@ -203,24 +214,13 @@ class DepthTrainer(_BaseTrainer):
             mask = data['mask'].to(self.device)
 
             # forward
-            depths_pred = self.model(image)
+            log_depth_pred = self.model(image)
+            teacher_log_depth = self.teacher((image+1.)/2.)
 
             # loss
-            loss = []
-            data_loss = []
-            gradient_loss = []
-            for depth_pred in depths_pred:
-                _, _, h, w = depth_pred.shape
-                depth_ = resize_labels_torch(depth_gt, size=(h, w))
-                mask_ = resize_labels_torch(mask, size=(h, w))
-                res = self.loss(depth_pred[:, 0, :, :], depth_.to(self.device), mask_.to(self.device))
-                loss.append(res[0])
-                data_loss.append(res[1])
-                gradient_loss.append(res[2])
-
-            loss = torch.mean(torch.stack(loss))
-            data_loss = torch.mean(torch.stack(data_loss))
-            gradient_loss = torch.mean(torch.stack(gradient_loss))
+            distill_loss = self.l1loss(log_depth_pred, teacher_log_depth)
+            loss, data_loss, gradient_loss = self.loss(log_depth_pred[:, 0, :, :], depth_gt, mask)
+            loss += distill_loss
 
             if torch.isnan(loss):
                 self.logger.error('loss is nan!')
@@ -235,6 +235,7 @@ class DepthTrainer(_BaseTrainer):
 
             if i % self.config['train']['log_freq'] == 0:
                 loss = loss.item()
+                distill_loss = distill_loss.item()
                 data_loss = data_loss.item()
                 gradient_loss = gradient_loss.item()
                 steps = i + epoch_idx * self.epoch_length
@@ -242,14 +243,15 @@ class DepthTrainer(_BaseTrainer):
                 self.summary_writer.add_scalar("loss/total_loss", loss, steps)
                 self.summary_writer.add_scalar("loss/data_loss", data_loss, steps)
                 self.summary_writer.add_scalar("loss/gradient_loss", gradient_loss, steps)
+                self.summary_writer.add_scalar("loss/distill_loss", distill_loss, steps)
                 for k, o in enumerate(self.optimizer.param_groups):
                     self.summary_writer.add_scalar("lr/group_{}".format(k), o["lr"], steps)
 
                 self.logger.info(
-                    "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, data_loss = %.4f, gradient_loss = %.4f, "
+                    "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, distill_loss = %.4f, data_loss = %.4f, gradient_loss = %.4f, "
                     "one step cost %.4fs. " % (
                         epoch_idx, i, self.epoch_length,
-                        loss, data_loss, gradient_loss,
+                        loss, distill_loss, data_loss, gradient_loss,
                         (time.time() - stime) / self.config['train']['log_freq'],
                     ))
                 stime = time.time()
@@ -272,19 +274,17 @@ class DepthTrainer(_BaseTrainer):
             depth_gt = data['depth']
 
             # Forward propagation
-            depth_pred = self.model(image.to(self.device))
+            log_depth_pred = self.model(image.to(self.device))
+            depth_pred = torch.exp(log_depth_pred)
 
             # debug use
-            # color_image = ((image + 1.) * 255. / 2.).numpy().astype(np.uint8)[0, ::-1, :, :].transpose((1, 2, 0))
-            # depth = depth_pred.detach().cpu().numpy()[0, 0, :, :]
-            # depth = depth / np.max(depth)
-            # inv_depth = 1. / np.clip(depth, 1e-5, np.inf)
-            # inv_depth_max = np.max(inv_depth)
-            # inv_depth /= inv_depth_max
-            # inv_depth = np.clip(inv_depth * 255., 0, 255)
-            # inv_depth = np.where(depth < 1e-4, np.zeros_like(depth), inv_depth).astype(np.uint8)
-            # image_depth = np.concatenate((color_image, np.tile(inv_depth[:, :, np.newaxis], [1, 1, 3])), axis=0)
-            # imwrite('/home/yuyang/tmp/make3d_tmp/make3d_imageDepth_{}.jpg'.format(i), image_depth)
+            # color_image = ((image+1) * 255/2).numpy().astype(np.uint8)[0, ::-1, :, :].transpose((1, 2, 0))
+            # pred_inv_depth = 1 / depth_pred[0, 0, :, :]
+            # pred_inv_depth = pred_inv_depth.detach().cpu().numpy()
+            # pred_inv_depth = pred_inv_depth / np.amax(pred_inv_depth)
+            # pred_inv_depth = np.tile((pred_inv_depth * 255).astype(np.uint8)[:, :, np.newaxis], (1, 1, 3))
+            # image_depth = np.concatenate((color_image, pred_inv_depth), axis=0)
+            # cv2.imwrite('/home/yuyang/tmp/make3d_tmp/make3d_imageDepth_{}.jpg'.format(i), image_depth)
 
             # Pixel-wise labeling
             H, W = depth_gt.shape
