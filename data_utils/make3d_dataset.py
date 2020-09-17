@@ -10,6 +10,8 @@ class Make3dDataset(object):
 
     def __init__(self, **config):
         self.config = config
+        if 'output_type' not in self.config:
+            self.config['output_type'] = 0
         # load file list
         self.format_file_list()
 
@@ -20,7 +22,8 @@ class Make3dDataset(object):
         image_file = self.image_list[idx]
         depth_file = self.depth_list[idx]
 
-        image = cv2.imread(image_file)[:, :, ::-1]
+        color_image = cv2.imread(image_file)
+        image = color_image[:, :, ::-1].copy()
         depth = np.load(depth_file)
 
         # debug use
@@ -32,8 +35,12 @@ class Make3dDataset(object):
         # image_depth = np.concatenate((image[:, :, ::-1], np.tile(inv_depth[:, :, np.newaxis], [1, 1, 3])), axis=0)
         # cv2.imwrite('/home/yuyang/tmp/make3d_tmp/make3d_imageDepth_{}.jpg'.format(idx), image_depth)
 
-        image = image.astype(np.float32) * 2. / 255. - 1.
+        if self.config['output_type'] == 0:
+            image = image.astype(np.float32) * 2. / 255. - 1.
+        else:
+            image = image.astype(np.float32) / 255.
         return {
+            'color_image': color_image,
             'image': image,
             'depth': depth,
         }
