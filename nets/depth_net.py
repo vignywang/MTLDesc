@@ -10,8 +10,10 @@ from torch.nn.init import xavier_uniform_, zeros_
 def downsample_conv(in_planes, out_planes, kernel_size=3):
     return nn.Sequential(
         nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=2, padding=(kernel_size-1)//2),
+        nn.BatchNorm2d(out_planes),
         nn.ReLU(inplace=True),
         nn.Conv2d(out_planes, out_planes, kernel_size=kernel_size, padding=(kernel_size-1)//2),
+        nn.BatchNorm2d(out_planes),
         nn.ReLU(inplace=True)
     )
 
@@ -23,9 +25,16 @@ def predict_depth(in_planes):
     )
 
 
+def predict_log_depth(in_planes):
+    return nn.Sequential(
+        nn.Conv2d(in_planes, 1, kernel_size=3, padding=1),
+    )
+
+
 def conv(in_planes, out_planes):
     return nn.Sequential(
         nn.Conv2d(in_planes, out_planes, kernel_size=3, padding=1),
+        nn.BatchNorm2d(out_planes),
         nn.ReLU(inplace=True)
     )
 
@@ -33,6 +42,7 @@ def conv(in_planes, out_planes):
 def upconv(in_planes, out_planes):
     return nn.Sequential(
         nn.ConvTranspose2d(in_planes, out_planes, kernel_size=3, stride=2, padding=1, output_padding=1),
+        nn.BatchNorm2d(out_planes),
         nn.ReLU(inplace=True)
     )
 
@@ -79,10 +89,10 @@ class DispNetS(nn.Module):
         self.iconv2 = conv(1 + upconv_planes[5] + conv_planes[0], upconv_planes[5])
         self.iconv1 = conv(1 + upconv_planes[6], upconv_planes[6])
 
-        self.predict_depth4 = predict_depth(upconv_planes[3])
-        self.predict_depth3 = predict_depth(upconv_planes[4])
-        self.predict_depth2 = predict_depth(upconv_planes[5])
-        self.predict_depth1 = predict_depth(upconv_planes[6])
+        self.predict_log_depth4 = predict_log_depth(upconv_planes[3])
+        self.predict_log_depth3 = predict_log_depth(upconv_planes[4])
+        self.predict_log_depth2 = predict_log_depth(upconv_planes[5])
+        self.predict_log_depth1 = predict_log_depth(upconv_planes[6])
 
     def init_weights(self):
         for m in self.modules():
@@ -90,6 +100,9 @@ class DispNetS(nn.Module):
                 xavier_uniform_(m.weight)
                 if m.bias is not None:
                     zeros_(m.bias)
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         out_conv1 = self.conv1(x)
@@ -115,28 +128,27 @@ class DispNetS(nn.Module):
         out_upconv4 = crop_like(self.upconv4(out_iconv5), out_conv3)
         concat4 = torch.cat((out_upconv4, out_conv3), 1)
         out_iconv4 = self.iconv4(concat4)
-        depth4 = self.predict_depth4(out_iconv4)
+        log_depth4 = self.predict_log_depth4(out_iconv4)
 
         out_upconv3 = crop_like(self.upconv3(out_iconv4), out_conv2)
-        depth4_up = crop_like(F.interpolate(depth4, scale_factor=2, mode='bilinear', align_corners=True), out_conv2)
-        concat3 = torch.cat((out_upconv3, out_conv2, depth4_up), 1)
+        log_depth4_up = crop_like(F.interpolate(log_depth4, scale_factor=2, mode='bilinear', align_corners=True), out_conv2)
+        concat3 = torch.cat((out_upconv3, out_conv2, log_depth4_up), 1)
         out_iconv3 = self.iconv3(concat3)
-        depth3 = self.predict_depth3(out_iconv3)
+        log_depth3 = self.predict_log_depth3(out_iconv3)
 
         out_upconv2 = crop_like(self.upconv2(out_iconv3), out_conv1)
-        depth3_up = crop_like(F.interpolate(depth3, scale_factor=2, mode='bilinear', align_corners=True), out_conv1)
-        concat2 = torch.cat((out_upconv2, out_conv1, depth3_up), 1)
+        log_depth3_up = crop_like(F.interpolate(log_depth3, scale_factor=2, mode='bilinear', align_corners=True), out_conv1)
+        concat2 = torch.cat((out_upconv2, out_conv1, log_depth3_up), 1)
         out_iconv2 = self.iconv2(concat2)
-        depth2 = self.predict_depth2(out_iconv2)
+        log_depth2 = self.predict_log_depth2(out_iconv2)
 
         out_upconv1 = crop_like(self.upconv1(out_iconv2), x)
-        depth2_up = crop_like(F.interpolate(depth2, scale_factor=2, mode='bilinear', align_corners=True), x)
-        concat1 = torch.cat((out_upconv1, depth2_up), 1)
+        log_depth2_up = crop_like(F.interpolate(log_depth2, scale_factor=2, mode='bilinear', align_corners=True), x)
+        concat1 = torch.cat((out_upconv1, log_depth2_up), 1)
         out_iconv1 = self.iconv1(concat1)
-        depth1 = self.predict_depth1(out_iconv1)
+        log_depth1 = self.predict_log_depth1(out_iconv1)
 
-        if self.training:
-            return inv_depth(depth1), inv_depth(depth2), inv_depth(depth3), inv_depth(depth4)
-        else:
-            return inv_depth(depth1)
+        return log_depth1
+
+
 
