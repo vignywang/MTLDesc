@@ -12,6 +12,7 @@ import cv2
 from tqdm import tqdm
 
 from torch.utils.data import Dataset
+from .dataset_tools import ImgAugTransform
 
 
 class MegaDepthNoOrd(Dataset):
@@ -24,6 +25,7 @@ class MegaDepthNoOrd(Dataset):
             'small': 0,
         }
         self.config.update(config)
+        self.photometric = ImgAugTransform()
         self._format_file_list()
 
     def __len__(self):
@@ -39,6 +41,11 @@ class MegaDepthNoOrd(Dataset):
         # preprocess
         image, depth = self.preprocess(image, depth)
         mask = np.where(depth > 0, np.ones_like(depth), np.zeros_like(depth))
+
+        # augmentation
+        if self.config['do_augmentation']:
+            if torch.rand([]).item() < 0.5:
+                image = self.photometric(image)
 
         # debug use
         # inv_depth = 1. / np.clip(depth, 1e-5, np.inf)
@@ -208,7 +215,8 @@ def scale_megadepth_no_ord():
         'list_root': '/data/localization/MegaDepthOrder/list/train_list',
         'dataset_root': '/data/localization/MegaDepthOrder/phoenix/S6/zl548/MegaDepth_v1',
     }
-    output_root = os.path.join('/data/localization/MegaDepthOrder', 'preprocessed_no_ord')
+    # output_root = os.path.join('/data/localization/MegaDepthOrder', 'preprocessed_no_ord')
+    output_root = os.path.join('/data/localization/MegaDepthOrder', 'preprocessed_no_ord640')
     if not os.path.exists(output_root):
         os.mkdir(output_root)
 
@@ -219,11 +227,11 @@ def scale_megadepth_no_ord():
 
         h, w = depth.shape
         min_size = min(h, w)
-        if min_size > 320:
-            scale_factor = 320. / float(min_size)
-            h, w = (int(h * scale_factor), int(w * scale_factor))
-            image = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
-            depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
+        # scale_factor = 320. / float(min_size)
+        scale_factor = 640. / float(min_size)
+        h, w = (int(h * scale_factor), int(w * scale_factor))
+        image = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
+        depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
 
         cv2.imwrite(os.path.join(output_root, '%06d.jpg' % i), image)
         np.save(os.path.join(output_root, '%06d' % i), depth)
@@ -235,18 +243,18 @@ if __name__ == '__main__':
     # select_no_ord_dataset()
 
     # second
-    # scale_megadepth_no_ord()
+    scale_megadepth_no_ord()
 
-    config = {
-        'list_root': '/data/localization/MegaDepthOrder/list/train_list',
-        'dataset_root': '/data/localization/MegaDepthOrder/preprocessed_no_ord',
-    }
+    # config = {
+    #     'list_root': '/data/localization/MegaDepthOrder/list/train_list',
+    #     'dataset_root': '/data/localization/MegaDepthOrder/preprocessed_no_ord',
+    # }
 
-    dataset = MegaDepthNoOrd(**config)
-    for i, data in enumerate(dataset):
-        a = data
-        if i == 20:
-            break
+    # dataset = MegaDepthNoOrd(**config)
+    # for i, data in enumerate(dataset):
+    #     a = data
+    #     if i == 20:
+    #         break
 
 
 
