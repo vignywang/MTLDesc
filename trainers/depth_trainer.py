@@ -202,26 +202,18 @@ class ValidateTrainer(_BaseTrainer):
             self.summary_writer.add_scalar("metric/{}".format('_'.join(k.split(' '))), v, epoch_idx)
 
 
-class DepthDistillTrainer(_BaseTrainer):
+class DepthTrainer(_BaseTrainer):
 
     def __init__(self, **config):
-        super(DepthDistillTrainer, self).__init__(**config)
+        super(DepthTrainer, self).__init__(**config)
 
     def _initialize_model(self):
         self.logger.info("Initialize network arch {}".format(self.config['model']['backbone']))
         model = get_model(self.config['model']['backbone'])()
 
-        teacher = get_model(self.config['model']['teacher'])()
-        self.logger.info("Initialize network arch {}".format(self.config['model']['teacher']))
-
         if self.multi_gpus:
             model = torch.nn.DataParallel(model)
         self.model = model.to(self.device)
-
-        self.teacher = teacher.to(self.device)
-        self.teacher = self._load_model_params(self.config['model']['teacher_ckpt'], self.teacher)
-        for p in self.teacher.parameters():
-            p.requires_grad = False
 
         # debug use
         # self.model = self._load_model_params(self.config['model']['pretrained_ckpt'], self.model)
@@ -243,13 +235,6 @@ class DepthDistillTrainer(_BaseTrainer):
         self.logger.info('Initialize test {}'.format(self.config['test']['dataset']))
         self.test_dataset = get_dataset(self.config['test']['dataset'])(**self.config['test'])
 
-    def _initialize_loss(self):
-        # 初始化loss算子
-        self.logger.info("Initialize JointLoss.")
-        self.loss = JointLoss()
-        self.logger.info('Initialize L1Loss')
-        self.l1loss = torch.nn.L1Loss()
-
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
         self.logger.info("Initialize Adam optimizer with weight_decay: {:.5f}.".format(self.config['train']['weight_decay']))
@@ -266,118 +251,6 @@ class DepthDistillTrainer(_BaseTrainer):
             iter_max=self.config['train']['epoch_num']*self.epoch_length,
             power=self.config['train']['poly_power'],
         )
-
-    def _train_one_epoch(self, epoch_idx):
-        self.model.train()
-
-        self.logger.info("-----------------------------------------------------")
-        self.logger.info("Training epoch %2d begin:" % epoch_idx)
-
-        self._train_func(epoch_idx)
-
-        self.logger.info("Training epoch %2d done." % epoch_idx)
-        self.logger.info("-----------------------------------------------------")
-
-    def _train_func(self, epoch_idx):
-        stime = time.time()
-        self.teacher.eval()
-        for i, data in enumerate(self.train_dataloader):
-            # read
-            image = data["image"].to(self.device)
-            depth_gt = data['depth'].to(self.device)
-            mask = data['mask'].to(self.device)
-
-            # forward
-            log_depth_pred = self.model(image)
-            teacher_log_depth = self.teacher((image+1.)/2.)
-
-            # loss
-            distill_loss = self.l1loss(log_depth_pred, teacher_log_depth)
-            loss, data_loss, gradient_loss = self.loss(log_depth_pred[:, 0, :, :], depth_gt, mask)
-            loss += distill_loss
-
-            if torch.isnan(loss):
-                self.logger.error('loss is nan!')
-
-            self.optimizer.zero_grad()
-
-            loss.backward()
-
-            self.optimizer.step()
-
-            self.scheduler.step(epoch=i+epoch_idx*self.epoch_length)
-
-            if i % self.config['train']['log_freq'] == 0:
-                loss = loss.item()
-                distill_loss = distill_loss.item()
-                data_loss = data_loss.item()
-                gradient_loss = gradient_loss.item()
-                steps = i + epoch_idx * self.epoch_length
-
-                self.summary_writer.add_scalar("loss/total_loss", loss, steps)
-                self.summary_writer.add_scalar("loss/data_loss", data_loss, steps)
-                self.summary_writer.add_scalar("loss/gradient_loss", gradient_loss, steps)
-                self.summary_writer.add_scalar("loss/distill_loss", distill_loss, steps)
-                for k, o in enumerate(self.optimizer.param_groups):
-                    self.summary_writer.add_scalar("lr/group_{}".format(k), o["lr"], steps)
-
-                self.logger.info(
-                    "[Epoch:%2d][Step:%5d:%5d]: loss = %.4f, distill_loss = %.4f, data_loss = %.4f, gradient_loss = %.4f, "
-                    "one step cost %.4fs. " % (
-                        epoch_idx, i, self.epoch_length,
-                        loss, distill_loss, data_loss, gradient_loss,
-                        (time.time() - stime) / self.config['train']['log_freq'],
-                    ))
-                stime = time.time()
-
-        # save the model
-        if self.multi_gpus:
-            torch.save(self.model.module.state_dict(), os.path.join(self.config['ckpt_path'], 'model.pt'))
-        else:
-            torch.save(self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'model.pt'))
-
-    def _validate_one_epoch(self, epoch_idx):
-        self.model.eval()
-
-        self.logger.info("-----------------------------------------------------")
-        self.logger.info("Validate epoch %2d begin:" % epoch_idx)
-
-        evaluator = Make3DEvaluator()
-        for i, data in enumerate(tqdm(self.test_dataset)):
-            image = torch.from_numpy(data['image']).unsqueeze(dim=0).permute((0, 3, 1, 2))
-            depth_gt = data['depth']
-
-            # Forward propagation
-            log_depth_pred = self.model(image.to(self.device))
-            depth_pred = torch.exp(log_depth_pred)
-
-            # Pixel-wise labeling
-            H, W = depth_gt.shape
-            depth_pred = F.interpolate(depth_pred, size=(H, W), mode="bilinear", align_corners=True)
-            depth_pred = depth_pred.detach().cpu().numpy()
-            evaluator.eval(depth_pred[0, 0, :, :], depth_gt)
-
-        errors = evaluator.val()
-        for k, v in errors.items():
-            self.logger.info('{}: {:.5f}'.format(k, v))
-            self.summary_writer.add_scalar("metric/{}".format('_'.join(k.split(' '))), v, epoch_idx)
-
-
-class DepthTrainer(DepthDistillTrainer):
-
-    def __init__(self, **config):
-        super(DepthTrainer, self).__init__(**config)
-
-    def _initialize_model(self):
-        self.logger.info("Initialize network arch {}".format(self.config['model']['backbone']))
-        model = get_model(self.config['model']['backbone'])()
-
-        if self.multi_gpus:
-            model = torch.nn.DataParallel(model)
-        self.model = model.to(self.device)
-
-        # debug use
-        # self.model = self._load_model_params(self.config['model']['pretrained_ckpt'], self.model)
 
     def _initialize_loss(self):
         # 初始化loss算子
@@ -446,5 +319,32 @@ class DepthTrainer(DepthDistillTrainer):
             torch.save(self.model.module.state_dict(), os.path.join(self.config['ckpt_path'], 'model.pt'))
         else:
             torch.save(self.model.state_dict(), os.path.join(self.config['ckpt_path'], 'model.pt'))
+
+    def _validate_one_epoch(self, epoch_idx):
+        self.model.eval()
+
+        self.logger.info("-----------------------------------------------------")
+        self.logger.info("Validate epoch %2d begin:" % epoch_idx)
+
+        evaluator = Make3DEvaluator()
+        for i, data in enumerate(tqdm(self.test_dataset)):
+            image = torch.from_numpy(data['image']).unsqueeze(dim=0).permute((0, 3, 1, 2))
+            depth_gt = data['depth']
+
+            # Forward propagation
+            log_depth_pred = self.model(image.to(self.device))
+            depth_pred = torch.exp(log_depth_pred)
+
+            # Pixel-wise labeling
+            H, W = depth_gt.shape
+            depth_pred = F.interpolate(depth_pred, size=(H, W), mode="bilinear", align_corners=True)
+            depth_pred = depth_pred.detach().cpu().numpy()
+            evaluator.eval(depth_pred[0, 0, :, :], depth_gt)
+
+        errors = evaluator.val()
+        for k, v in errors.items():
+            self.logger.info('{}: {:.5f}'.format(k, v))
+            self.summary_writer.add_scalar("metric/{}".format('_'.join(k.split(' '))), v, epoch_idx)
+
 
 
