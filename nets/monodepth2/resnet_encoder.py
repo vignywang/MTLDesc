@@ -86,8 +86,8 @@ class ResnetEncoder(nn.Module):
 
     def forward(self, input_image):
         self.features = []
-        x = (input_image - 0.45) / 0.225
-        x = self.encoder.conv1(x)
+        # x = (input_image - 0.45) / 0.225
+        x = self.encoder.conv1(input_image)
         x = self.encoder.bn1(x)
         self.features.append(self.encoder.relu(x))
         self.features.append(self.encoder.layer1(self.encoder.maxpool(self.features[-1])))
