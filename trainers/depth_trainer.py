@@ -15,7 +15,7 @@ from tensorboardX import SummaryWriter
 
 from data_utils import get_dataset
 from nets import get_model
-from .utils import PolynomialLR, Make3DEvaluator
+from .utils import PolynomialLR, DepthEvaluator
 from utils.utils import JointLoss
 
 
@@ -172,7 +172,7 @@ class ValidateTrainer(_BaseTrainer):
         output_root = Path(self.config['test']['output_root'], self.model_name)
         output_root.mkdir(exist_ok=True, parents=True)
 
-        evaluator = Make3DEvaluator()
+        evaluator = DepthEvaluator()
         for i, data in enumerate(tqdm(self.test_dataset)):
             image = torch.from_numpy(data['image']).unsqueeze(dim=0).permute((0, 3, 1, 2))
             depth_gt = data['depth']
@@ -326,7 +326,7 @@ class DepthTrainer(_BaseTrainer):
         self.logger.info("-----------------------------------------------------")
         self.logger.info("Validate epoch %2d begin:" % epoch_idx)
 
-        evaluator = Make3DEvaluator()
+        evaluator = DepthEvaluator()
         for i, data in enumerate(tqdm(self.test_dataset)):
             image = torch.from_numpy(data['image']).unsqueeze(dim=0).permute((0, 3, 1, 2))
             depth_gt = data['depth']

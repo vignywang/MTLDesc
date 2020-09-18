@@ -89,7 +89,7 @@ def scores(label_trues, label_preds, n_class):
     }
 
 
-class Make3DEvaluator(object):
+class DepthEvaluator(object):
 
     def __init__(self):
         self.errors = defaultdict(list)
