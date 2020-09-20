@@ -108,7 +108,8 @@ class DepthEvaluator(object):
     def eval(self, pred_depth, gt_depth):
         gt_depth = np.clip(gt_depth, a_min=None, a_max=self.max_depth)
 
-        mask = np.logical_and(gt_depth > self.min_depth, gt_depth <= self.max_depth)
+        # mask = np.logical_and(gt_depth > self.min_depth, gt_depth <= self.max_depth)
+        mask = gt_depth > self.min_depth
 
         scalor = np.median(gt_depth[mask]) / np.median(pred_depth[mask])
         pred_depth[mask] *= scalor

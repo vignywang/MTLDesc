@@ -183,6 +183,9 @@ class ValidateTrainer(_BaseTrainer):
 
             # debug use
             color_image = data['color_image']
+            mask = depth_gt > 0
+            scalor = np.median(depth_gt[mask]) / np.median(depth_pred[0, 0, :, :].detach().cpu().numpy()[mask])
+            depth_pred *= scalor
             pred_inv_depth = 1 / depth_pred[0, 0, :, :]
             pred_inv_depth = pred_inv_depth.detach().cpu().numpy()
             pred_inv_depth = pred_inv_depth / np.amax(pred_inv_depth)
