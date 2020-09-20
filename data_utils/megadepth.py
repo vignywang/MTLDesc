@@ -118,6 +118,65 @@ class MegaDepthNoOrd(Dataset):
         self.depth_list = list(depth_list)
 
 
+class MegaDepthNoOrdTest(MegaDepthNoOrd):
+
+    def __init__(self, **config):
+        super(MegaDepthNoOrdTest, self).__init__(**config)
+        if 'output_type' not in self.config:
+            self.config['output_type'] = 0
+
+    def __getitem__(self, idx):
+        image_dir = os.path.join(self.config['dataset_root'], self.image_list[idx])
+        depth_dir = os.path.join(self.config['dataset_root'], self.depth_list[idx])
+
+        image = cv2.imread(image_dir)
+        depth = np.load(depth_dir)
+
+        # preprocess
+        image, depth = self.preprocess(image, depth)
+        color_image = image.copy()
+        image = image[:, :, ::-1].copy()
+        mask = np.where(depth > 0, np.ones_like(depth), np.zeros_like(depth))
+
+        if self.config['output_type'] == 0:
+            image = image.astype(np.float32) * 2. / 255. - 1.
+        else:
+            image = image.astype(np.float32) / 255.
+        return {
+            'color_image': color_image,
+            'image': image,
+            'depth': depth,
+            'mask': mask,
+        }
+
+    def preprocess(self, image, depth):
+        # Padding to fit for crop_size
+        h, w = depth.shape
+        pad_h = max(self.config['height'] - h, 0)
+        pad_w = max(self.config['width'] - w, 0)
+        pad_kwargs = {
+            "top": int(pad_h/2),
+            "bottom": pad_h-int(pad_h/2),
+            "left": int(pad_w/2),
+            "right": pad_w-int(pad_w/2),
+            "borderType": cv2.BORDER_CONSTANT,
+        }
+        if pad_h > 0 or pad_w > 0:
+            image = cv2.copyMakeBorder(image, value=0, **pad_kwargs)
+            depth = cv2.copyMakeBorder(depth, value=0, **pad_kwargs)
+
+        # Center Crop
+        h, w = depth.shape
+        start_h = int((h - self.config['height'])/2)
+        start_w = int((w - self.config['width'])/2)
+        end_h = start_h + self.config['height']
+        end_w = start_w + self.config['width']
+        image = image[start_h:end_h, start_w:end_w]
+        depth = depth[start_h:end_h, start_w:end_w]
+
+        return image, depth
+
+
 class MegaDepthRaw(object):
 
     def __init__(self, **config):
