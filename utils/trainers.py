@@ -17,7 +17,7 @@ from data_utils.coco_dataset import COCOAdaptionValDataset
 from nets.superpoint_net import MagicPointNet
 from utils.evaluation_tools import mAPCalculator
 from utils.utils import spatial_nms
-
+1
 
 # 训练算子基类
 class TrainerTester(object):
