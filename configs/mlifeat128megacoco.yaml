@@ -24,6 +24,7 @@ train:
     epoch_num: 30
     log_freq: 100
     num_workers: 8
+    validate_after: 30
 
     dataset: megadepth_coco_dataset.MegaDepthCOCODataset
     coco_dataset_dir: /data/yuyang/data1/MegPoint/dataset/coco/train2014
