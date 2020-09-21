@@ -1,0 +1,19 @@
+hpatches:
+    dataset_dir: hpatches_sequences/hpatches-sequences-release
+    resize: false
+    grayscale: false
+
+model:
+    name: Scalepoint
+    backbone: scalenet.ScaleBackbone
+    detection_threshold: 0.9
+    nms_dist: 4
+    nms_radius: 4
+    border_remove: 4
+    ckpt_name: scalepoint_megacoco_scalepointv1
+    weights_id: '11'
+
+keys: keypoints,descriptors,shape
+
+
+
