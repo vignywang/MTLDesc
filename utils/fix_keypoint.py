@@ -17,7 +17,7 @@ from utils.utils import spatial_nms
 from utils.utils import draw_image_keypoints
 
 
-class AdaptionMaker(object):
+class FixpointMaker(object):
 
     def __init__(self, params, use_gpu=True, height=240, width=320):
         self.params = params
@@ -249,8 +249,10 @@ class AdaptionMaker(object):
                 # image_point = draw_image_keypoints(image, points)
                 # image_point_pair.append(image_point)
                 points_pair.append(points)
+
             # image_point = np.concatenate(image_point_pair, axis=0)
             # cv.imwrite('/home/yuyang/tmp/adaption/%03d.jpg' % i, image_point)
+
             np.savez(os.path.join(out_dir, name), points_0=points_pair[0], points_1=points_pair[1])
             # tmp_file = np.load(os.path.join(out_dir, name))
 

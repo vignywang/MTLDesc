@@ -13,16 +13,61 @@ import numpy as np
 import imgaug as ia
 from imgaug import augmenters as iaa
 from imgaug.augmentables.kps import Keypoint, KeypointsOnImage
-
 import torch
 import torch.nn.functional as f
 from torch.utils.data import Dataset
-
 # from lib.utils import preprocess_image
 from data_utils.dataset_tools import ImgAugTransform
 from data_utils.dataset_tools import draw_image_keypoints
 
+import cv2 as cv
+import numpy as np
+from evaluation_hpatch.models import get_model
+def extract_multiscale(net, img, scale_f=2 ** 0.25,
+                       min_scale=0.5, max_scale=1.5,
+                       min_size=0, max_size=9999,top_k=400,
+                       verbose=False):
+    old_bm = torch.backends.cudnn.benchmark
+    torch.backends.cudnn.benchmark = False
+    H, W,three= img.shape
+    assert three == 3, "should be a batch with a single RGB image"
+    assert max_scale <= 2
+    s = max_scale # current scale factor
 
+    X, Y, S, C, Q, D = [], [], [], [], [], []
+    while s + 0.001 >= max(min_scale, min_size / max(H, W)):
+        if s - 0.001 <= min(max_scale, max_size / max(H, W)):
+            nh = img.shape[0]
+            nw = img.shape[1]
+            if verbose: print(f"extracting at scale x{s:.02f} = {nw:4d}x{nh:3d}")
+            # extract descriptors
+
+            with torch.no_grad():
+                res = net.predict(img=img)
+            x = res['keypoints'][:,0]
+            y = res['keypoints'][:,1]
+
+            d = res['descriptors']
+
+            scores = res['scores']
+
+            X.append(x * W / nw)
+            Y.append(y * H / nh)
+            C.append(scores)
+            D.append(d)
+        s /= scale_f
+
+        # down-scale the image for next iteration
+        nh, nw = round(H * s), round(W * s)
+        img = cv.resize(img, dsize=(nw, nh), interpolation=cv.INTER_LINEAR)
+    torch.backends.cudnn.benchmark = old_bm
+    Y = np.hstack(Y)
+    X = np.hstack(X)
+    scores = np.hstack(C)
+    XY = np.stack([X, Y])
+    XY = np.swapaxes(XY, 0, 1)
+    idxs = scores.argsort()[-top_k or None:]
+    return XY[idxs]
 class MegaDepthDataset(Dataset):
     def __init__(
             self,
@@ -65,7 +110,6 @@ class MegaDepthDataset(Dataset):
         self.image_size = image_size
 
         self.dataset = []
-
         self.grid = self._generate_fixed_grid(height=image_size, width=image_size)
 
     def __len__(self):
@@ -556,9 +600,20 @@ class MegaDetphDatasetCreator(object):
 
         self.image_height = image_height
         self.image_width = image_width
-
+        self.config = {
+            'name': 'Scalepoint',
+            "detection_threshold": 0.5,
+            "backbone": 'scalenet.ScaleBackbone',
+            "nms_dist": 4,
+            "dim": 128,
+            "nms_radius": 4,
+            "border_remove": 4,
+            "weight_path": "/home/changwei/scalepoint/ckpt",
+            'ckpt_name': 'scalepoint_megacoco_scalepointv1',
+            'weights_id': '29',
+        }
         self.grid = self._generate_fixed_grid(height=image_height, width=image_width)
-
+        self.net=get_model(self.config['name'])(** self.config)
     def build_dataset(self):
 
         if self.train:
@@ -697,7 +752,8 @@ class MegaDetphDatasetCreator(object):
                  ]
 
         # 生成随机点用于训练时采样描述子
-        desp_point1 = self._random_sample_point(self.grid)
+       # desp_point1 = self._random_sample_point(self.grid)
+        desp_point1 = self.fix_sample_point(self.net,image1,self.grid)
         desp_point2, valid_mask, not_search_mask = self._generate_warped_point(
             desp_point1, depth1, bbox1, pose1, intrinsics1, depth2, bbox2, pose2, intrinsics2
         )
@@ -755,6 +811,32 @@ class MegaDetphDatasetCreator(object):
 
         return point
 
+    @staticmethod
+    def fix_sample_point(net,image,grid):
+        """
+       由第一阶段模型，预测输入图像的keypoint heatmap
+
+        Args:
+            image
+        Returns:
+            point: [n,2] 顺序为x,y
+        """
+        point = extract_multiscale(net,image)
+        num=len(point)
+        if num<400:
+            point_list = []
+            if 400-num>200:
+                step = 0
+            else:
+                step=1
+            for i in range(400-num):
+                y_start, x_start, y_end, x_end = grid[i+step]
+                rand_y = np.random.randint(y_start, y_end)
+                rand_x = np.random.randint(x_start, x_end)
+                point_list.append(np.array((rand_x, rand_y), dtype=np.float32))
+            point2 = np.stack(point_list,axis=0)
+            point = np.append(point,point2,axis=0)
+        return point.astype(np.float32)
     @staticmethod
     def _generate_fixed_grid(height, width, x_num=20, y_num=20):
         """

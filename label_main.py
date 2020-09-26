@@ -25,7 +25,7 @@ if __name__ == "__main__":
         config = yaml.load(f)
 
     with get_labeler(config['labeler'])(**config) as labeler:
-        labeler.run()
+        labeler.build_dataset()
 
 
 

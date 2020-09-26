@@ -12,7 +12,7 @@ from nets.scalenet import *
 class Scalepoint(object):
 
     def __init__(self,  **config):
-        self.name = 'MegPoint'
+        self.name = 'Scalepoint'
         self.config = {
             "detection_threshold": 0.9,
             "backbone": 'ScaleBackbone',
@@ -20,6 +20,7 @@ class Scalepoint(object):
             "dim": 128,
             "nms_radius": 4,
             "border_remove": 4,
+            "weight_path":"/home/changwei/scalepoint/ckpt",
             'ckpt_name': 'scalepoint_megacoco_scalepointv1',
             'weights_id': '',
         }
@@ -44,7 +45,7 @@ class Scalepoint(object):
 
         if self.config['ckpt_name'] == '':
             assert False
-        self.load(self.config['ckpt_name'],self.config['weights_id'])
+        self.load(self.config['weight_path'],self.config['ckpt_name'],self.config['weights_id'])
 
     def _load_model_params(self, ckpt_file, previous_model):
         if ckpt_file is None:
@@ -59,8 +60,8 @@ class Scalepoint(object):
         previous_model.load_state_dict(model_dict)
         return previous_model
 
-    def load(self, checkpoint_root,model_idx):
-        backbone_ckpt = os.path.join("../ckpt",checkpoint_root, "model_"+str(model_idx)+".pt")
+    def load(self, weight_path,checkpoint_root,model_idx):
+        backbone_ckpt = os.path.join(weight_path,checkpoint_root, "model_"+str(model_idx)+".pt")
         self.model = self._load_model_params(backbone_ckpt, self.model)
 
     def load_split(self, model_ckpt, extractor_ckpt):

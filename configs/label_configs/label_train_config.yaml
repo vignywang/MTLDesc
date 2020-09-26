@@ -1,0 +1,28 @@
+labeler: train_labeler.TrainDatasetCreator
+#labeler: keypoint_labeler.MegadepthLabeler
+despoint_type: heatmapleft # random or  heatmap or heatmapleft
+base_path: /data/yuyang/MegaDepthOrder
+scene_info_path: /data/yuyang/MegaDepthOrder/scene_info
+ckpt_path: /home/yuyang/project/development/MegPoint/pretrained_models/magicpoint_coco.pt
+output_keypoint: /data/changwei/Mega_train/keypoint_left
+output_despoint: /data/changwei/Mega_train/despoint_left
+output_image: /data/changwei/Mega_train/image_left
+scenes_path: /data/changwei/MegaDepthOrder
+adaption_num: 100
+top_k: 400
+nms_threshold: 4
+nms_kernel_size: 5
+detection_threshold: 0.04
+train: True
+min_overlap_ratio: .5
+max_overlap_ratio: 1
+scenes_ratio: 1
+pairs_per_scene: 100
+image_height: 240
+image_width: 320
+
+
+
+
+
+

@@ -249,6 +249,7 @@ class AdaptionMaker(object):
                 # image_point = draw_image_keypoints(image, points)
                 # image_point_pair.append(image_point)
                 points_pair.append(points)
+
             # image_point = np.concatenate(image_point_pair, axis=0)
             # cv.imwrite('/home/yuyang/tmp/adaption/%03d.jpg' % i, image_point)
             np.savez(os.path.join(out_dir, name), points_0=points_pair[0], points_1=points_pair[1])
