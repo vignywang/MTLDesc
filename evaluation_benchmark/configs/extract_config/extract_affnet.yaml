@@ -1,0 +1,5 @@
+model:
+    name: 'affnet_model'
+    weights: 'weights/affnet/AffNet.pth'
+    descriptor_weights: 'weights/affnet/HardNet++.pth'
+
