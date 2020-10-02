@@ -21,15 +21,14 @@ train:
     weight_decay: 0.0001
     batch_size: 20
     epoch_num: 30
-    log_freq: 50
+    log_freq: 100
     num_workers: 8
     validate_after: 30
 
-    dataset: megadepth_coco_dataset.MegaDepthCOCODataset
-    coco_dataset_dir: /data/yuyang/data1/MegPoint/dataset/coco/train2014
-    megadepth_dataset_dir: /data/changwei/MegaDepthOrder/preprocessed_train_dataset
-    megadepth_label_dir: /data/changwei/MegaDepthOrder/preprocessed_train_label
-
+    dataset: megadepth_train_dataset.MegaDepthTrainDataset
+    mega_image_dir: /data/changwei/Mega_train/iteration0/image
+    mega_keypoint_dir: /data/changwei/Mega_train/iteration0/keypoint
+    mega_despoint_dir: /data/changwei/Mega_train/iteration1/despoint
     height: 240
     width: 320
 

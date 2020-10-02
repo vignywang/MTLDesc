@@ -11,10 +11,10 @@ model:
     nms_radius: 4
     border_remove: 4
     weight_path: "/home/changwei/scalepoint/ckpt"
-    ckpt_name: scalepoint_megacoco_random
+    ckpt_name: scalepoint_megacoco_test
     weights_id: '29'
 
 keys: keypoints,descriptors,shape
-
+output_type: benchmark
 
 

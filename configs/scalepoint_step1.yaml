@@ -26,9 +26,9 @@ train:
     validate_after: 30
 
     dataset: megadepth_train_dataset.MegaDepthTrainDataset
-    mega_image_dir: /data/changwei/Mega_train/image_left
-    mega_keypoint_dir: /data/changwei/Mega_train/keypoint_left
-    mega_despoint_dir: /data/changwei/Mega_train/despoint_left
+    mega_image_dir: /data/changwei/Mega_train/image_test
+    mega_keypoint_dir: /data/changwei/Mega_train/keypoint_test
+    mega_despoint_dir: /data/changwei/Mega_train/despoint_test
     height: 240
     width: 320
 

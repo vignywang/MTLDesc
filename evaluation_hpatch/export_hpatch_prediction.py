@@ -21,6 +21,7 @@ def extract_multiscale(net, img, scale_f=2 ** 0.25,
     old_bm = torch.backends.cudnn.benchmark
     torch.backends.cudnn.benchmark = False
     H, W,three= img.shape
+    shape=img.shape
     assert three == 3, "should be a batch with a single RGB image"
     assert max_scale <= 2
     s = max_scale # current scale factor
@@ -37,22 +38,19 @@ def extract_multiscale(net, img, scale_f=2 ** 0.25,
                 res = net.predict(img=img)
             x = res['keypoints'][:,0]
             y = res['keypoints'][:,1]
-
             d = res['descriptors']
-
             scores = res['scores']
 
             X.append(x * W / nw)
             Y.append(y * H / nh)
             C.append(scores)
             D.append(d)
+
         s /= scale_f
 
         # down-scale the image for next iteration
         nh, nw = round(H * s), round(W * s)
         img = cv.resize(img, dsize=(nw, nh), interpolation=cv.INTER_LINEAR)
-
-
     torch.backends.cudnn.benchmark = old_bm
     Y = np.hstack(Y)
     X = np.hstack(X)
@@ -65,6 +63,7 @@ def extract_multiscale(net, img, scale_f=2 ** 0.25,
         "keypoints": XY[idxs],
         "descriptors": D[idxs],
         "scores": scores[idxs],
+        "shape": shape
     }
 
     return predictions
@@ -99,10 +98,17 @@ if __name__ == '__main__':
                        min_size=args.min_size, max_size=args.max_size,top_k=args.top_k,verbose=True)
             image_name = data['image_name']
             folder_name = data['folder_name']
-            output_dir = Path(output_root, folder_name)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            outpath = Path(output_dir, image_name+'.ppm.'+args.tag)
-            np.savez(open(outpath, 'wb'), **predictions)
+            if config['output_type']=='benchmark':
+                output_dir = Path(output_root,args.tag,folder_name)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                outpath = Path(output_dir, image_name)
+                np.savez(str(outpath), **predictions)
+            else:
+
+                output_dir = Path(output_root, folder_name)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                outpath = Path(output_dir, image_name + '.ppm.' + args.tag)
+                np.savez(open(outpath, 'wb'), **predictions)
 
 
 
