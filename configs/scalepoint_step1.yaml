@@ -36,6 +36,5 @@ train:
     fix_sample: false
     rotation_option: none
     do_augmentation: true
-
-
-
+    sydesp_type: nomal # random
+    point_loss_weight: 200

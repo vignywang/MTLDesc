@@ -48,7 +48,7 @@ class ScalePointTrainer(BaseTrainer):
         # 初始化loss算子
         # 初始化heatmap loss
         self.logger.info("Initialize the PointHeatmapWeightedBCELoss.")
-        self.point_loss = PointHeatmapWeightedBCELoss()
+        self.point_loss = PointHeatmapWeightedBCELoss(weight=self.config['train']['point_loss_weight'])
 
         # 初始化描述子loss
         self.logger.info("Initialize the DescriptorGeneralTripletLoss.")

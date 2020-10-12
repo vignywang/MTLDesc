@@ -195,7 +195,6 @@ class Scalepoint(object):
             sw = 1.0
 
         img = cv.resize(img, dsize=(scale_w, scale_h), interpolation=cv.INTER_LINEAR)
-        input_img = img.copy()
 
         # to torch and scale to [-1,1]
         img = torch.from_numpy(img).to(torch.float).unsqueeze(dim=0).permute((0, 3, 1, 2)).to(self.device)

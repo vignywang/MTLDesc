@@ -27,7 +27,7 @@ train:
 
     dataset: megadepth_train_dataset.MegaDepthTrainDataset
     mega_image_dir: /data/changwei/Mega_train/iteration0/image
-    mega_keypoint_dir: /data/changwei/Mega_train/iteration0/keypoint
+    mega_keypoint_dir: /data/changwei/Mega_train/iteration2/keypoint7
     mega_despoint_dir: /data/changwei/Mega_train/iteration1/despoint
     height: 240
     width: 320

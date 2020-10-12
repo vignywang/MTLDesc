@@ -400,7 +400,71 @@ class WeightedDescriptorTripletLoss(object):
         loss = torch.mean(torch.sum(loss_total, dim=1)/(valid_num + 1.))
 
         return loss
+class WeightedDescriptorCircleLoss(object):
 
+    def __init__(self, device):
+        self.device = device
+        self.margin=0.4
+        self.scale=80
+        self.soft_plus = torch.nn.Softplus()
+    def _compute_dist(self, X, Y):
+        """
+        批量计算两类描述子之间的距离
+        :param X: [bt,n,dim]
+        :param Y: [bt,m,dim]
+        :return: [bt,n,m]
+        """
+        XTX = torch.pow(X, 2).sum(dim=2)  # [bt,n]
+        YTY = torch.pow(Y, 2).sum(dim=2)  # [bt,m]
+        XTY = torch.bmm(X, Y.transpose(1, 2))
+
+        dist2 = XTX.unsqueeze(dim=2) - 2 * XTY + YTY.unsqueeze(dim=1)  # [bt,n,m]
+        dist = torch.sqrt(torch.clamp(dist2, 1e-5))
+        return dist
+
+    def __call__(self, desp_0, desp_1,valid_mask, not_search_mask):
+        """
+        Args:
+            desp_0: [bt,n,dim]
+            desp_1: [bt,n,dim]
+            valid_mask: [bt,n] 1有效，0无效
+            not_search_mask: [bt,n,n]
+        Returns:
+            loss
+        """
+        dist = self._compute_dist(desp_0,desp_1)
+
+        positive_pair = torch.diagonal(dist, dim1=1, dim2=2)  # [bt,n]
+
+        dist = dist + 10*not_search_mask
+        hardest_negative_pair, hardest_negative_idx = torch.min(dist, dim=2)  # [bt,n]
+        alpha_p = torch.relu(-positive_pair + 1 + self.margin)
+        alpha_n = torch.relu(hardest_negative_pair + self.margin)
+        margin_p = 1 - self.margin
+        margin_n = self.margin
+        logit_p = - alpha_p * (positive_pair- margin_p) * self.scale
+        logit_n = alpha_n * (hardest_negative_pair- margin_n) * self.scale
+        loss = self.soft_plus(torch.logsumexp(logit_n,dim=1) + torch.logsumexp(logit_p, dim=1))
+        loss= torch.mean(loss)*0.05
+        #print(loss.shape)
+        #exit(0)
+        #loss_p=torch.sum(torch.exp(-self.scale * alpha_p * (positive_pair - margin_p))*valid_mask,dim=1)
+        #loss_n = torch.sum(torch.exp(self.scale * alpha_n * (hardest_negative_pair - margin_n))*valid_mask,dim=1)
+
+        #loss_total = torch.log(1 + loss_p * loss_n)
+        #valid_num = torch.sum(valid_mask, dim=1)
+        #loss = torch.mean(loss/(valid_num + 1.))*10
+
+        #loss_total = torch.relu(1+positive_pair-hardest_negative_pair)
+        #print(loss_total.shape)
+        #loss_total *= valid_mask
+
+        #print(loss_total.shape)
+
+        #valid_num = torch.sum(valid_mask, dim=1)
+        #loss = torch.mean(torch.sum(loss_total, dim=1)/(valid_num + 1.))
+
+        return loss
 class WeightedDescriptorTripletLoss2(object):
 
     def __init__(self, device):

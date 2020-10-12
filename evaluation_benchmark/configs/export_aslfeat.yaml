@@ -5,7 +5,7 @@ hpatches:
 
 model:
     name: 'aslfeat_model'
-    model_path: '/home/yuyang/data/aachen/Aachen-Day-Night/weights/aslfeat/model.ckpt-380000'
+    model_path: '/home/changwei/scalepoint/evaluation_benchmark/aslfeatv2/model.ckpt-60000'
     max_dim: 2000
     config:
         kpt_n: 5000

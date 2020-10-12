@@ -1,56 +1,39 @@
 import h5py
 import os
-import time
+import os.path as osp
+from glob import glob
 import cv2 as cv
 import torch
 import torch.nn.functional as f
 from tqdm import tqdm
 import numpy as np
-from nets.superpoint_net import SuperPointNetFloat
-from data_utils.dataset_tools import HomographyAugmentation
+from nets.scalenet import ScaleBackbone
+from skimage.feature import match_descriptors
 from utils.utils import spatial_nms
+from data_utils.dataset_tools import Keypoint_Homography
 class TrainDatasetCreator(object):
-    """构造数据集：图像对，关键点，描述子采样对"""
+    """Step3:根据匹配筛选可靠的特征点，并重新生成对应描述子采样点"""
     def __init__(self,**config):
         self.config = config
         self.train = self.config['train']
+        self.image_height = self.config['image_height']
+        self.image_width = self.config['image_width']
         if torch.cuda.is_available():
             print('gpu is available, set device to cuda!')
             self.device = torch.device('cuda:0')
         else:
             print('gpu is not available, set device to cpu!')
             self.device = torch.device('cpu')
-        scene_list_path = os.path.join(self.config['scenes_path'], "all_scenes.txt")
-        self.output_keypoint = self.config['output_keypoint']
+        self.input_image=self.config['input_image']
+        self.input_info = self.config['input_info']
+        self.output_keypoint=self.config['output_keypoint']
+        self.output_despoint = self.config['output_despoint']
         if not os.path.exists(self.output_keypoint):
             os.mkdir(self.output_keypoint)
-        self.output_despoint = self.config['output_despoint']
         if not os.path.exists(self.output_despoint):
             os.mkdir(self.output_despoint)
-        self.output_image = self.config['output_image']
-        if not os.path.exists(self.output_image):
-            os.mkdir(self.output_image)
-
-        self.scenes = []
-        with open(scene_list_path, 'r') as f:
-            lines = f.readlines()
-            scenes_num = int(len(lines) *self.config['scenes_ratio'])
-            for i, line in enumerate(lines):
-                self.scenes.append(line.strip('\n'))
-                # todo
-                if i == scenes_num:
-                    break
-        self.max_scale_ratio = np.inf
-        self.scene_info_path = self.config['scene_info_path']
-        self.base_path = self.config['base_path']
-        self.min_overlap_ratio = float(self.config['min_overlap_ratio'])
-        self.max_overlap_ratio = self.config['max_overlap_ratio']
-        self.pairs_per_scene = self.config['pairs_per_scene']
-        self.image_height = self.config['image_height']
-        self.image_width = self.config['image_width']
-        self.homography = HomographyAugmentation()
         # 初始化模型
-        model = SuperPointNetFloat()
+        model = ScaleBackbone()
         # 从预训练的模型中恢复参数
         model_dict = model.state_dict()
         pretrain_dict = torch.load(self.config['ckpt_path'], map_location=self.device)
@@ -58,8 +41,12 @@ class TrainDatasetCreator(object):
         model.load_state_dict(model_dict)
         model.to(self.device)
         self.model = model
-        self.grid = self._generate_fixed_grid(height=240, width=320)
-        self.all_points = self._sample_all_point(self.image_height,self.image_width)
+        self.model.eval()
+        bord = self.config['border_remove']
+        self.mask = torch.ones(1, 1, self.config['image_height'] - 2 * bord,self.config['image_width'] - 2 * bord).cuda()
+        self.mask = f.pad(self.mask, (bord, bord, bord, bord), "constant", value=0).double()
+        self.all_points = self._sample_all_point(self.image_height, self.image_width)
+        self.homography = Keypoint_Homography()#do_scaling=False,do_rotation=False
     def __enter__(self):
         return self
 
@@ -67,188 +54,284 @@ class TrainDatasetCreator(object):
         pass
 
     def build_dataset(self):
-        count = 0
-       # cur_time = time.time()
         if self.train:
             np.random.seed(4212)
             print('Building a new training dataset...')
         else:
             np.random.seed(8931)
             print('Building the validation dataset...')
-        for i, scene in enumerate(self.scenes):
-            print("Processing %s scene..." % scene)
-
-            scene_info_path = os.path.join(
-                self.scene_info_path, '%s.0.npz' % scene
-            )
-            if not os.path.exists(scene_info_path):
+        file_list = sorted(glob(osp.join(self.input_image, "*")))
+        for img_path in tqdm(file_list):
+            image12 = cv.imread(img_path)[:, :, ::-1].copy()  # 交换BGR为RGB
+            img_name = (img_path.split('/')[-1]).split('.')[0]
+            if int(img_name)<self.config['continue_image']:
                 continue
-            scene_info = np.load(scene_info_path, allow_pickle=True)
-            overlap_matrix = scene_info['overlap_matrix']
-            scale_ratio_matrix = scene_info['scale_ratio_matrix']
+            info_path=self.config['input_info']+"/"+img_name+".npz"
+            info = np.load(info_path)
+            depth1 = info["depth1"]
+            depth2 = info["depth2"]
+            pose1 = info["pose1"]
+            pose2 = info["pose2"]
+            intrinsics1 = info["intrinsics1"]
+            intrinsics2 = info["intrinsics2"]
+            bbox1 = info["bbox1"]
+            bbox2 = info["bbox2"]
+            keypoint1=info["points_0"]
+            keypoint2=info["points_1"]
+            # 原来关键点
+            pointmap_old_1 = np.zeros((240, 320))
+            vals = np.ones(len(keypoint1)) * float(self.config['old_weight'])
+            pointmap_old_1[tuple(np.transpose(keypoint1))] = vals
 
-            valid = np.logical_and(
-                np.logical_and(
-                    overlap_matrix >= self.min_overlap_ratio,
-                    overlap_matrix <= self.max_overlap_ratio
-                ),
-                scale_ratio_matrix <= self.max_scale_ratio
-            )
+            pointmap_old_2 = np.zeros((240, 320))
+            vals = np.ones(len(keypoint2)) * float(self.config['old_weight'])
+            pointmap_old_2[tuple(np.transpose(keypoint2))] = vals
 
-            pairs = np.vstack(np.where(valid))
-            # pairs_per_scene = int(self.pairs_per_scene * pairs.shape[1])
-            try:
-                selected_ids = np.random.choice(
-                    pairs.shape[1], self.pairs_per_scene
-                )
-            except:
-                continue
-            image_paths = scene_info['image_paths']
-            depth_paths = scene_info['depth_paths']
-            points3D_id_to_2D = scene_info['points3D_id_to_2D']
-            points3D_id_to_ndepth = scene_info['points3D_id_to_ndepth']
-            intrinsics = scene_info['intrinsics']
-            poses = scene_info['poses']
-            for pair_idx in tqdm(selected_ids):
-                idx1 = pairs[0, pair_idx]
-                idx2 = pairs[1, pair_idx]
-                matches = np.array(list(
-                    points3D_id_to_2D[idx1].keys() &
-                    points3D_id_to_2D[idx2].keys()
-                ))
+            image1, image2 = np.split(image12, 2, axis=1)
+            h, w, _ = image1.shape
+            img1 = torch.from_numpy(image1).to(torch.float).unsqueeze(dim=0).permute((0, 3, 1, 2)).to(self.device)
+            img1 = (img1 / 255.) * 2. - 1.
+            img2 = torch.from_numpy(image2).to(torch.float).unsqueeze(dim=0).permute((0, 3, 1, 2)).to(self.device)
+            img2 = (img2 / 255.) * 2. - 1.
+            # detector
+            heatmap1, feature1, weightmap1 = self.model(img1)
+            heatmap2, feature2, weightmap2 = self.model(img2)
+            prob1 = torch.sigmoid(heatmap1)
+            prob2 = torch.sigmoid(heatmap2)
 
-                # Scale filtering
-                matches_nd1 = np.array([points3D_id_to_ndepth[idx1][match] for match in matches])
-                matches_nd2 = np.array([points3D_id_to_ndepth[idx2][match] for match in matches])
-                scale_ratio = np.maximum(matches_nd1 / matches_nd2, matches_nd2 / matches_nd1)
-                matches = matches[np.where(scale_ratio <= self.max_scale_ratio)[0]]
-                point3D_id = np.random.choice(matches)
-                point2D1 = points3D_id_to_2D[idx1][point3D_id]
-                point2D2 = points3D_id_to_2D[idx2][point3D_id]
-                central_match = np.array([
-                    point2D1[1], point2D1[0],
-                    point2D2[1], point2D2[0]
-                ])
+            # 得到对应的预测点
+            prob1 = prob1.detach().cpu().numpy()
+            prob1 = prob1[0, 0]
+            prob2 = prob2.detach().cpu().numpy()
+            prob2 = prob2[0, 0]
+            # scale point back to the original scale and change to x-y
+            point1, score1 = self._generate_predict_point(prob1, height=self.image_height, width=self.image_width,thresold=self.config['detection_threshold'])  # [n,2]
+            point2, score2 = self._generate_predict_point(prob2, height=self.image_height,width=self.image_width,thresold=self.config['detection_threshold'])  # [n,2]
+            # 图像对真值点
+            desp1 = self._generate_combined_descriptor_fast(point1, feature1, weightmap1, self.image_height, self.image_width)
+            desp2 = self._generate_combined_descriptor_fast(point2, feature2, weightmap2, self.image_height,self.image_width)
+            point1 = point1[:, ::-1]
+            point2 = point2[:, ::-1]
+            matches = match_descriptors(desp1, desp2, cross_check=True)
+            keypoints_1 = point1[matches[:, 0], : 2].astype(np.float32)
+            keypoints_2 = point2[matches[:, 1], : 2].astype(np.float32)
+            keypoints_2_gt, valid_mask, not_search_mask = self._generate_warped_point(keypoints_1, depth1, bbox1,pose1, intrinsics1, depth2,bbox2, pose2, intrinsics2)
+            dist = np.sqrt(np.sum((keypoints_2_gt - keypoints_2) ** 2, axis=1))
+            dist = np.where(dist<self.config['dist_threshold_gt'],dist,np.zeros(dist.shape))
+            dist=dist*valid_mask.astype(np.int)
+            satisfied_idx = np.where(dist > 0)
+            gt_point1=keypoints_1[satisfied_idx].astype(np.int)[:, ::-1]
+            gt_point2=keypoints_2[satisfied_idx].astype(np.int)[:, ::-1]
+            # gt关键点
+            pointmap_gt_1 = np.zeros((240, 320))
+            vals=self.config['dist_threshold_gt']-dist[satisfied_idx]
+            pointmap_gt_1[tuple(np.transpose(gt_point1))] += vals
+            pointmap_gt_2 = np.zeros((240, 320))
+            pointmap_gt_2[tuple(np.transpose(gt_point2))] += vals
+            # 单应变换真值点
+            pointmap_homo_1 = np.zeros((240, 320))
+            pointmap_homo_2 = np.zeros((240, 320))
+            for i in range(self.config['homo_times']):
+                # 单应关键点
+                homo_point1,dist1=self._generate_homo_point(image1,desp1,point1)
+                if len(homo_point1)==0:
+                    continue
+                vals1 = dist1 * float(self.config['homo_weight'])
+                pointmap_homo_1[tuple(np.transpose(homo_point1))] += vals1
 
-                image1, image2, desp_point1, desp_point2, valid_mask, not_search_mask,keypint1,keypint2,raw_desp_point1,raw_desp_point2,depth1,depth2,pose1,pose2,intrinsics1,intrinsics2,bbox1,bbox2=\
-                self.get_pair(
-                    image_path1=image_paths[idx1],
-                    depth_path1=depth_paths[idx1],
-                    intrinsics1=intrinsics[idx1],
-                    pose1=poses[idx1],
-                    image_path2=image_paths[idx2],
-                    depth_path2=depth_paths[idx2],
-                    intrinsics2=intrinsics[idx2],
-                    pose2=poses[idx2],
-                    central_match=central_match,
-                )
+                homo_point2,dist2 = self._generate_homo_point(image2, desp2, point2)
+                if len(homo_point2)==0:
+                    continue
+                vals2 = dist2 * float(self.config['homo_weight'])
+                pointmap_homo_2[tuple(np.transpose(homo_point2))] += vals2
 
-                # 存储数据
-                image12 = np.concatenate((image1, image2), axis=1)
-                cur_img_path = os.path.join(self.output_image, "%07d.jpg" % count)
-                cur_des_path = os.path.join(self.output_despoint, "%07d" % count)
-                cur_key_path = os.path.join(self.output_keypoint, "%07d" % count)
-                cv.imwrite(cur_img_path, image12)
-                np.savez(cur_des_path, desp_point1=desp_point1, desp_point2=desp_point2, valid_mask=valid_mask,
-                         not_search_mask=not_search_mask,raw_desp_point1=raw_desp_point1,raw_desp_point2=raw_desp_point2)
-                np.savez(cur_key_path, points_0=keypint1, points_1=keypint2,depth1=depth1,depth2=depth2,pose1=pose1,pose2=pose2,intrinsics1=intrinsics1,intrinsics2=intrinsics2,bbox1=bbox1,bbox2=bbox2)
+           #总关键点heatmap
+            keypoint_map1=pointmap_gt_1+pointmap_homo_1+pointmap_old_1
+            keypoint_1, _ = self._generate_predict_point(keypoint_map1, height=self.image_height,width=self.image_width,thresold=self.config['keypoint_threshold'])  # [n,2]
+            keypoint_map2 = pointmap_gt_2 + pointmap_homo_2 + pointmap_old_2
+            keypoint_2, _ = self._generate_predict_point(keypoint_map2, height=self.image_height,width=self.image_width,thresold=self.config['keypoint_threshold'])  # [n,2]
+            #print(len(keypoint_1) - len(keypoint1), len(keypoint_2) - len(keypoint2))
+            cur_key_path = os.path.join(self.output_keypoint, img_name + '.npz')
+            np.savez(cur_key_path, points_0=keypoint_1, points_1=keypoint_2,depth1=depth1,depth2=depth2,pose1=pose1,pose2=pose2,intrinsics1=intrinsics1,intrinsics2=intrinsics2,bbox1=bbox1,bbox2=bbox2)
+        #Debug 可视化
+           # points = [cv.KeyPoint(int(keypoint2[i][1]), int(keypoint2[i][0]), 1) for i in range(len(keypoint2))]
+           # img2 = cv.drawKeypoints(image2, points, image2)
+           # cv.imwrite('old2.png', img2)
+            #points = [cv.KeyPoint(int(keypoint_1[i][1]), int(keypoint_1[i][0]), 1) for i in range(len(keypoint_1))]
+            #img1 = cv.drawKeypoints(image1, points,image1)
+            #cv.imwrite('left.png', img1)
+            #points = [cv.KeyPoint(int(keypoint_2[i][1]), int(keypoint_2[i][0]), 1) for i in range(len(keypoint_2))]
+            #img2 = cv.drawKeypoints(image2, points, image2)
+            #cv.imwrite('right.png', img2)
+            #exit(0)
+    def _generate_homo_point(self,image,desp,point):
+        shape = image.shape
+        warped_image, warped_point_mask, homography = self.homography(image, return_homo=True)
+        warped_image = torch.from_numpy(warped_image).to(torch.float).unsqueeze(dim=0).permute((0, 3, 1, 2)).to(
+            self.device)
+        warped_image = (warped_image / 255.) * 2. - 1.
+        warped_heatmap, warped_feature, warped_weightmap = self.model(warped_image)
+        warped_prob = torch.sigmoid(warped_heatmap)
+        # 得到对应的预测点
+        warped_prob = warped_prob.detach().cpu().numpy()
+        warped_prob = warped_prob[0, 0]
+        # scale point back to the original scale and change to x-y
+        warped_point, _ = self._generate_predict_point(warped_prob, height=self.image_height,width=self.image_width,thresold=self.config['detection_threshold'])  # [n,2]
+        warped_desp = self._generate_combined_descriptor_fast(warped_point, warped_feature, warped_weightmap, self.image_height, self.image_width)
+        warped_point = warped_point[:, ::-1]
+        if len(desp)==0 or len(warped_desp)==0:
+            return [],[]
+        matches = match_descriptors(desp, warped_desp, cross_check=True)
+        keypoints_1 = point[matches[:, 0], : 2].astype(np.float32)
+        keypoints_2 = warped_point[matches[:, 1], : 2].astype(np.float32)
+        keypoints_2_gt, valid_mask, not_search_mask =  self._generate_homo_warped_point(keypoints_1, homography,shape[0], shape[1])
+        dist = np.sqrt(np.sum((keypoints_2_gt - keypoints_2) ** 2, axis=1))
+        dist = np.where(dist < self.config['dist_threshold_homo'], dist, np.zeros(dist.shape))
+        dist = dist * valid_mask.astype(np.float)
+        satisfied_idx = np.where(dist > 0)
+        gt_point1 = keypoints_1[satisfied_idx].astype(np.int)[:, ::-1]
+        return  gt_point1,self.config['dist_threshold_homo']-dist[satisfied_idx]
 
+    def _generate_predict_point(self, heatmap, height, width,thresold):
+        xs, ys = np.where(heatmap >=thresold)
+        pts = np.zeros((3, len(xs)))  # Populate point data sized 3xN.
+        if len(xs) > 0:
+            pts[0, :] = ys
+            pts[1, :] = xs
+            pts[2, :] = heatmap[xs, ys]
+
+            if self.config['nms_point_radius']:
+                pts, _ = self.nms_fast(pts, height, width, dist_thresh=self.config['nms_point_radius'])
+            inds = np.argsort(pts[2, :])
+            pts = pts[:, inds[::-1]]  # Sort by confidence.
+
+            # Remove points along border.
+            bord = self.config['border_remove']
+            toremoveW = np.logical_or(pts[0, :] < bord, pts[0, :] >= (width-bord))
+            toremoveH = np.logical_or(pts[1, :] < bord, pts[1, :] >= (height-bord))
+            toremove = np.logical_or(toremoveW, toremoveH)
+            pts = pts[:, ~toremove]
+            pts = pts.transpose()
+
+        point = pts[:, :2][:, ::-1]
+        score = pts[:, 2]
+
+        return point, score
+    def _generate_combined_descriptor_fast(self, point, feature,weight_map, height, width):
+        """
+        用多层级的组合特征构造描述子
+        Args:
+            point: [n,2] 顺序是y,x
+            c1,c2,c3,c4: 分别对应resnet4个block输出的特征,batchsize都是1
+        Returns:
+            desp: [n,dim]
+        """
+        point = torch.from_numpy(point[:, ::-1].copy()).to(torch.float).to(self.device)
+        # 归一化采样坐标到[-1,1]
+        point = point * 2. / torch.tensor((width-1, height-1), dtype=torch.float, device=self.device) - 1
+        point = point.unsqueeze(dim=0).unsqueeze(dim=2)  # [1,n,1,2]
+
+        feature_pair = f.grid_sample(feature, point, mode="bilinear")[:, :, :, 0].transpose(1, 2)[0]
+        weight_pair = f.grid_sample(weight_map, point, mode="bilinear", padding_mode="border")[:, :, :, 0].transpose(1, 2)[0]#.squeeze(dim=1)
+        desp_pair = feature_pair / torch.norm(feature_pair, p=2, dim=1, keepdim=True)
+        desp = desp_pair * weight_pair.expand_as(desp_pair)
+        desp = desp.detach().cpu().numpy()
+
+        return desp
+    @ staticmethod
+    def _generate_homo_warped_point(point, homography, height, width, threshold=16):
+        """
+        根据投影变换得到变换后的坐标点，有效关系及不参与负样本搜索的矩阵
+        Args:
+            point: [n,2] 与warped_point一一对应
+            homography: 点对之间的变换关系
+
+        Returns:
+            not_search_mask: [n,n] type为float32的mask,不搜索的位置为1
+        """
+        # 得到投影点的坐标
+        point = np.concatenate((point, np.ones((point.shape[0], 1))), axis=1)[:, :, np.newaxis]  # [n,3,1]
+        project_point = np.matmul(homography, point)[:, :, 0]
+        project_point = project_point[:, :2] / project_point[:, 2:3]
+        project_point = project_point[:, ::-1]  # 调换为y,x的顺序
+
+        # 投影点在图像范围内的点为有效点，反之则为无效点
+        boarder_0 = np.array((0, 0), dtype=np.float32)
+        boarder_1 = np.array((height-1, width-1), dtype=np.float32)
+        valid_mask = (project_point >= boarder_0) & (project_point <= boarder_1)
+        valid_mask = np.all(valid_mask, axis=1)
+        invalid_mask = ~valid_mask
+
+        # 根据无效点及投影点之间的距离关系确定不搜索的负样本矩阵
+
+        dist = np.linalg.norm(project_point[:, np.newaxis, :] - project_point[np.newaxis, :, :], axis=2)
+        not_search_mask = ((dist <= threshold) | invalid_mask[np.newaxis, :]).astype(np.float32)
+        return project_point.astype(np.float32)[:, ::-1], valid_mask.astype(np.float32), not_search_mask
+    def nms_fast(self, in_corners, H, W, dist_thresh):
+        """
+        Run a faster approximate Non-Max-Suppression on numpy corners shaped:
+          3xN [x_i,y_i,conf_i]^T
+
+        Algo summary: Create a grid sized HxW. Assign each corner location a 1, rest
+        are zeros. Iterate through all the 1's and convert them either to -1 or 0.
+        Suppress points by setting nearby values to 0.
+
+        Grid Value Legend:
+        -1 : Kept.
+         0 : Empty or suppressed.
+         1 : To be processed (converted to either kept or supressed).
+
+        NOTE: The NMS first rounds points to integers, so NMS distance might not
+        be exactly dist_thresh. It also assumes points are within image boundaries.
+
+        Inputs
+          in_corners - 3xN numpy array with corners [x_i, y_i, confidence_i]^T.
+          H - Image height.
+          W - Image width.
+          dist_thresh - Distance to suppress, measured as an infinty norm distance.
+        Returns
+          nmsed_corners - 3xN numpy matrix with surviving corners.
+          nmsed_inds - N length numpy vector with surviving corner indices.
+        """
+        grid = np.zeros((H, W)).astype(int)  # Track NMS data.
+        inds = np.zeros((H, W)).astype(int)  # Store indices of points.
+        # Sort by confidence and round to nearest int.
+        inds1 = np.argsort(-in_corners[2, :])
+        corners = in_corners[:, inds1]
+        rcorners = corners[:2, :].round().astype(int)  # Rounded corners.
+        # Check for edge case of 0 or 1 corners.
+        if rcorners.shape[1] == 0:
+            return np.zeros((3, 0)).astype(int), np.zeros(0).astype(int)
+        if rcorners.shape[1] == 1:
+            out = np.vstack((rcorners, in_corners[2])).reshape(3, 1)
+            return out, np.zeros((1)).astype(int)
+        # Initialize the grid.
+        for i, rc in enumerate(rcorners.T):
+            grid[rcorners[1, i], rcorners[0, i]] = 1
+            inds[rcorners[1, i], rcorners[0, i]] = i
+        # Pad the border of the grid, so that we can NMS points near the border.
+        pad = dist_thresh
+        grid = np.pad(grid, ((pad, pad), (pad, pad)), mode='constant')
+        # Iterate through points, highest to lowest conf, suppress neighborhood.
+        count = 0
+        for i, rc in enumerate(rcorners.T):
+            # Account for top and left padding.
+            pt = (rc[0] + pad, rc[1] + pad)
+            if grid[pt[1], pt[0]] == 1:  # If not yet suppressed.
+                grid[pt[1] - pad:pt[1] + pad + 1, pt[0] - pad:pt[0] + pad + 1] = 0
+                grid[pt[1], pt[0]] = -1
                 count += 1
+        # Get all surviving -1's and return sorted array of remaining corners.
+        keepy, keepx = np.where(grid == -1)
+        keepy, keepx = keepy - pad, keepx - pad
+        inds_keep = inds[keepy, keepx]
+        out = corners[:, inds_keep]
+        values = out[-1, :]
+        inds2 = np.argsort(-values)
+        out = out[:, inds2]
+        out_inds = inds1[inds_keep[inds2]]
 
-    def get_pair(
-            self,
-            image_path1,
-            depth_path1,
-            intrinsics1,
-            pose1,
-            image_path2,
-            depth_path2,
-            intrinsics2,
-            pose2,
-            central_match,
-    ):
-        depth_path1 = os.path.join(self.base_path, depth_path1)
-        with h5py.File(depth_path1, 'r') as hdf5_file:
-            depth1 = np.array(hdf5_file['/depth'])
-        assert (np.min(depth1) >= 0)
-
-        image_path1 = os.path.join(self.base_path, image_path1)
-        image1 = cv.imread(image_path1).copy()
-        assert (image1.shape[0] == depth1.shape[0] and image1.shape[1] == depth1.shape[1])
-
-        depth_path2 = os.path.join(self.base_path, depth_path2)
-        with h5py.File(depth_path2, 'r') as hdf5_file:
-            depth2 = np.array(hdf5_file['/depth'])
-        assert (np.min(depth2) >= 0)
-
-        image_path2 = os.path.join(self.base_path, image_path2)
-        image2 = cv.imread(image_path2).copy()
-        assert (image2.shape[0] == depth2.shape[0] and image2.shape[1] == depth2.shape[1])
-
-        image1, bbox1, image2, bbox2 = self.crop(image1, image2, central_match)
-
-        depth1 = depth1[
-                 bbox1[0]: bbox1[0] + self.image_height,
-                 bbox1[1]: bbox1[1] + self.image_width
-                 ]
-        depth2 = depth2[
-                 bbox2[0]: bbox2[0] + self.image_height,
-                 bbox2[1]: bbox2[1] + self.image_width
-                 ]
-
-        #转化为灰度图像，并通过单映变换产生keypoint 和 heatmap
-        gray_image1=cv.cvtColor(image1,cv.COLOR_BGR2GRAY)
-        gray_image2=cv.cvtColor(image2,cv.COLOR_BGR2GRAY)
-        tensor_heatmap1,keypint1=self._label(gray_image1)
-        tensor_heatmap2,keypint2=self._label(gray_image2)
-        try:
-            tensor_heatmap2to1,point_num1= self._tensor_generate_warped_point(self.all_points,depth1, bbox1, pose1,intrinsics1, depth2, bbox2, pose2,intrinsics2,tensor_heatmap2)
-            tensor_heatmap1to2,point_num2= self._tensor_generate_warped_point(self.all_points,depth2, bbox2, pose2,intrinsics2, depth1, bbox1, pose1,intrinsics1,tensor_heatmap1)
-        except:
-            desp_point1 = self._random_sample_point(self.grid)
-            desp_point2, valid_mask, not_search_mask = self._generate_warped_point(desp_point1, depth1, bbox1,
-                                                                                   pose1, intrinsics1, depth2,
-                                                                                   bbox2, pose2, intrinsics2)
-            scale_desp_point1 = self._scale_point_for_sample(desp_point1, height=self.image_height,
-                                                             width=self.image_width)
-            scale_desp_point2 = self._scale_point_for_sample(desp_point2, height=self.image_height,
-                                                             width=self.image_width)
-
-            return image1, image2, scale_desp_point1, scale_desp_point2, valid_mask, not_search_mask, keypint1, keypint2, desp_point1, desp_point2,depth1,depth2,pose1,pose2,intrinsics1,intrinsics2,bbox1,bbox2
-        if point_num1>=point_num2:
-            if self.config['despoint_type']=='random':
-                # 生成随机点用于训练时采样描述子
-                desp_point1 = self._random_sample_point(self.grid)
-            elif self.config['despoint_type']=='heatmap':
-                # 使用交叉验证heatmap采样描述子
-                heatmap=tensor_heatmap1.cuda(self.device)+tensor_heatmap2to1*10
-                desp_point1 = self._generate_grid_point(heatmap).astype(np.float32)
-            desp_point2, valid_mask, not_search_mask = self._generate_warped_point(desp_point1, depth1, bbox1,
-                                                                                   pose1, intrinsics1, depth2,
-                                                                                   bbox2, pose2, intrinsics2)
-            scale_desp_point1 = self._scale_point_for_sample(desp_point1, height=self.image_height,
-                                                             width=self.image_width)
-            scale_desp_point2 = self._scale_point_for_sample(desp_point2, height=self.image_height,
-                                                             width=self.image_width)
-
-            return image1, image2, scale_desp_point1, scale_desp_point2, valid_mask, not_search_mask, keypint1, keypint2, desp_point1, desp_point2,depth1,depth2,pose1,pose2,intrinsics1,intrinsics2,bbox1,bbox2
-        else:
-            if self.config['despoint_type']=='random':
-                desp_point2 = self._random_sample_point(self.grid)
-            elif self.config['despoint_type'] == 'heatmap':
-                heatmap = tensor_heatmap2.cuda(self.device) + tensor_heatmap1to2*10
-                desp_point2 = self._generate_grid_point(heatmap).astype(np.float32)
-            desp_point1, valid_mask, not_search_mask = self._generate_warped_point(desp_point2, depth2, bbox2,
-                                                                               pose2, intrinsics2, depth1,
-                                                                               bbox1, pose1, intrinsics1)
-            scale_desp_point1 = self._scale_point_for_sample(desp_point1, height=self.image_height,
-                                                             width=self.image_width)
-            scale_desp_point2 = self._scale_point_for_sample(desp_point2, height=self.image_height,
-                                                             width=self.image_width)
-
-            return image2, image1, scale_desp_point2, scale_desp_point1, valid_mask, not_search_mask, keypint2, keypint1, desp_point2, desp_point1,depth2,depth1,pose2,pose1,intrinsics2,intrinsics1,bbox2,bbox1
-
-
+        return out, out_inds
 
 
     def _label(self, image):
@@ -403,38 +486,28 @@ class TrainDatasetCreator(object):
         pooled=f.pixel_shuffle(pooled,10)
         pointmap = torch.where(torch.eq(heatmap, pooled), heatmap, torch.zeros_like(heatmap))
         pointmap=pointmap.squeeze(0).squeeze(0).cpu().numpy()
-        satisfied_idx = np.where(pointmap>0)
+        xs, ys = np.where(pointmap > 0)
+        pts = np.zeros((3, len(xs)))  # Populate point data sized 3xN.
+        if len(xs) > 0:
+            pts[0, :] = ys
+            pts[1, :] = xs
+            pts[2, :] = pointmap[xs, ys]
+        pts_new, _ = self.nms_fast(pts, self.config['image_height'], self.config['image_width'], dist_thresh=self.config['nms_radius'])
+        satisfied_idx=tuple(pts_new[:2][::-1].astype(np.int))
         ordered_satisfied_idx = np.argsort(pointmap[satisfied_idx])[::-1]  # 降序
-        if len(ordered_satisfied_idx) < self.config['top_k']:
-            points = np.stack((satisfied_idx[0][ordered_satisfied_idx],
-                               satisfied_idx[1][ordered_satisfied_idx]), axis=1)
-        else:
-            points = np.stack((satisfied_idx[0][:self.config['top_k']],
-                               satisfied_idx[1][:self.config['top_k']]), axis=1)
+        if len(ordered_satisfied_idx)<self.config['top_k']:
+            pts_new, _ = self.nms_fast(pts, self.config['image_height'], self.config['image_width'],dist_thresh=3)
+            satisfied_idx = tuple(pts_new[:2][::-1].astype(np.int))
+            ordered_satisfied_idx = np.argsort(pointmap[satisfied_idx])[::-1]  # 降序
+            if len(ordered_satisfied_idx) < self.config['top_k']:
+               raise EmptyTensorError
+        ordered_satisfied_idx = ordered_satisfied_idx[:self.config['top_k']]
+        #x,y
+        points = np.stack((satisfied_idx[1][ordered_satisfied_idx],
+                           satisfied_idx[0][ordered_satisfied_idx]), axis=1)
+
+
         return points
-
-    def _tensor_NMStop(self, torch_probs):
-        final_probs = spatial_nms(torch_probs, kernel_size=self.config['nms_kernel_size']).detach().cpu().numpy()[0, 0]
-        satisfied_idx = np.where(final_probs > 0)
-        ordered_satisfied_idx = np.argsort(final_probs[satisfied_idx])[::-1]  # 降序
-        if len(ordered_satisfied_idx) < self.config['top_k']:
-            points = np.stack((satisfied_idx[0][ordered_satisfied_idx],
-                               satisfied_idx[1][ordered_satisfied_idx]), axis=1)
-        else:
-            points = np.stack((satisfied_idx[0][:self.config['top_k']],
-                               satisfied_idx[1][:self.config['top_k']]), axis=1)
-        return points.astype(np.float32)
-    def _NMStop(self,final_probs):
-        satisfied_idx = np.where(final_probs > 0)
-        ordered_satisfied_idx = np.argsort(final_probs[satisfied_idx])[::-1]  # 降序
-        if len(ordered_satisfied_idx) < self.config['top_k']:
-            points = np.stack((satisfied_idx[0][ordered_satisfied_idx],
-                               satisfied_idx[1][ordered_satisfied_idx]), axis=1)
-        else:
-            points = np.stack((satisfied_idx[0][:self.config['top_k']],
-                               satisfied_idx[1][:self.config['top_k']]), axis=1)
-        return points.astype(np.float32)
-
     def _generate_warped_point(
             self,
             src_point,
@@ -493,11 +566,11 @@ class TrainDatasetCreator(object):
         # 构造not_search_mask, 太近了以及无效点不会作为负样本的搜索点
         invalid_mask = ~valid_mask
         dist = np.linalg.norm((tgt_point[:, np.newaxis, :]-tgt_point[np.newaxis, :, :]), axis=2)
-        not_search_mask = (dist <= 16) | (invalid_mask[np.newaxis, :])
+        not_search_mask = (dist <= self.config['nms_radius']) | (invalid_mask[np.newaxis, :])
 
         return tgt_point, valid_mask, not_search_mask
 
-    def _tensor_generate_warped_point(
+    def _tensor_generate_unviewpoint(
             self,
             src_point,
             src_depth,
@@ -508,9 +581,7 @@ class TrainDatasetCreator(object):
             tgt_bbox,
             tgt_pose,
             tgt_intrinsics,
-            tensor_heatmap2
     ):
-        tensor_heatmap2=tensor_heatmap2.cuda(self.device).double()
         src_point= torch.from_numpy(src_point).cuda(self.device).float()
         depth1 = torch.from_numpy(src_depth).cuda(self.device).float()
         bbox1 = torch.from_numpy(src_bbox).cuda(self.device).float()
@@ -548,10 +619,9 @@ class TrainDatasetCreator(object):
         annotated_depth, pos2, new_ids = self.interpolate_depth_raw2(self.uv_to_pos(uv2), depth2)
 
         ids = ids[new_ids]
-        pos1 = pos1[:, new_ids]
         estimated_depth = XYZ2[2, new_ids]
 
-        inlier_mask = torch.abs(estimated_depth - annotated_depth) < 100
+        inlier_mask = torch.abs(estimated_depth - annotated_depth) < 1
 
         ids = ids[inlier_mask]
         if ids.size(0) == 0:
@@ -560,24 +630,8 @@ class TrainDatasetCreator(object):
         vaild_mask= torch.zeros(240*320)
         ones = torch.ones(ids.size(0))
         vaild_mask[ids] = ones
-        vaild_mask=vaild_mask.view(240,320).cuda(self.device).double()
-        # 采样heatmap
-        pos2 = pos2[:, inlier_mask]
-        pos1 = pos1[:, inlier_mask]
-        pos_index=pos1.permute(1,0)
-        pos_value = pos2.permute(1, 0)
-        pos_index=pos_index.cpu().numpy().astype(np.int)
-        pos_value = pos_value * 2. / torch.tensor((239, 319), dtype=torch.float, device=self.device) - 1
-        pos_value=pos_value.cpu().numpy()[..., ::-1] # y,x to x,y
-        map=np.zeros((240,320,2))
-        map[tuple(np.transpose(pos_index))] = pos_value
-        grid=torch.from_numpy(map).cuda(self.device).unsqueeze(0)
-        heatmap2=f.grid_sample(tensor_heatmap2, grid, mode="bilinear", padding_mode="border")
-        heatmap2=heatmap2*vaild_mask
-        #heatmap2=heatmap2.squeeze(0).squeeze(0)*vaild_mask
-        #heatmap2=heatmap2.cpu().numpy().astype(np.uint8)
-
-        return heatmap2,len(ids)
+        vaild_mask=vaild_mask.view(240,320).cuda(self.device).int()
+        return vaild_mask.cpu().numpy()
 
     @staticmethod
     def _scale_point_for_sample(point, height, width):
@@ -819,7 +873,6 @@ class TrainDatasetCreator(object):
     @staticmethod
     def uv_to_pos(uv):
         return torch.cat([uv[1, :].view(1, -1), uv[0, :].view(1, -1)], dim=0)
-
 def grid_positions(h, w, device, matrix=False):
     lines = torch.arange(
         0, h, device=device
@@ -831,5 +884,6 @@ def grid_positions(h, w, device, matrix=False):
         return torch.stack([lines, columns], dim=0)
     else:
         return torch.cat([lines.view(1, -1), columns.view(1, -1)], dim=0)
+
 class EmptyTensorError(Exception):
     pass

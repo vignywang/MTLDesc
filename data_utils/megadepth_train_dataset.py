@@ -25,7 +25,7 @@ class MegaDepthTrainDataset(Dataset):
             config['mega_keypoint_dir'],
             config['mega_despoint_dir'],
         )
-
+        self.sydesp_type=config['sydesp_type']
         self.height = 240
         self.width = 320
 
@@ -118,11 +118,11 @@ class MegaDepthTrainDataset(Dataset):
         if torch.rand([]).item() < 0.5:
             image = cv.resize(image1, dsize=(self.width, self.height), interpolation=cv.INTER_LINEAR)
             point = point["points_0"]
-            info = info["raw_desp_point1"]
+            desp_point_load = info["raw_desp_point1"]
         else:
             image = cv.resize(image2, dsize=(self.width, self.height), interpolation=cv.INTER_LINEAR)
             point = point["points_1"]
-            info = info["raw_desp_point2"]
+            desp_point_load = info["raw_desp_point2"]
         point_mask = np.ones_like(image).astype(np.float32)[:, :, 0].copy()
 
         # 1、由随机采样的单应变换得到第二副图像及其对应的关键点位置、原始掩膜和该单应变换
@@ -144,9 +144,10 @@ class MegaDepthTrainDataset(Dataset):
         warped_heatmap = self._convert_points_to_heatmap(warped_point)
 
         # 3、采样训练描述子要用的点
-       # desp_point = self._random_sample_point()
-        desp_point = info
-        #print(desp_point)
+        if self.sydesp_type =='random':
+            desp_point = self._random_sample_point()
+        else:
+            desp_point = desp_point_load
 
         shape = image.shape
 

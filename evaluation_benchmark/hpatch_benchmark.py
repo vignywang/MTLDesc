@@ -140,7 +140,7 @@ if __name__ == '__main__':
     top_k = None
 
     dataset_path = '/data/yuyang/hpatches-sequences-release'
-    prediction_path = 'results'
+    prediction_path = config['feature_path']
 
     lim = [1, 15]
     rng = np.arange(lim[0], lim[1] + 1)
