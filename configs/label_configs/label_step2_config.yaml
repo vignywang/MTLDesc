@@ -1,8 +1,8 @@
 labeler: des_labeler.TrainDatasetCreator
 base_path: /data/yuyang/MegaDepthOrder
 scene_info_path: /data/yuyang/MegaDepthOrder/scene_info
-ckpt_path: /home/changwei/scalepoint/ckpt/scalepoint_megacoco_test/model_29.pt
-output_despoint: /data/changwei/Mega_train/iteration1/despoint
+ckpt_path: /home/changwei/scalepoint/ckpt/scalepoint_megacoco_step1_loss2/model_29.pt
+output_despoint: /data/changwei/Mega_train/iteration1/despoint_loss2
 input_image: /data/changwei/Mega_train/iteration0/image
 input_info: /data/changwei/Mega_train/iteration0/keypoint
 scenes_path: /data/changwei/MegaDepthOrder

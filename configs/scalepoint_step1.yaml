@@ -19,16 +19,19 @@ train:
     adjust_lr: true
     lr: 0.001
     weight_decay: 0.0001
+    lr_mod: LambdaLR
     batch_size: 20
     epoch_num: 30
+    maintain_epoch: 15
+    decay_epoch: 15
     log_freq: 100
     num_workers: 8
     validate_after: 30
 
     dataset: megadepth_train_dataset.MegaDepthTrainDataset
-    mega_image_dir: /data/changwei/Mega_train/image_test
-    mega_keypoint_dir: /data/changwei/Mega_train/keypoint_test
-    mega_despoint_dir: /data/changwei/Mega_train/despoint_test
+    mega_image_dir: /data/changwei/Mega_train/iteration0/image
+    mega_keypoint_dir: /data/changwei/Mega_train/iteration0/keypoint
+    mega_despoint_dir: /data/changwei/Mega_train/iteration0/despoint
     height: 240
     width: 320
 

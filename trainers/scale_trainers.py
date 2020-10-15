@@ -13,7 +13,7 @@ from nets import get_model
 from data_utils import get_dataset
 from trainers.base_trainer import BaseTrainer
 from utils.utils import spatial_nms
-from utils.utils import WeightedDescriptorTripletLoss2, WeightedDescriptorTripletLoss
+from utils.utils import HardestCircleLoss,WeightedDescriptorTripletLoss,WeightedDescriptorTripletLoss2, WeightedDescriptorTripletLoss3
 from utils.utils import PointHeatmapWeightedBCELoss
 
 
@@ -53,8 +53,10 @@ class ScalePointTrainer(BaseTrainer):
         # 初始化描述子loss
         self.logger.info("Initialize the DescriptorGeneralTripletLoss.")
        # self.descriptor_loss = DescriptorGeneralTripletLoss(self.device)
-        self.descriptor_loss = WeightedDescriptorTripletLoss2(self.device)
-
+        # self.descriptor_loss = HardestCircleLoss(self.device)
+        self.descriptor_loss = WeightedDescriptorTripletLoss(self.device)
+        #self.descriptor_loss = WeightedDescriptorTripletLoss2(self.device)
+        #self.descriptor_loss=WeightedDescriptorTripletLoss3(self.device)
     def _initialize_optimizer(self):
         # 初始化网络训练优化器
         self.logger.info("Initialize Adam optimizer with weight_decay: {:.5f}.".format(self.config['train']['weight_decay']))
@@ -64,10 +66,18 @@ class ScalePointTrainer(BaseTrainer):
             weight_decay=self.config['train']['weight_decay'])
 
     def _initialize_scheduler(self):
+
         # 初始化学习率调整算子
-        milestones = [20, 30]
-        self.logger.info("Initialize lr_scheduler of MultiStepLR: (%d, %d)" % (milestones[0], milestones[1]))
-        self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=milestones, gamma=0.1)
+        if self.config['train']['lr_mod']=='LambdaLR':
+            self.logger.info("Initialize lr_scheduler of LambdaLR: (%d, %d)" % (self.config['train']['maintain_epoch'], self.config['train']['decay_epoch']))
+            def lambda_rule(epoch):
+                lr_l = 1.0 - max(0, epoch  - self.config['train']['maintain_epoch']) / float(self.config['train']['decay_epoch'] + 1)
+                return lr_l
+            self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lambda_rule)
+        else:
+            milestones = [20, 30]
+            self.logger.info("Initialize lr_scheduler of MultiStepLR: (%d, %d)" % (milestones[0], milestones[1]))
+            self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=milestones, gamma=0.1)
 
     def _train_one_epoch(self, epoch_idx):
         self.model.train()
@@ -112,9 +122,11 @@ class ScalePointTrainer(BaseTrainer):
                 dim=1)
             feature_pair = feature_pair[:, :, :, 0].transpose(1, 2)
             desp_pair = feature_pair / torch.norm(feature_pair, p=2, dim=2, keepdim=True)  # L2 Normalization
-            desp_pair = desp_pair * weight_pair.expand_as(desp_pair)
+            weight_0,weight_1=torch.chunk(weight_pair, 2, dim=0)
+            #desp_pair = desp_pair * weight_pair.expand_as(desp_pair)
             desp_0, desp_1 = torch.chunk(desp_pair, 2, dim=0)
-            desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
+            desp_loss = self.descriptor_loss(desp_0, desp_1,weight_0,weight_1,valid_mask, not_search_mask)
+            #desp_loss = self.descriptor_loss(desp_0, desp_1, valid_mask, not_search_mask)
 
             # 计算关键点loss
             heatmap_gt_pair = torch.cat((heatmap_gt, warped_heatmap_gt), dim=0)

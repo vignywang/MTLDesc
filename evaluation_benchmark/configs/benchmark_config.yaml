@@ -4,10 +4,10 @@
 #colors: red,black,blue,dodgerblue,gold,violet,green,chocolate,purple # black,orange,red,red,blue,brown,purple,green,purple,green
 
 #linestyles: '-,--,--,--,--,--,--,--,--'
-methods: step1_9,step2_9,aslfeatv2_5k,step3_6,step3_7 #,mlifeat128megacoco step2_1, coco_9,step1_9,step1_9
-names: step1,step2,aslfeatv2,step3_6,step3_7 #,mlifeat128megacoco Scalepoint_step2,
-colors: blue,red,black,orange,green
-linestyles: '--,--,--,--,--'
+methods: step1_9,step2_loss2,step1_loss2,step2_9,step2_w,step2_w_lr #,mlifeat128megacoco step2_1, coco_9,step1_9,step1_9 ,step2_9,aslfeatv2_5k,
+names: step1_or,step1_lr,step1_w,step2_or,step2_w,step2_w_lr #,mlifeat128megacoco Scalepoint_step2, ,step2_9,aslfeatv2_5k,
+colors: red,blue,purple,black,green,orange
+linestyles: '-,--,--,-,--,--'
 
 
 metrics: MMA,M.S.,Precision,Rep.,HA

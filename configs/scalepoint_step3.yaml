@@ -19,8 +19,11 @@ train:
     adjust_lr: true
     lr: 0.001
     weight_decay: 0.0001
+    lr_mod: LambdaLR
     batch_size: 20
     epoch_num: 30
+    maintain_epoch: 15
+    decay_epoch: 15
     log_freq: 100
     num_workers: 8
     validate_after: 30
