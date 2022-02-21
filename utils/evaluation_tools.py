@@ -1,5 +1,5 @@
 #
-# Created by ZhangYuyang on 2019/8/13
+# Created  on 2019/8/13
 #
 import numpy as np
 import matplotlib.pyplot as plt

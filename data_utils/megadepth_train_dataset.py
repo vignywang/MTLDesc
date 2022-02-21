@@ -1,5 +1,5 @@
 #
-# Created by ZhangYuyang on 2020/6/29
+# Created  on 2020/6/29
 #
 import os
 from glob import glob
@@ -12,9 +12,6 @@ from torch.utils.data import Dataset
 from data_utils.dataset_tools import HomographyAugmentation
 from data_utils.dataset_tools import ImgAugTransform
 from data_utils.dataset_tools import space_to_depth
-from data_utils.dataset_tools import draw_image_keypoints
-
-
 class MegaDepthTrainDataset(Dataset):
     """
     Combination of MegaDetph and COCO
@@ -26,8 +23,8 @@ class MegaDepthTrainDataset(Dataset):
             config['mega_despoint_dir'],
         )
         self.sydesp_type=config['sydesp_type']
-        self.height = 240
-        self.width = 320
+        self.height = config['height']
+        self.width = config['width']
 
         self.homography = HomographyAugmentation()
         self.photometric = ImgAugTransform()
@@ -321,6 +318,28 @@ class MegaDepthTrainDataset(Dataset):
 
         return heatmap
 
+    def convert_points_to_label(self, points):
+
+        height = self.height
+        width = self.width
+        n_height = int(height / 8)
+        n_width = int(width / 8)
+        assert n_height * 8 == height and n_width * 8 == width
+
+        num_pt = points.shape[0]
+        label = torch.zeros((height * width))
+        if num_pt > 0:
+            points_h, points_w = torch.split(points, 1, dim=1)
+            points_idx = points_w + points_h * width
+            label = label.scatter_(dim=0, index=points_idx[:, 0], value=1.0).reshape((height, width))
+        else:
+            label = label.reshape((height, width))
+
+        dense_label = space_to_depth(label)
+        dense_label = torch.cat((dense_label, 0.5 * torch.ones((1, n_height, n_width))), dim=0)  # [65, 30, 40]
+        sparse_label = torch.argmax(dense_label, dim=0)  # [30,40]
+
+        return sparse_label
     @staticmethod
     def _format_file_list(mega_image_dir, mega_keypoint_dir,mega_despoint_dir):
         data_list = []
@@ -358,9 +377,6 @@ class MegaDepthTrainDataset(Dataset):
             )
 
         return data_list
-
-
-
 
 
 

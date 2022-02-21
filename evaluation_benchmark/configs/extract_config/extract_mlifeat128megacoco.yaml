@@ -1,8 +1,0 @@
-model:
-    name: 'MLIFeat'
-    detection_threshold: 0.9
-    dim: 128
-    nms_dist: 4
-    nms_radius: 4
-    border_remove: 4
-    weights: 'weights/mlifeat128megacoco'

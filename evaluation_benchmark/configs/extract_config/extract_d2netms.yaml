@@ -1,9 +1,0 @@
-model:
-    name: 'd2net_model'
-    preprocessing: caffe
-    max_edge: 1600
-    max_sum_edges: 2800
-    multiscale: true
-    use_relu: true
-    weights: 'weights/d2net/d2_tf.pth'
-

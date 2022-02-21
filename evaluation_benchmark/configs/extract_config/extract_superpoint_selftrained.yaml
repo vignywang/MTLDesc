@@ -1,8 +1,0 @@
-model:
-    name: 'superpoint_selftrained'
-    detection_threshold: 0.015
-    nms_dist: 4
-    nms_radius: 4
-    border_remove: 4
-    weights: 'weights/superpoint_selftrained/model.pt'
-
