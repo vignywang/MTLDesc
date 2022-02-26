@@ -13,7 +13,8 @@ pip install -r requirement.txt,
 ```
 
 # Quick start
-HPatches Sequences / Image Pairs Matching Benchmark
+HPatches Image Matching Benchmark
+
 1.Download the trained model: https://drive.google.com/file/d/1qrvdd3KVYFl6EwH8s5IS5p_Hs26xIKRD/view?usp=sharing
 and place it in the "ckpt/mtldesc".
 
