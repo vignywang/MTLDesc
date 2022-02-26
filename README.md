@@ -34,9 +34,9 @@ CUDA_VISIBLE_DEVICES=0 python export.py  --tag [Descriptor_suffix_name]
 ```
 cd evaluation_hpatch/hpatches_sequences
 jupyter-notebook
-```
-run HPatches-Sequences-Matching-Benchmark.ipynb
 
+run HPatches-Sequences-Matching-Benchmark.ipynb
+```
 
 ## Training
 
