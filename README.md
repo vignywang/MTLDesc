@@ -1,4 +1,7 @@
-# MTLDesc (Local features detection and description, local descriptors)
+# MTLDesc
+
+Local features detection and description; local descriptors.
+
 Implementation of "MTLDesc: Looking Wider to Describe Better " (AAAI 2022) and AWDesc.
 
 To do：
