@@ -1,42 +1,37 @@
 # Requirement
-Pytorch版本比较关键。
 ```
-Pytorch == 1.2.0
-OpenCV >= 3.4
-numpy == 3.6
+pip install -r requirement.txt,
 ```
 
-# 快速开始
+# evaluation
 HPatches Sequences / Image Pairs Matching Benchmark
 
-1.下载HPatches数据集：
+1.Download the HPatches dataset：
 
 ```
 cd evaluation_hpatch/hpatches_sequences
 bash download.sh
 ```
-2.提取描述子：
+2.Extract local descriptors：
 ```
 cd evaluation_hpatch
 CUDA_VISIBLE_DEVICES=0 python export.py  --tag [Descriptor_suffix_name] 
 ```
-3.测评
-对比方法已保存在：evaluation_hpatch/hpatches_sequences/cache 目录下
-启动jupyter
+3.Evaluation
 ```
 cd evaluation_hpatch/hpatches_sequences
 jupyter-notebook
 ```
-运行HPatches-Sequences-Matching-Benchmark.ipynb
+run HPatches-Sequences-Matching-Benchmark.ipynb
 
 
-## 训练模型
-在配置文件configs/MTLDesc_train.yaml中设置数据集路径
+## Training
+Set the dataset path in the configuration file configs/MTLDesc_train.yaml
 
 ```
-mega_image_dir:  /data/Mega_train/image   #图片
-mega_keypoint_dir:  /data/Mega_train/keypoint #关键点
-mega_despoint_dir:  /data/Mega_train/despoint #描述子
+mega_image_dir:  /data/Mega_train/image   #images
+mega_keypoint_dir:  /data/Mega_train/keypoint #keypoints
+mega_despoint_dir:  /data/Mega_train/despoint #descriptor correspondence points
 ```
 ```
 python train.py --gpus 0 --configs configs/MTLDesc_train.yaml --indicator mtldesc_0
