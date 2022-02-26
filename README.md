@@ -3,21 +3,24 @@
 pip install -r requirement.txt,
 ```
 
-# evaluation
+# Quick start
 HPatches Sequences / Image Pairs Matching Benchmark
+1.Download the trained model: https://drive.google.com/file/d/1qrvdd3KVYFl6EwH8s5IS5p_Hs26xIKRD/view?usp=sharing
+and place it in the "ckpt/mtldesc".
 
-1.Download the HPatches dataset：
+
+2.Download the HPatches dataset：
 
 ```
 cd evaluation_hpatch/hpatches_sequences
 bash download.sh
 ```
-2.Extract local descriptors：
+3.Extract local descriptors：
 ```
 cd evaluation_hpatch
 CUDA_VISIBLE_DEVICES=0 python export.py  --tag [Descriptor_suffix_name] 
 ```
-3.Evaluation
+4.Evaluation
 ```
 cd evaluation_hpatch/hpatches_sequences
 jupyter-notebook
@@ -26,6 +29,9 @@ run HPatches-Sequences-Matching-Benchmark.ipynb
 
 
 ## Training
+
+Download dataset: https://drive.google.com/file/d/1Uz0hVFPxWsE71V77kXZ973iY2GuXC20b/view?usp=sharing
+
 Set the dataset path in the configuration file configs/MTLDesc_train.yaml
 
 ```
