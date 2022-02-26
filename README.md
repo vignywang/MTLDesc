@@ -1,11 +1,11 @@
 # MTLDesc
-Implementation of "MTLDesc: Looking Wider to Describe Better (AAAI 2022)" and AWDesc.
+Implementation of "MTLDesc: Looking Wider to Describe Better " (AAAI 2022) and AWDesc.
 
 To do：
 - [x] Evaluation code for MTLDesc
 - [x] Trained model and Training dataset
 - [ ] Training code (After the paper is published.)
-- [ ] A more efficient version (AWDesc).
+- [ ] A new more efficient version (AWDesc).
 
 # Requirement
 ```
