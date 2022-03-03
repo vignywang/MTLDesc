@@ -31,7 +31,7 @@ bash download.sh
 3.Extract local descriptors：
 ```
 cd evaluation_hpatch
-CUDA_VISIBLE_DEVICES=0 python export.py  --tag [Descriptor_suffix_name] 
+CUDA_VISIBLE_DEVICES=0 python export.py  --tag [Descriptor_suffix_name] --top-k 10000 --output_root [out_dir] --config ../configs/MTLDesc_eva.yaml
 ```
 4.Evaluation
 ```
