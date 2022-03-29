@@ -1,4 +1,4 @@
-# MTLDesc
+# MTLDesc (Local features detection and description)
 
 Local features detection and description; local descriptors.
 
