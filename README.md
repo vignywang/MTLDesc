@@ -53,5 +53,5 @@ mega_keypoint_dir:  /data/Mega_train/keypoint #keypoints
 mega_despoint_dir:  /data/Mega_train/despoint #descriptor correspondence points
 ```
 ```
-python train.py --gpus 0 --configs configs/MTLDesc_train.yaml --indicator mtldesc_0
+python train.py --gpus 0 --configs configs/MTLDesc_train.yaml --indicator mtldesc
 ```
