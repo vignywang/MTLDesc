@@ -55,3 +55,13 @@ mega_despoint_dir:  /data/Mega_train/despoint #descriptor correspondence points
 ```
 python train.py --gpus 0 --configs configs/MTLDesc_train.yaml --indicator mtldesc
 ```
+##  Citation
+
+```
+@article{wang2022mtldesc,
+  title={MTLDesc: Looking Wider to Describe Better},
+  author={Wang, Changwei and Xu, Rongtao and Zhang, Yuyang and Xu, Shibiao and Meng, Weiliang and Fan, Bin and Zhang, Xiaopeng},
+  journal={arXiv preprint arXiv:2203.07003},
+  year={2022}
+}
+```
