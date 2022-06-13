@@ -2,13 +2,13 @@
 
 Local features detection and description; local descriptors.
 
-Implementation of "MTLDesc: Looking Wider to Describe Better " (AAAI 2022) and AWDesc.
+Implementation of "MTLDesc: Looking Wider to Describe Better " (AAAI 2022).
 
 To do：
-- [x] Evaluation code for MTLDesc
-- [x] Trained model and Training dataset
-- [ ] Training code (After the paper is published.)
-- [ ] A new more efficient version (AWDesc).
+- [x] Evaluation code for MTLDesc.
+- [x] Trained model and Training dataset.
+- [x] Training code.
+- [x] A more efficient version at https://github.com/vignywang/AWDesc.
 
 # Requirement
 ```
