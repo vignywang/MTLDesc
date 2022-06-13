@@ -1,8 +1,8 @@
 # MTLDesc (Local features detection and description)
 
-Local features detection and description; local descriptors.
-
 Implementation of "MTLDesc: Looking Wider to Describe Better " (AAAI 2022).
+
+Keywords: Local features detection and description; local descriptors; image matching.
 
 To do：
 - [x] Evaluation code for MTLDesc.
