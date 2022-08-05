@@ -58,10 +58,11 @@ python train.py --gpus 0 --configs configs/MTLDesc_train.yaml --indicator mtldes
 ##  Citation
 
 ```
-@article{wang2022mtldesc,
+@inproceedings{wang2022mtldesc,
   title={MTLDesc: Looking Wider to Describe Better},
   author={Wang, Changwei and Xu, Rongtao and Zhang, Yuyang and Xu, Shibiao and Meng, Weiliang and Fan, Bin and Zhang, Xiaopeng},
-  journal={arXiv preprint arXiv:2203.07003},
-  year={2022}
+  booktitle={AAAI},
+  year={2022},
+  organization={AAAI Press}
 }
 ```
