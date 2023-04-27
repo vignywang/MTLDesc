@@ -854,3 +854,32 @@ class HeatmapWeightedAlignLoss(HeatmapAlignLoss):
         loss = self._compute_masked_loss(unmasked_loss, mask)
         return loss
 
+class Matcher(object):
+
+    def __init__(self, dtype='float'):
+        if dtype == 'float':
+            self.compute_desp_dist = self._compute_desp_dist
+        elif dtype == 'binary':
+            self.compute_desp_dist = self._compute_desp_dist_binary
+        else:
+            assert False
+
+    def __call__(self, point_0, desp_0, point_1, desp_1):
+        dist_0_1 = self.compute_desp_dist(desp_0, desp_1)  # [n,m]
+        dist_1_0 = dist_0_1.transpose((1, 0))  # [m,n]
+        nearest_idx_0_1 = np.argmin(dist_0_1, axis=1)  # [n]
+        nearest_idx_1_0 = np.argmin(dist_1_0, axis=1)  # [m]
+        matched_src = []
+        matched_tgt = []
+        for i, idx_0_1 in enumerate(nearest_idx_0_1):
+            if i == nearest_idx_1_0[idx_0_1]:
+                matched_src.append(point_0[i])
+                matched_tgt.append(point_1[idx_0_1])
+        if len(matched_src) <= 4:
+            print("There exist too little matches")
+            # assert False
+            return None
+        if len(matched_src) != 0:
+            matched_src = np.stack(matched_src, axis=0)
+            matched_tgt = np.stack(matched_tgt, axis=0)
+        return matched_src, matched_tgt
