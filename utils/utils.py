@@ -670,5 +670,187 @@ class BinaryDescriptorTripletTanhSigmoidLoss(object):
         return triplet_loss
 
 
+class PointHeatmapWeightedBCELoss(object):
 
+    def __init__(self, weight=200):
+        self.weight = weight
+
+    def __call__(self, heatmap_pred, heatmap_gt, heatmap_valid):
+        """只适用one-hot的情况
+        """
+        sigmoid_0 = torch.sigmoid(heatmap_pred)  # 预测为关键点的概率
+        sigmoid_1 = 1. - sigmoid_0  # 预测为非关键点的概率
+
+        module_factor_0 = self.weight * heatmap_gt
+        module_factor_1 = 1. * (1 - heatmap_gt)
+
+        unmasked_heatmap_loss = -(module_factor_0*torch.log(sigmoid_0+1e-4)+module_factor_1*torch.log(sigmoid_1+1e-4))
+        loss = self._compute_masked_loss(unmasked_heatmap_loss, heatmap_valid)
+
+        return loss
+
+    @staticmethod
+    def _compute_masked_loss(unmasked_loss, mask):
+        assert len(unmasked_loss.shape) == len(mask.shape)
+        if len(unmasked_loss.shape) == 3:
+            dim = (1, 2)
+        else:
+            dim = (2, 3)
+        valid_num = torch.sum(mask, dim=dim)
+        masked_loss = torch.sum(unmasked_loss * mask, dim=dim)
+        masked_loss = masked_loss / (valid_num + 1)
+        loss = torch.mean(masked_loss)
+        return loss
+    
+class PointHeatmapSpatialFocalWeightedBCELoss(object):
+    """
+    引入真值点与实际预测点之间的距离作为对应真值点的加权项，其主要思想是距离真值点越近的预测点（只是接近而非重合），这些点属于错分且程度激烈，
+    应当增大权重
+    """
+
+    def __init__(self, device, positive_weight=200, fn_scale=1.0, gamma=2, kernel_size=5, sigma=1.5):
+        """
+        初始化
+        Args:
+            device: 指定loss在cpu/gpu上计算
+            positive_weight: positive_weight控制正样本的权重
+            fn_scale: 用于负样本假错权重的放大系数
+            gamma: gamma为focal的指数
+            kernel_size: kernel_size为高斯核的大小
+            sigma: sigma为高斯分布权重的标准差
+        """
+        self.device = device
+        self.gamma = gamma
+        self.positive_weight = positive_weight
+        self.fn_scale = fn_scale
+
+        # 生成固定权重的二维高斯卷积核
+        center = np.array((kernel_size // 2, kernel_size // 2), dtype=np.float32)
+        grid = np.zeros((kernel_size, kernel_size, 2), dtype=np.float32)
+        for i in range(kernel_size):
+            for j in range(kernel_size):
+                grid[i, j] = (i, j)  # y,x的顺序
+
+        kernel = np.exp(-np.linalg.norm(grid - center, axis=2, keepdims=False) / (2 * sigma ** 2))
+        kernel[int(kernel_size // 2), int(kernel_size // 2)] = 0  # 中心点的权重置为0
+
+        # 进行归一化
+        kernel = kernel / np.sum(kernel)
+        self.kernel = torch.from_numpy(kernel).unsqueeze(dim=0).unsqueeze(dim=0).to(
+            self.device)  # [1,1,ksize,ksize]的高斯卷积核
+        self.padding = int(kernel_size // 2)
+
+    def __call__(self, heatmap_pred, heatmap_gt, heatmap_valid, **kwargs):
+        heatmap_pred = torch.sigmoid(heatmap_pred)  # 将logit转换为概率
+
+        fp_heatmap = (heatmap_pred * (1. - heatmap_gt)).unsqueeze(dim=1)  # 所有非关键点被判断为关键点的概率->假正率
+        fn_heatmap = ((1. - heatmap_pred) * heatmap_gt).unsqueeze(dim=1)  # 所有关键点被判断为非关键点的概率->假错率
+
+        fp_weight = f.conv2d(fp_heatmap, self.kernel, padding=self.padding).squeeze()
+        fn_weight = f.conv2d(fn_heatmap, self.kernel, padding=self.padding).squeeze()
+
+        loss_positive = -self.positive_weight * (1. + fp_weight) ** self.gamma * torch.log(
+            heatmap_pred + 1e-5) * heatmap_gt
+        loss_negative = -(1. + self.fn_scale * fn_weight) ** self.gamma * torch.log(1 - heatmap_pred + 1e-5) * (1 - heatmap_gt)
+
+        loss_unmasked = loss_positive + loss_negative
+        loss = self._compute_masked_loss(loss_unmasked, heatmap_valid)
+
+        return loss
+
+    @staticmethod
+    def _compute_masked_loss(unmasked_loss, mask):
+        valid_num = torch.sum(mask, dim=(1, 2))
+        masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
+        masked_loss = masked_loss / (valid_num + 1)
+        loss = torch.mean(masked_loss)
+        return loss
+
+
+class PointHeatmapFocalLoss(object):
+
+    def __init__(self, gamma=2, p_ratio=0.75):
+        self.gamma = gamma
+        self.p_ratio = p_ratio
+        self.unmasked_loss = torch.nn.BCEWithLogitsLoss(reduction='none')
+
+    def __call__(self, heatmap_pred, heatmap_gt, mask):
+        """只适用one-hot的情况"""
+        sigmoid_0 = torch.sigmoid(heatmap_pred)  # 预测为关键点的概率
+        sigmoid_1 = 1. - sigmoid_0  # 预测为非关键点的概率
+
+        module_factor_0 = torch.pow(1.-sigmoid_0, self.gamma) * self.p_ratio * heatmap_gt
+        module_factor_1 = torch.pow(1.-sigmoid_1, self.gamma) * (1. - self.p_ratio) * (1 - heatmap_gt)
+        # module_factor = module_factor_0 + module_factor_1
+
+        unmasked_loss = -(module_factor_0*torch.log(sigmoid_0+1e-4)+module_factor_1*torch.log(sigmoid_1+1e-4))
+        # unmasked_loss = module_factor * self.unmasked_loss(heatmap_pred, heatmap_gt)
+
+        valid_num = torch.sum(mask, dim=(1, 2))
+        masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
+        # masked_loss = masked_loss / (valid_num + 1)
+        loss = torch.mean(masked_loss)
+        return loss
+
+
+class HeatmapAlignLoss(object):
+    """
+    用于计算两幅heatmap在其相关单应变换下的对齐loss
+    """
+    def __init__(self):
+        pass
+
+    def __call__(self, heatmap_s, heatmap_t, homography, mask, **kwargs):
+        """
+        将heatmap_s经单应变换插值到heatmap_t',计算heatmap_t'与heatmap_t在预先计算的mask中的有效区域的差异作为对齐loss
+        Args:
+            heatmap_s: [bt,1,h,w],s视角下预测的热力图
+            heatmap_t: [bt,1,h,w],t视角下预测的热力图
+            homography: s->t的单应变换
+            mask: 经上述变换后的有效区域的mask
+
+        Returns:
+            loss: 对齐差异作为loss返回
+
+        """
+        heatmap_s = torch.sigmoid(heatmap_s)
+        heatmap_t = torch.sigmoid(heatmap_t)
+
+        project_heatmap_t = interpolation(heatmap_s, homography)
+        unmasked_loss = torch.abs(project_heatmap_t-heatmap_t).squeeze()
+        loss = self._compute_masked_loss(unmasked_loss, mask)
+        return loss
+
+    @staticmethod
+    def _compute_masked_loss(unmasked_loss, mask):
+        valid_num = torch.sum(mask, dim=(1, 2))
+        masked_loss = torch.sum(unmasked_loss * mask, dim=(1, 2))
+        masked_loss = masked_loss / (valid_num + 1)
+        loss = torch.mean(masked_loss)
+        return loss
+
+
+class HeatmapWeightedAlignLoss(HeatmapAlignLoss):
+    """
+    带权重的对齐loss计算子，对于关键点位置处一个自定义区域内的差异值会被权重放大，而非关键点处的权重则都为1
+    """
+
+    def __init__(self, weight=200):
+        super(HeatmapWeightedAlignLoss, self).__init__()
+        self.weight = weight
+
+    def __call__(self, heatmap_s, heatmap_t, homography, mask, **kwargs):
+        heatmap_gt_t = kwargs["heatmap_gt_t"]
+
+        heatmap_s = torch.sigmoid(heatmap_s)
+        heatmap_t = torch.sigmoid(heatmap_t)
+
+        module_factor_keypoint = self.weight * heatmap_gt_t
+        module_factor_others = 1. * (1 - heatmap_gt_t)
+        module_factor = module_factor_keypoint + module_factor_others
+
+        project_heatmap_t = interpolation(heatmap_s, homography)
+        unmasked_loss = module_factor * torch.abs(project_heatmap_t-heatmap_t).squeeze()
+        loss = self._compute_masked_loss(unmasked_loss, mask)
+        return loss
 
